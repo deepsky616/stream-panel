@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DeckItem } from '../../../shared/types';
+import { ColorPicker } from '../common/ColorPicker';
+import { IconPicker } from '../common/IconPicker';
 
 interface PropertiesPanelProps {
   item: DeckItem | null;
@@ -108,11 +110,11 @@ export function PropertiesPanel({
         </label>
         <label>
           색상
-          <input
-            type="color"
-            value={draft.color}
-            onChange={(event) => patch({ color: event.target.value })}
-          />
+          <ColorPicker value={draft.color} onChange={(color) => patch({ color })} />
+        </label>
+        <label>
+          아이콘
+          <IconPicker icon={draft.icon} onChange={(icon) => patch({ icon })} />
         </label>
         <div className="property-kind">
           종류 <strong>{draft.kind === 'folder' ? '폴더 키' : draft.type}</strong>

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { DeckItem } from '../../../shared/types';
 
 interface KeyTileProps {
@@ -18,6 +19,31 @@ function iconText(item: DeckItem): string {
 }
 
 export function KeyTile({ item, buttonSize, onClick, onDoubleClick, failed = false }: KeyTileProps) {
+  const requestType =
+    item.icon.kind === 'file'
+      ? ('file' as const)
+      : item.icon.kind === 'auto' && item.kind === 'action' && item.target
+        ? item.type
+        : null;
+  const requestTarget =
+    item.icon.kind === 'file'
+      ? `icon-file:${item.icon.path}`
+      : item.icon.kind === 'auto' && item.kind === 'action'
+        ? item.target
+        : '';
+  const requestKey = requestType ? `${requestType}:${requestTarget}` : '';
+  const [iconResult, setIconResult] = useState<{ key: string; data: string | null } | null>(null);
+  const resolvedIcon = iconResult?.key === requestKey ? iconResult.data : null;
+  useEffect(() => {
+    let active = true;
+    if (!requestType || !requestTarget) return;
+    void window.api.icon
+      .resolve({ type: requestType, target: requestTarget })
+      .then((data) => active && setIconResult({ key: requestKey, data }));
+    return () => {
+      active = false;
+    };
+  }, [requestKey, requestTarget, requestType]);
   return (
     <button
       className={`key-tile ${item.kind === 'folder' ? 'folder-tile' : ''} ${failed ? 'launch-failed' : ''}`}
@@ -34,7 +60,7 @@ export function KeyTile({ item, buttonSize, onClick, onDoubleClick, failed = fal
       aria-label={item.kind === 'folder' ? `${item.label} 폴더 열기` : `${item.label} 실행`}
     >
       <span className="key-icon" aria-hidden="true">
-        {iconText(item)}
+        {resolvedIcon ? <img src={resolvedIcon} alt="" /> : iconText(item)}
       </span>
       <span className="key-label">{item.label}</span>
       {item.kind === 'folder' && <span className="folder-badge">▸</span>}

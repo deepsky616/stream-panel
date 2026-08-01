@@ -4,6 +4,8 @@ import { registerLaunchHandlers } from './launchHandlers';
 import { registerDeckHandlers } from './deckHandlers';
 import { registerPickerHandlers } from './pickerHandlers';
 import { registerDropHandlers } from './dropHandlers';
+import { registerAppHandlers } from './appHandlers';
+import { registerIconHandlers } from './iconHandlers';
 import { registerWindowHandlers } from './windowHandlers';
 
 export function registerIpcHandlers(configStore: ConfigStore): void {
@@ -12,5 +14,7 @@ export function registerIpcHandlers(configStore: ConfigStore): void {
   registerLaunchHandlers(configStore);
   registerPickerHandlers();
   registerDropHandlers();
+  registerAppHandlers();
+  registerIconHandlers();
   registerWindowHandlers(configStore);
 }

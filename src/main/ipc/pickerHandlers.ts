@@ -1,6 +1,7 @@
 import { basename, dirname, extname } from 'node:path';
-import { dialog, ipcMain, shell } from 'electron';
+import { app, dialog, ipcMain, shell } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
+import { importCustomIcon } from '../services/customIconService';
 
 async function pickPath(
   properties: Array<'openFile' | 'openDirectory'>,
@@ -13,6 +14,12 @@ async function pickPath(
 export function registerPickerHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.PICKER_FOLDER, () => pickPath(['openDirectory']));
   ipcMain.handle(IPC_CHANNELS.PICKER_FILE, () => pickPath(['openFile']));
+  ipcMain.handle(IPC_CHANNELS.PICKER_IMAGE, async () => {
+    const selected = await pickPath(['openFile'], [
+      { name: '아이콘 이미지', extensions: ['png', 'jpg', 'jpeg', 'ico', 'bmp', 'webp'] },
+    ]);
+    return selected ? importCustomIcon(selected, app.getPath('userData')) : null;
+  });
   ipcMain.handle(IPC_CHANNELS.PICKER_EXECUTABLE, async () => {
     const selected = await pickPath(['openFile'], [
       { name: '실행 파일', extensions: ['exe', 'lnk'] },

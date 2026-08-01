@@ -163,3 +163,30 @@ export function assertImportPathInput(value: unknown): asserts value is string {
     throw new TypeError('이미지 경로가 올바르지 않습니다.');
   }
 }
+
+export function assertAppsListInput(value: unknown): asserts value is { refresh?: boolean } {
+  assertRecord(value, '앱 목록');
+  if ('refresh' in value && typeof value.refresh !== 'boolean') {
+    throw new TypeError('앱 목록 새로고침 값이 올바르지 않습니다.');
+  }
+}
+
+export function assertIconResolveInput(
+  value: unknown,
+): asserts value is { type: 'url' | 'folder' | 'file' | 'app' | 'uwp'; target: string } {
+  assertRecord(value, '아이콘');
+  if (
+    !['url', 'folder', 'file', 'app', 'uwp'].includes(String(value.type)) ||
+    typeof value.target !== 'string' ||
+    value.target.length < 1 ||
+    value.target.length > 2048
+  ) {
+    throw new TypeError('아이콘 대상이 올바르지 않습니다.');
+  }
+  if (
+    value.target.startsWith('icon-file:') &&
+    !/^icon-file:[0-9a-f-]+\.png$/i.test(value.target)
+  ) {
+    throw new TypeError('사용자 아이콘 경로가 올바르지 않습니다.');
+  }
+}

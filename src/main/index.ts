@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc';
 import { ConfigStore } from './store';
 import { applyPanelLayout, createPanelWindow, showPanel } from './windows/panelWindow';
+import { cleanupOrphanIcons } from './services/iconCleanup';
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
@@ -33,6 +34,7 @@ app.whenReady().then(() => {
     },
   });
   registerIpcHandlers(configStore);
+  void cleanupOrphanIcons(configStore.get().root, app.getPath('userData'));
   createPanelWindow(configStore);
   configStore.onDidChange((config) => {
     applyPanelLayout(config);

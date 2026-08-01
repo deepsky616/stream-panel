@@ -134,6 +134,12 @@ button {
   font-size: calc(var(--button-size, 88px) * 0.3);
 }
 
+.key-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .key-label {
   display: -webkit-box;
   max-width: 100%;
