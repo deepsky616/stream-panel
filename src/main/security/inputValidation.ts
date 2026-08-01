@@ -1,4 +1,5 @@
 import { isAbsolute, win32 } from 'node:path';
+import { validateHintKeys } from '../../shared/hintMap';
 import type { AppConfig, DeckItem } from '../../shared/types';
 
 function assertRecord(value: unknown, name: string): asserts value is Record<string, unknown> {
@@ -11,9 +12,12 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
   assertRecord(value, '설정');
   const allowed = new Set([
     'version',
+    'platform',
     'root',
     'grid',
     'window',
+    'behavior',
+    'keyboard',
     'theme',
     'hotkey',
     'launchAtLogin',
@@ -23,6 +27,9 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
     if (!allowed.has(key)) throw new TypeError('허용되지 않은 설정 항목입니다.');
   }
   if ('version' in value && value.version !== 1) throw new TypeError('지원하지 않는 설정 버전입니다.');
+  if ('platform' in value && !['win32', 'darwin'].includes(String(value.platform))) {
+    throw new TypeError('운영체제 설정이 올바르지 않습니다.');
+  }
   if ('theme' in value && !['dark', 'light', 'system'].includes(String(value.theme))) {
     throw new TypeError('테마 설정이 올바르지 않습니다.');
   }
@@ -73,6 +80,49 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
       throw new TypeError('창 설정 범위를 확인해 주세요.');
     }
   }
+  if ('behavior' in value) {
+    assertRecord(value.behavior, '패널 동작');
+    const behavior = value.behavior;
+    if (
+      typeof behavior.hideAfterLaunch !== 'boolean' ||
+      !Number.isInteger(behavior.hideAfterLaunchDelayMs) ||
+      Number(behavior.hideAfterLaunchDelayMs) < 0 ||
+      Number(behavior.hideAfterLaunchDelayMs) > 600 ||
+      typeof behavior.edgePeek !== 'boolean' ||
+      !['auto', 'right', 'left', 'top', 'bottom'].includes(String(behavior.peekEdge)) ||
+      !Number.isInteger(behavior.peekThickness) ||
+      Number(behavior.peekThickness) < 4 ||
+      Number(behavior.peekThickness) > 12 ||
+      !Number.isInteger(behavior.peekDelayMs) ||
+      Number(behavior.peekDelayMs) < 0 ||
+      Number(behavior.peekDelayMs) > 600 ||
+      typeof behavior.idleFade !== 'boolean' ||
+      !Number.isInteger(behavior.idleFadeAfterMs) ||
+      Number(behavior.idleFadeAfterMs) < 1_000 ||
+      Number(behavior.idleFadeAfterMs) > 15_000 ||
+      typeof behavior.idleOpacity !== 'number' ||
+      behavior.idleOpacity < 0.1 ||
+      behavior.idleOpacity > 0.9
+    ) {
+      throw new TypeError('패널 동작 설정 범위를 확인해 주세요.');
+    }
+  }
+  if ('keyboard' in value) {
+    assertRecord(value.keyboard, '키보드');
+    const keyboard = value.keyboard;
+    if (
+      !['on-focus', 'always', 'never'].includes(String(keyboard.quickHints)) ||
+      typeof keyboard.hintKeys !== 'string' ||
+      !validateHintKeys(keyboard.hintKeys) ||
+      typeof keyboard.hideAfterHotkeyLaunch !== 'boolean' ||
+      typeof keyboard.globalNumberHotkeys !== 'boolean' ||
+      typeof keyboard.globalNumberModifier !== 'string' ||
+      keyboard.globalNumberModifier.length < 1 ||
+      keyboard.globalNumberModifier.length > 80
+    ) {
+      throw new TypeError('키보드 설정이 올바르지 않습니다. 힌트 문자는 중복 없이 입력해 주세요.');
+    }
+  }
   if ('root' in value && !Array.isArray(value.root)) throw new TypeError('키 목록이 올바르지 않습니다.');
 }
 
@@ -102,6 +152,19 @@ export function assertDeckReferenceInput(
     value.id.length > 100
   ) {
     throw new TypeError('키 위치가 올바르지 않습니다.');
+  }
+}
+
+export function assertLaunchInput(
+  value: unknown,
+): asserts value is { path: string[]; id: string; keepOpen?: boolean } {
+  assertDeckReferenceInput(value);
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).some((key) => !['path', 'id', 'keepOpen'].includes(key)) ||
+    ('keepOpen' in input && typeof input.keepOpen !== 'boolean')
+  ) {
+    throw new TypeError('실행할 키 위치나 패널 유지 값이 올바르지 않습니다.');
   }
 }
 

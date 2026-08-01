@@ -21,7 +21,7 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DECK_DUPLICATE, input),
   },
   button: {
-    launch: (input: { path: string[]; id: string }) =>
+    launch: (input: { path: string[]; id: string; keepOpen?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.BUTTON_LAUNCH, input),
   },
   picker: {

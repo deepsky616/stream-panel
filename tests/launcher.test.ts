@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SpawnOptions } from 'node:child_process';
 import type { ActionItem, DeckItem } from '../src/shared/types';
 import { launchDeckItem, type LauncherDependencies } from '../src/main/services/launcher';
+import { createDefaultConfig } from '../src/shared/defaults';
+import { createVisibilityService, shouldAutoHideAfterLaunch } from '../src/main/services/visibility';
 
 function action(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -46,7 +48,7 @@ describe('launcher', () => {
       args: ['--safe', '값'],
       workingDir: 'C:\\Tools',
     });
-    expect(await launchDeckItem([app], [], 'item', deps)).toEqual({ ok: true });
+    expect(await launchDeckItem([app], [], 'item', deps, 'win32')).toEqual({ ok: true });
     expect(deps.spawnProcess).toHaveBeenCalledOnce();
     const [command, args, options] = vi.mocked(deps.spawnProcess).mock.calls[0] as [
       string,
@@ -98,5 +100,96 @@ describe('launcher', () => {
       dependencies(),
     );
     expect(result).toMatchObject({ ok: false, code: 'BLOCKED' });
+  });
+
+  it('opens a macOS app bundle directly when it has no arguments', async () => {
+    const deps = dependencies();
+    const app = action({ type: 'app', target: '/Applications/Tool.app', args: [] });
+
+    expect(await launchDeckItem([app], [], 'item', deps, 'darwin')).toEqual({ ok: true });
+    expect(deps.openPath).toHaveBeenCalledWith('/Applications/Tool.app');
+    expect(deps.spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it('uses open with an argument array for macOS app arguments and never enables shell mode', async () => {
+    const deps = dependencies();
+    const app = action({
+      type: 'app',
+      target: '/Applications/Tool.app',
+      args: ['--safe', '값'],
+    });
+
+    expect(await launchDeckItem([app], [], 'item', deps, 'darwin')).toEqual({ ok: true });
+    const [command, args, options] = vi.mocked(deps.spawnProcess).mock.calls[0] as [
+      string,
+      readonly string[],
+      SpawnOptions,
+    ];
+    expect(command).toBe('open');
+    expect(args).toEqual(['-a', '/Applications/Tool.app', '--args', '--safe', '값']);
+    expect(options.shell).not.toBe(true);
+  });
+
+  it('blocks Windows Store apps on macOS and safely blocks unsupported platforms', async () => {
+    const deps = dependencies();
+    const storeApp = action({ type: 'uwp', target: 'Example.App!Main' });
+
+    await expect(launchDeckItem([storeApp], [], 'item', deps, 'darwin')).resolves.toMatchObject({
+      ok: false,
+      code: 'BLOCKED',
+    });
+    await expect(launchDeckItem([action()], [], 'item', deps, 'linux')).resolves.toMatchObject({
+      ok: false,
+      code: 'BLOCKED',
+    });
+  });
+});
+
+describe('automatic panel hiding', () => {
+  const config = createDefaultConfig(
+    { downloads: '/Users/test/Downloads', documents: '/Users/test/Documents' },
+    () => 'id',
+    'darwin',
+  );
+
+  it('hides only after a successful launch when keep-open and editor guards are clear', () => {
+    expect(
+      shouldAutoHideAfterLaunch(config, { ok: true }, { keepOpen: undefined, editorOpen: false }),
+    ).toBe(true);
+    expect(
+      shouldAutoHideAfterLaunch(config, { ok: true }, { keepOpen: true, editorOpen: false }),
+    ).toBe(false);
+    expect(
+      shouldAutoHideAfterLaunch(config, { ok: true }, { keepOpen: undefined, editorOpen: true }),
+    ).toBe(false);
+    expect(
+      shouldAutoHideAfterLaunch(
+        config,
+        { ok: false, code: 'FAILED', message: '실패' },
+        { keepOpen: undefined, editorOpen: false },
+      ),
+    ).toBe(false);
+  });
+
+  it('lets an explicit false keep-open value request hint-key hiding', () => {
+    const noPointerHide = {
+      ...config,
+      behavior: { ...config.behavior, hideAfterLaunch: false },
+    };
+    expect(
+      shouldAutoHideAfterLaunch(noPointerHide, { ok: true }, { keepOpen: false, editorOpen: false }),
+    ).toBe(true);
+  });
+
+  it('schedules one hide and cancels it when a keep-open launch follows', () => {
+    const hidePanel = vi.fn();
+    const clearTimer = vi.fn();
+    const setTimer = vi.fn(() => 7);
+    const service = createVisibilityService({ hidePanel, setTimer, clearTimer });
+
+    service.afterLaunch(config, { ok: true }, { keepOpen: undefined, editorOpen: false });
+    expect(setTimer).toHaveBeenCalledWith(hidePanel, 180);
+    service.afterLaunch(config, { ok: true }, { keepOpen: true, editorOpen: false });
+    expect(clearTimer).toHaveBeenCalledWith(7);
   });
 });

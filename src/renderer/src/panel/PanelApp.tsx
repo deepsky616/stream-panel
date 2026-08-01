@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { findFirstEmptyPosition, getPageCount } from '../../../shared/layout';
+import { assignHints, findHintByCode } from '../../../shared/hintMap';
+import { findFirstEmptyPosition, getPageCount, getPageSlots } from '../../../shared/layout';
 import { cloneItemWithNewIds, countDeckItems, getItemsAtPath } from '../../../shared/tree';
 import type { DeckItem } from '../../../shared/types';
 import { ContextMenu, type ContextMenuItem } from '../common/ContextMenu';
@@ -28,12 +29,23 @@ export function PanelApp() {
   const setLocation = useDeckStore((state) => state.setLocation);
   const error = useDeckStore((state) => state.error);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [panelFocused, setPanelFocused] = useState(() => document.hasFocus());
   const items = useMemo(
     () => (config ? getItemsAtPath(config.root, location.path) : []),
     [config, location.path],
   );
   const pageCount = config ? getPageCount(items, config.grid, location.path.length > 0) : 1;
   const showFooter = location.path.length > 0 || pageCount > 1;
+  const hintAssignments = useMemo(
+    () =>
+      config
+        ? assignHints(
+            getPageSlots(items, config.grid, location.page, location.path.length > 0),
+            config.keyboard.hintKeys,
+          )
+        : [],
+    [config, items, location.page, location.path.length],
+  );
   const closeMenu = useCallback(() => setMenu(null), []);
 
   const removeItem = useCallback(async (item: DeckItem) => {
@@ -70,7 +82,41 @@ export function PanelApp() {
     if (location.page >= pageCount) setLocation({ ...location, page: pageCount - 1 });
   }, [location, pageCount, setLocation]);
   useEffect(() => {
+    const focus = () => setPanelFocused(true);
+    const blur = () => setPanelFocused(false);
+    window.addEventListener('focus', focus);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('focus', focus);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === 'Escape') {
+        event.preventDefault();
+        void window.api.window.hide();
+        return;
+      }
+      if (config && !event.isComposing) {
+        const assignment = findHintByCode(hintAssignments, event.code);
+        const hintedItem = assignment
+          ? items.find((item) => item.id === assignment.itemId)
+          : undefined;
+        if (hintedItem) {
+          event.preventDefault();
+          if (hintedItem.kind === 'folder') {
+            setLocation({ path: [...location.path, hintedItem.id], page: 0 });
+          } else {
+            void window.api.button.launch({
+              path: location.path,
+              id: hintedItem.id,
+              keepOpen: event.shiftKey || !config.keyboard.hideAfterHotkeyLaunch,
+            });
+          }
+          return;
+        }
+      }
       if (event.key === 'Backspace' && location.path.length > 0) {
         event.preventDefault();
         setLocation({ path: location.path.slice(0, -1), page: 0 });
@@ -104,11 +150,14 @@ export function PanelApp() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [config, items, location, pageCount, pasteAt, removeItem, setLocation]);
+  }, [config, hintAssignments, items, location, pageCount, pasteAt, removeItem, setLocation]);
 
   if (!config) return <main className="panel loading">패널을 불러오는 중입니다...</main>;
 
   const changePage = (page: number) => setLocation({ ...location, page });
+  const showHints =
+    config.keyboard.quickHints === 'always' ||
+    (config.keyboard.quickHints === 'on-focus' && panelFocused);
   const onWheel = (event: React.WheelEvent) => {
     if (pageCount < 2 || Math.abs(event.deltaY) < 4) return;
     changePage(Math.max(0, Math.min(pageCount - 1, location.page + (event.deltaY > 0 ? 1 : -1))));
@@ -159,6 +208,7 @@ export function PanelApp() {
           event.preventDefault();
           if (!config.window.locked) setMenu({ x: event.clientX, y: event.clientY, item: null, position });
         }}
+        showHints={showHints}
       />
       {showFooter && (
         <Footer

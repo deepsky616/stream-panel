@@ -3,6 +3,7 @@ import { getPageSlots } from '../src/shared/layout';
 import {
   assignHints,
   DEFAULT_HINT_KEYS,
+  findHintByCode,
   getHintCode,
   normalizeHintKeys,
   validateHintKeys,
@@ -75,5 +76,8 @@ describe('hint map', () => {
     expect(getHintCode('q')).toBe('KeyQ');
     expect(getHintCode(';')).toBe('Semicolon');
     expect(getHintCode('/')).toBe('Slash');
+    const slots = getPageSlots([item('target', 0)], grid, 0, false);
+    expect(findHintByCode(assignHints(slots), 'Digit1')?.itemId).toBe('target');
+    expect(findHintByCode(assignHints(slots), 'Numpad1')).toBeUndefined();
   });
 });

@@ -55,3 +55,10 @@ export function assignHints(
       slot,
     }));
 }
+
+export function findHintByCode(
+  assignments: readonly HintAssignment[],
+  code: string,
+): HintAssignment | undefined {
+  return assignments.find((assignment) => assignment.code === code);
+}

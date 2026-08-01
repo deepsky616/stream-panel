@@ -4,9 +4,10 @@ import type { DeckItem } from '../../../shared/types';
 interface KeyTileProps {
   item: DeckItem;
   buttonSize: number;
-  onClick: () => void;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onDoubleClick?: () => void;
   failed?: boolean;
+  hint?: string;
 }
 
 function iconText(item: DeckItem): string {
@@ -18,7 +19,14 @@ function iconText(item: DeckItem): string {
   return '🖥️';
 }
 
-export function KeyTile({ item, buttonSize, onClick, onDoubleClick, failed = false }: KeyTileProps) {
+export function KeyTile({
+  item,
+  buttonSize,
+  onClick,
+  onDoubleClick,
+  failed = false,
+  hint,
+}: KeyTileProps) {
   const requestType =
     item.icon.kind === 'file'
       ? ('file' as const)
@@ -54,11 +62,12 @@ export function KeyTile({ item, buttonSize, onClick, onDoubleClick, failed = fal
         '--button-size': `${buttonSize}px`,
       } as React.CSSProperties}
       type="button"
-      title={item.label}
+      title={item.kind === 'action' ? `${item.label}\nShift+클릭: 패널 유지` : item.label}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       aria-label={item.kind === 'folder' ? `${item.label} 폴더 열기` : `${item.label} 실행`}
     >
+      {hint && <span className="key-hint">{hint}</span>}
       <span className="key-icon" aria-hidden="true">
         {resolvedIcon ? <img src={resolvedIcon} alt="" /> : iconText(item)}
       </span>

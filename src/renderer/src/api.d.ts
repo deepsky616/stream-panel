@@ -23,7 +23,9 @@ interface StreamPanelApi {
     }): Promise<AppConfig>;
     duplicate(input: { path: string[]; id: string }): Promise<AppConfig>;
   };
-  button: { launch(input: { path: string[]; id: string }): Promise<LaunchResult> };
+  button: {
+    launch(input: { path: string[]; id: string; keepOpen?: boolean }): Promise<LaunchResult>;
+  };
   picker: {
     folder(): Promise<string | null>;
     file(): Promise<string | null>;

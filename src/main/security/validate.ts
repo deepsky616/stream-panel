@@ -1,6 +1,7 @@
-import { existsSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { extname, isAbsolute, normalize, win32 } from 'node:path';
 import type { Stats } from 'node:fs';
+import { validateHintKeys } from '../../shared/hintMap';
 import type { ActionItem, AppConfig, DeckItem, IconSpec } from '../../shared/types';
 
 export class ValidationError extends Error {
@@ -36,49 +37,82 @@ export function validateUrl(target: string): URL {
   return url;
 }
 
-function isAbsoluteOnSupportedPlatform(target: string): boolean {
-  return isAbsolute(target) || win32.isAbsolute(target);
+function isAbsoluteOnPlatform(target: string, platform: NodeJS.Platform): boolean {
+  if (platform === 'win32') return win32.isAbsolute(target);
+  if (platform === 'darwin') return isAbsolute(target);
+  return false;
 }
 
 function hasTraversalSegment(target: string): boolean {
   return target.split(/[\\/]+/).includes('..');
 }
 
-function normalizeSupportedPath(target: string): string {
-  return win32.isAbsolute(target) ? win32.normalize(target) : normalize(target);
+function normalizePlatformPath(target: string, platform: NodeJS.Platform): string {
+  return platform === 'win32' ? win32.normalize(target) : normalize(target);
 }
 
 export interface PathValidationDependencies {
   exists: (target: string) => boolean;
   stat: (target: string) => Pick<Stats, 'isDirectory'>;
+  canExecute?: (target: string) => boolean;
 }
 
 const defaultPathDependencies: PathValidationDependencies = {
   exists: existsSync,
   stat: statSync,
+  canExecute: (target) => {
+    try {
+      accessSync(target, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
 };
 
 export function validatePathTarget(
   item: ActionItem,
   dependencies: PathValidationDependencies = defaultPathDependencies,
+  platform: NodeJS.Platform = process.platform,
 ): string {
-  if (!isAbsoluteOnSupportedPlatform(item.target) || hasTraversalSegment(item.target)) {
+  if (!isAbsoluteOnPlatform(item.target, platform) || hasTraversalSegment(item.target)) {
     throw new ValidationError('상대 경로나 상위 폴더 이동이 포함된 경로는 사용할 수 없습니다.');
   }
-  const normalized = normalizeSupportedPath(item.target);
-  if (!isAbsoluteOnSupportedPlatform(normalized) || hasTraversalSegment(normalized)) {
+  const normalized = normalizePlatformPath(item.target, platform);
+  if (!isAbsoluteOnPlatform(normalized, platform) || hasTraversalSegment(normalized)) {
     throw new ValidationError('경로를 안전하게 해석할 수 없습니다.');
   }
-  if (item.type === 'app' && !['.exe', '.bat', '.cmd'].includes(extname(normalized).toLowerCase())) {
-    throw new ValidationError('앱은 exe, bat, cmd 파일만 등록할 수 있습니다.');
+
+  const extension =
+    platform === 'win32' ? win32.extname(normalized).toLowerCase() : extname(normalized).toLowerCase();
+  if (platform === 'darwin' && item.type === 'folder' && extension === '.app') {
+    throw new ValidationError('app 묶음은 폴더가 아니라 앱으로 등록해 주세요.');
   }
+  if (item.type === 'app' && platform === 'win32' && !['.exe', '.bat', '.cmd'].includes(extension)) {
+    throw new ValidationError('Windows 앱은 exe, bat, cmd 파일만 등록할 수 있습니다.');
+  }
+
   if (dependencies.exists(normalized)) {
     const directory = dependencies.stat(normalized).isDirectory();
     if (item.type === 'folder' && !directory) {
       throw new ValidationError('선택한 대상은 폴더가 아닙니다.');
     }
-    if ((item.type === 'file' || item.type === 'app') && directory) {
+    if (item.type === 'file' && directory) {
       throw new ValidationError('선택한 대상은 파일이 아닙니다.');
+    }
+    if (item.type === 'app' && platform === 'win32' && directory) {
+      throw new ValidationError('선택한 대상은 앱 파일이 아닙니다.');
+    }
+    if (item.type === 'app' && platform === 'darwin') {
+      if (extension === '.app' && !directory) {
+        throw new ValidationError('선택한 app 묶음은 폴더 형태가 아닙니다. 다시 선택해 주세요.');
+      }
+      if (extension !== '.app' && directory) {
+        throw new ValidationError('일반 폴더는 앱으로 실행할 수 없습니다. app 묶음을 선택해 주세요.');
+      }
+      if (extension !== '.app' && !(dependencies.canExecute?.(normalized) ?? false)) {
+        throw new ValidationError('선택한 파일에 실행 권한이 없습니다. 권한을 확인해 주세요.');
+      }
     }
   }
   return normalized;
@@ -132,18 +166,27 @@ export function validateDeckItemShallow(item: DeckItem): void {
   }
 }
 
-export function validateActionTarget(item: ActionItem): void {
+export function validateActionTarget(
+  item: ActionItem,
+  platform: NodeJS.Platform = process.platform,
+): void {
   validateDeckItemShallow(item);
   if (item.type === 'url') {
     validateUrl(item.target);
   } else if (item.type === 'uwp') {
+    if (platform !== 'win32') {
+      throw new ValidationError('이 항목은 Windows에서만 실행할 수 있습니다.');
+    }
     if (!item.target.includes('!')) throw new ValidationError('스토어 앱 식별자가 올바르지 않습니다.');
   } else {
-    validatePathTarget(item);
+    validatePathTarget(item, defaultPathDependencies, platform);
   }
 }
 
-export function validateDeck(items: readonly DeckItem[]): void {
+export function validateDeck(
+  items: readonly DeckItem[],
+  platform: NodeJS.Platform = process.platform,
+): void {
   const ids = new Set<string>();
   const objects = new WeakSet<object>();
   let total = 0;
@@ -167,7 +210,7 @@ export function validateDeck(items: readonly DeckItem[]): void {
         if (depth + 1 > 5) throw new ValidationError('폴더는 다섯 단계까지 만들 수 있습니다.');
         visit(item.children, depth + 1);
       } else if (item.target !== '') {
-        validateActionTarget(item);
+        validateActionTarget(item, platform);
       }
     }
   };
@@ -177,6 +220,9 @@ export function validateDeck(items: readonly DeckItem[]): void {
 
 export function validateAppConfig(config: AppConfig): void {
   if (config.version !== 1) throw new ValidationError('지원하지 않는 설정 버전입니다.');
+  if (config.platform !== 'win32' && config.platform !== 'darwin') {
+    throw new ValidationError('지원하지 않는 운영체제 설정입니다.');
+  }
   if (
     !Number.isInteger(config.grid.cols) ||
     config.grid.cols < 2 ||
@@ -216,5 +262,42 @@ export function validateAppConfig(config: AppConfig): void {
   ) {
     throw new ValidationError('창 설정이 올바르지 않습니다.');
   }
-  validateDeck(config.root);
+  if (
+    !config.behavior ||
+    typeof config.behavior.hideAfterLaunch !== 'boolean' ||
+    !Number.isInteger(config.behavior.hideAfterLaunchDelayMs) ||
+    config.behavior.hideAfterLaunchDelayMs < 0 ||
+    config.behavior.hideAfterLaunchDelayMs > 600 ||
+    typeof config.behavior.edgePeek !== 'boolean' ||
+    !['auto', 'right', 'left', 'top', 'bottom'].includes(config.behavior.peekEdge) ||
+    !Number.isInteger(config.behavior.peekThickness) ||
+    config.behavior.peekThickness < 4 ||
+    config.behavior.peekThickness > 12 ||
+    !Number.isInteger(config.behavior.peekDelayMs) ||
+    config.behavior.peekDelayMs < 0 ||
+    config.behavior.peekDelayMs > 600 ||
+    typeof config.behavior.idleFade !== 'boolean' ||
+    !Number.isInteger(config.behavior.idleFadeAfterMs) ||
+    config.behavior.idleFadeAfterMs < 1_000 ||
+    config.behavior.idleFadeAfterMs > 15_000 ||
+    typeof config.behavior.idleOpacity !== 'number' ||
+    config.behavior.idleOpacity < 0.1 ||
+    config.behavior.idleOpacity > 0.9
+  ) {
+    throw new ValidationError('패널 동작 설정 범위를 확인해 주세요.');
+  }
+  if (
+    !config.keyboard ||
+    !['on-focus', 'always', 'never'].includes(config.keyboard.quickHints) ||
+    typeof config.keyboard.hintKeys !== 'string' ||
+    !validateHintKeys(config.keyboard.hintKeys) ||
+    typeof config.keyboard.hideAfterHotkeyLaunch !== 'boolean' ||
+    typeof config.keyboard.globalNumberHotkeys !== 'boolean' ||
+    typeof config.keyboard.globalNumberModifier !== 'string' ||
+    config.keyboard.globalNumberModifier.length < 1 ||
+    config.keyboard.globalNumberModifier.length > 80
+  ) {
+    throw new ValidationError('키보드 설정이 올바르지 않습니다. 힌트 문자는 중복 없이 입력해 주세요.');
+  }
+  validateDeck(config.root, config.platform);
 }

@@ -46,7 +46,48 @@ describe('security validation', () => {
     };
     expect(() => validatePathTarget(action({ type: 'folder', target: '/tmp/folder' }), dependencies)).not.toThrow();
     expect(() => validatePathTarget(action({ type: 'file', target: '/tmp/folder' }), dependencies)).toThrow(/파일/);
-    expect(() => validateActionTarget(action({ type: 'app', target: '/tmp/app.sh' }))).toThrow(/exe/);
+    expect(() =>
+      validateActionTarget(action({ type: 'app', target: 'C:\\tmp\\app.sh' }), 'win32'),
+    ).toThrow(/exe/);
+  });
+
+  it('applies Windows and macOS app rules with an injected platform', () => {
+    const directory = {
+      exists: () => true,
+      stat: () => ({ isDirectory: () => true }),
+      canExecute: () => false,
+    };
+    const executable = {
+      exists: () => true,
+      stat: () => ({ isDirectory: () => false }),
+      canExecute: () => true,
+    };
+
+    expect(() =>
+      validatePathTarget(action({ type: 'app', target: 'C:\\Tools\\tool.exe' }), executable, 'win32'),
+    ).not.toThrow();
+    expect(() =>
+      validatePathTarget(action({ type: 'app', target: 'C:\\Tools\\tool.app' }), executable, 'win32'),
+    ).toThrow(/exe/);
+    expect(() =>
+      validatePathTarget(action({ type: 'app', target: '/Applications/Tool.app' }), directory, 'darwin'),
+    ).not.toThrow();
+    expect(() =>
+      validatePathTarget(action({ type: 'folder', target: '/Applications/Tool.app' }), directory, 'darwin'),
+    ).toThrow(/앱/);
+    expect(() =>
+      validatePathTarget(action({ type: 'app', target: '/usr/local/bin/tool' }), executable, 'darwin'),
+    ).not.toThrow();
+    expect(() =>
+      validatePathTarget(
+        action({ type: 'app', target: '/usr/local/bin/tool' }),
+        { ...executable, canExecute: () => false },
+        'darwin',
+      ),
+    ).toThrow(/실행 권한/);
+    expect(() =>
+      validateActionTarget(action({ type: 'uwp', target: 'Example.App!Main' }), 'darwin'),
+    ).toThrow(/Windows/);
   });
 
   it('limits labels, arguments, target length, and colors', () => {

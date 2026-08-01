@@ -10,6 +10,7 @@ import {
 } from '@dnd-kit/core';
 import { useEffect, useState } from 'react';
 import { getPageSlots } from '../../../shared/layout';
+import { assignHints } from '../../../shared/hintMap';
 import type { AppConfig, DeckItem } from '../../../shared/types';
 import { BackTile } from '../common/BackTile';
 import { EmptyTile } from '../common/EmptyTile';
@@ -25,6 +26,7 @@ interface PanelGridProps {
   onBack: () => void;
   onContextItem: (event: React.MouseEvent, item: DeckItem) => void;
   onContextEmpty: (event: React.MouseEvent, position: number) => void;
+  showHints: boolean;
 }
 
 function PanelItem({
@@ -32,6 +34,7 @@ function PanelItem({
   size,
   locked,
   failed,
+  hint,
   onClick,
   onContextMenu,
 }: {
@@ -39,8 +42,9 @@ function PanelItem({
   size: number;
   locked: boolean;
   failed: boolean;
-  onClick: () => void;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onContextMenu: (event: React.MouseEvent) => void;
+  hint?: string;
 }) {
   const drag = useDraggable({ id: `panel-item:${item.id}`, data: { id: item.id }, disabled: locked });
   const drop = useDroppable({ id: `panel-target:${item.id}`, data: { position: item.position }, disabled: locked });
@@ -58,7 +62,7 @@ function PanelItem({
       {...drag.attributes}
       {...drag.listeners}
     >
-      <KeyTile item={item} buttonSize={size} onClick={onClick} failed={failed} />
+      <KeyTile item={item} buttonSize={size} onClick={onClick} failed={failed} hint={hint} />
     </div>
   );
 }
@@ -102,8 +106,15 @@ export function PanelGrid({
   onBack,
   onContextItem,
   onContextEmpty,
+  showHints,
 }: PanelGridProps) {
   const slots = getPageSlots(items, config.grid, page, path.length > 0);
+  const hints = new Map(
+    assignHints(slots, config.keyboard.hintKeys).map((assignment) => [
+      assignment.itemId,
+      assignment.hint,
+    ]),
+  );
   const signature = slots.map((slot) => slot.kind === 'item' ? slot.item.id : `${slot.kind}:${slot.slot}`).join('|');
   const { ref: gridRef, onKeyDown: handleGridKeyDown } = useKeyboardGrid(config.grid.cols, signature);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 7 } }));
@@ -150,10 +161,14 @@ export function PanelGrid({
               />
             );
           }
-          const onClick = async () => {
+          const onClick = async (keepOpen: boolean) => {
             if (slot.item.kind === 'folder') onEnterFolder(slot.item.id);
             else {
-              const result = await window.api.button.launch({ path, id: slot.item.id });
+              const result = await window.api.button.launch({
+                path,
+                id: slot.item.id,
+                ...(keepOpen ? { keepOpen: true } : {}),
+              });
               if (!result.ok) setFailedId(slot.item.id);
             }
           };
@@ -164,7 +179,8 @@ export function PanelGrid({
               size={config.grid.buttonSize}
               locked={config.window.locked}
               failed={failedId === slot.item.id}
-              onClick={() => void onClick()}
+              hint={showHints ? hints.get(slot.item.id) : undefined}
+              onClick={(event) => void onClick(event.shiftKey)}
               onContextMenu={(event) => onContextItem(event, slot.item)}
             />
           );
