@@ -2,7 +2,7 @@
   "name": "stream-panel",
   "productName": "Stream Panel",
   "version": "1.0.0",
-  "description": "Windows 바탕화면에 항상 고정되는 Stream Deck 스타일 실행 패널",
+  "description": "Windows와 macOS 바탕화면에서 쓰는 Stream Deck 스타일 실행 패널",
   "main": "./out/main/index.js",
   "author": "deepsky616",
   "license": "MIT",
@@ -13,7 +13,9 @@
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
     "build:win": "npm run build && electron-builder --win --publish never",
-    "release:win": "npm run build && electron-builder --win --publish always"
+    "build:mac": "npm run build && electron-builder --mac --x64 --arm64 --publish never",
+    "release:win": "npm run build && electron-builder --win --publish always",
+    "release:mac": "npm run build && electron-builder --mac --x64 --arm64 --publish always"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

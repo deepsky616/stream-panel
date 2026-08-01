@@ -15,6 +15,14 @@ win:
       arch: [x64]
   icon: build/icon.ico
   artifactName: StreamPanel-${version}-Setup.${ext}
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.productivity
+  artifactName: StreamPanel-${version}-${arch}.${ext}
+  extendInfo:
+    LSUIElement: true
 nsis:
   oneClick: false
   perMachine: false

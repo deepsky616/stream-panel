@@ -1,6 +1,6 @@
 # Stream Panel — 구현 명세서 (v1.0)
 
-> Windows 바탕화면에 항상 떠 있는 **Elgato Stream Deck 스타일 런처**.
+> Windows·macOS 바탕화면에 항상 떠 있는 **Elgato Stream Deck 스타일 런처**.
 > 물리 장치 없이, 소프트웨어 패널 + 편집기 앱으로 스트림덱의 사용 흐름을 재현한다.
 > 이 문서는 **코드 작성 에이전트(Codex)가 이 문서만 읽고 처음부터 끝까지 구현**할 수 있도록 작성되었다.
 > 추측이 필요한 부분은 이미 "결정"으로 답이 적혀 있다. 명세에 없는 것만 자유롭게 판단한다.
@@ -10,9 +10,18 @@
 ## 0. 한 줄 목표
 
 사용자가 **링크(URL) / 폴더 / 파일 / 설치된 앱**을 편집기에서 키로 드래그해 배치하고 이름을 붙이면,
-바탕화면에 항상 고정된 패널의 해당 키를 눌러 즉시 실행할 수 있는 Windows 데스크톱 앱.
-GitHub 공개 저장소에 올리고 태그를 푸시하면 GitHub Actions가 Windows 설치 파일(.exe)을 빌드해
-릴리즈에 자동 첨부한다. 사용자는 설치 파일 하나만 받아 설치하면 바로 동작한다.
+바탕화면에 항상 고정된 패널의 해당 키를 눌러 즉시 실행할 수 있는 **Windows·macOS 데스크톱 앱**.
+GitHub 공개 저장소에 올리고 태그를 푸시하면 GitHub Actions가 Windows 설치 파일(.exe)과
+macOS 설치 파일(.dmg, arm64·x64)을 각각 빌드해 릴리즈에 자동 첨부한다.
+사용자는 자기 OS에 맞는 설치 파일 하나만 받아 설치하면 바로 동작한다.
+
+**플랫폼 지원 등급**
+
+| OS | 등급 | 비고 |
+|---|---|---|
+| Windows 10/11 (x64) | **1급** | 모든 기능. 자동 업데이트 동작 |
+| macOS 12+ (arm64 / x64) | **1급** | 모든 기능. **단 무서명 배포라 첫 실행 시 Gatekeeper 허용 필요, 자동 업데이트 미지원** (§10.1) |
+| Linux | 미지원 | 빌드 대상에서 제외 |
 
 ---
 
@@ -48,19 +57,26 @@ GitHub 공개 저장소에 올리고 태그를 푸시하면 GitHub Actions가 Wi
 | 작업표시줄 | 표시하지 않음 (`skipTaskbar: true`), 트레이로 제어 | 상시 실행 유틸리티 |
 | 전역 단축키 | `Ctrl+Alt+D` 표시/숨김 토글 (설정에서 변경 가능) | 가려졌을 때 즉시 호출 |
 | 패널 크기 | **수동 리사이즈 없음.** 그리드 설정에서 자동 계산 | Windows에서 투명 창 리사이즈는 깜빡임 버그가 잦음 |
+| 화면 가림 방지 | **실행 후 자동 숨김 + 가장자리 피크(peek)** 기본 켜짐 (§6.10) | 항상 최상위 창이 작업 화면을 가리는 문제를 해결. 소프트웨어 패널의 최대 약점 |
+| 키보드 실행 | **숫자 힌트 배지 + 키별 전역 단축키** (§6.11) | 마우스 없이 실행. 패널이 숨어 있어도 되므로 §6.10과 짝을 이룬다 |
 | 계층 구조 | 폴더 키로 무한 중첩 (실용상 깊이 5 제한) | 스트림덱 폴더 |
 | 저장소 | `github.com/deepsky616/stream-panel` (**공개**) | 릴리즈 다운로드·자동 업데이트에 인증 불필요 |
-| 설치 방식 | NSIS, **사용자 단위 설치**(`perMachine: false`) | UAC 관리자 권한 프롬프트 회피 |
-| 코드 서명 | v1.0에서는 **하지 않음** | 비용 문제. SmartScreen 경고 안내를 README에 명시 (§13) |
-| 자동 업데이트 | `electron-updater` + GitHub 프로바이더 | 공개 저장소라 토큰 불필요 |
+| 설치 방식 (Win) | NSIS, **사용자 단위 설치**(`perMachine: false`) | UAC 관리자 권한 프롬프트 회피 |
+| 설치 방식 (mac) | **DMG**, arm64·x64 각각 빌드 | 유니버설 바이너리는 용량이 두 배라 분리 배포 |
+| 코드 서명 | v1.0에서는 **양쪽 다 하지 않음** | 비용 문제. Windows는 SmartScreen 경고, macOS는 Gatekeeper 허용 절차를 README에 명시 (§13) |
+| 자동 업데이트 | `electron-updater` + GitHub 프로바이더. **Windows 전용** | macOS는 서명이 없으면 Squirrel.Mac이 거부한다 (§10.1) |
+| 플랫폼 분기 | 플랫폼 의존 코드는 **`services/<이름>/{index,windows,macos}.ts`로 분리** | 조건문을 코드 전체에 흩뿌리면 유지보수가 불가능해진다 (§6.0) |
 
 ### 2.1 v1.0 범위 (반드시 구현)
 
 - 패널 창: 키 클릭 실행, 폴더 진입/복귀, 페이지 전환, 드래그 이동, 잠금
+- **패널 노출 정책 3종** (§6.10): 실행 후 자동 숨김 · 가장자리 피크 · 유휴 시 반투명+클릭 통과
+- **키보드 실행 3종** (§6.11): 숫자 힌트 배지 · 키별 전역 단축키 · 전역 숫자 단축키(옵션)
 - 편집기 창: 키 그리드 + 액션 라이브러리 + 속성 편집 패널
 - 드래그 앤 드롭: 라이브러리→키, 키↔키 이동/교환, 키→폴더 안, 키→삭제, **OS 파일/폴더/URL 드롭**
-- 액션 4종: `url` / `folder` / `file` / `app`(+`uwp`) + **폴더 키**
-- 설치된 앱 목록 (시작 메뉴 스캔 + Microsoft Store 앱)
+- 액션 4종: `url` / `folder` / `file` / `app`(+Windows 전용 `uwp`) + **폴더 키**
+- 설치된 앱 목록 — Windows: 시작 메뉴 스캔 + Microsoft Store 앱 / macOS: `.app` 번들 스캔
+- **Windows·macOS 양쪽 빌드 및 릴리즈** (§12)
 - 아이콘: 자동 추출(exe 아이콘·파비콘) / 이모지 / 커스텀 이미지(144×144 정규화) / 글자
 - 복사·잘라내기·붙여넣기·복제·삭제 (마우스 + 키보드)
 - 트레이, 전역 단축키, 로그인 시 자동 시작
@@ -71,7 +87,8 @@ GitHub 공개 저장소에 올리고 태그를 푸시하면 GitHub Actions가 Wi
 
 프로필(여러 세트 전환), 멀티 액션(키 하나에 여러 동작), 키보드 매크로 전송,
 플러그인 시스템, 클라우드 동기화, 소셜 계정 연동, 다이얼/터치스트립,
-macOS/Linux 정식 지원(개발용 실행만 가능하면 됨).
+**Linux 지원**, **macOS 코드 서명·공증**, **macOS 자동 업데이트**,
+**설정 파일의 플랫폼 간 이식**(경로 체계가 달라 URL 키 외에는 옮겨갈 수 없다).
 
 ---
 
@@ -104,7 +121,12 @@ ESLint + Prettier      — 린트/포맷
 ```ts
 export type ActionType = 'url' | 'folder' | 'file' | 'app' | 'uwp';
 /** 'folder'는 "폴더 열기" 액션. 계층 구조를 만드는 폴더 키는 FolderItem이다 — 혼동 주의. */
-/** 'uwp'는 Microsoft Store 앱. target에 AppUserModelID가 들어간다. */
+/** 'uwp'는 Windows 전용. Microsoft Store 앱이며 target에 AppUserModelID가 들어간다.
+ *  macOS에서는 이 타입을 생성할 수 없고, 설정에 남아 있으면 키에 '이 플랫폼에서
+ *  지원되지 않는 항목' 배지를 표시하고 실행 시 BLOCKED를 반환한다. */
+/** 'app'의 target 형식은 플랫폼마다 다르다.
+ *  Windows: 'C:\Program Files\...\app.exe'  (절대 경로)
+ *  macOS:   '/Applications/Safari.app'      (.app 번들 절대 경로) */
 
 export type IconSpec =
   | { kind: 'auto' }                    // 런타임에 target으로부터 추출 + 캐시
@@ -118,6 +140,8 @@ interface DeckItemBase {
   icon: IconSpec;
   color: string;     // '#RRGGBB'. 키 배경 틴트
   position: number;  // 같은 계층·같은 그리드 내 0-based 슬롯 인덱스 (§4.3)
+  globalHotkey?: string; // Electron accelerator. 지정하면 앱이 백그라운드여도 실행 (§6.11-B)
+                         // 수식키(Control/Alt/Shift/Super) 최소 1개 필수. 전체 최대 20개
 }
 
 export interface ActionItem extends DeckItemBase {
@@ -151,11 +175,36 @@ export interface WindowConfig {
   hideOnLaunch: boolean; // 기본 false
 }
 
+/** 패널이 화면을 가리지 않게 하는 노출 정책 (§6.10) */
+export interface BehaviorConfig {
+  hideAfterLaunch: boolean;        // 액션 실행 후 패널을 숨긴다. 기본 true
+  hideAfterLaunchDelayMs: number;  // 숨김까지 지연. 기본 180 (눌림 애니메이션이 보이도록)
+  edgePeek: boolean;               // 숨김 상태에서 가장자리 트리거 스트립 표시. 기본 true
+  peekEdge: 'right' | 'left' | 'top' | 'bottom'; // 기본 'right'. 패널 위치에서 자동 추론
+  peekThickness: number;           // 트리거 스트립 두께 px. 4~12, 기본 6
+  peekDelayMs: number;             // 스트립에 머문 뒤 나타나기까지. 기본 220 (오작동 방지)
+  idleFade: boolean;               // 유휴 시 반투명 + 클릭 통과. 기본 false
+  idleFadeAfterMs: number;         // 기본 4000
+  idleOpacity: number;             // 0.1~0.9, 기본 0.25
+}
+
+/** 키보드만으로 실행하기 위한 설정 (§6.11) */
+export interface KeyboardConfig {
+  quickHints: 'on-focus' | 'always' | 'never';  // 힌트 배지 표시 조건. 기본 'on-focus'
+  hintKeys: string;                             // 힌트 문자 순서. 기본 §6.11-A의 40자
+  hideAfterHotkeyLaunch: boolean;               // 힌트로 실행 후 패널 숨김. 기본 true
+  globalNumberHotkeys: boolean;                 // 전역 숫자 단축키 사용. 기본 false
+  globalNumberModifier: string;                 // 기본 'Control+Alt' → Control+Alt+1..0
+}
+
 export interface AppConfig {
   version: number;                      // 스키마 버전. 현재 1
+  platform: 'win32' | 'darwin';         // 이 설정이 만들어진 플랫폼 (§4.6)
   root: DeckItem[];                     // 최상위 키 목록
   grid: GridConfig;
   window: WindowConfig;
+  behavior: BehaviorConfig;
+  keyboard: KeyboardConfig;
   theme: 'dark' | 'light' | 'system';   // 기본 'system'
   hotkey: string;                       // Electron accelerator. 기본 'Control+Alt+D'
   launchAtLogin: boolean;               // 기본 false
@@ -246,7 +295,33 @@ export type LaunchResult =
 - 파비콘 캐시: `app.getPath('userData')/cache/favicons/<host>.png`
 - 앱 목록 캐시: `app.getPath('userData')/cache/apps.json` (TTL 24시간)
 
-### 4.5 마이그레이션
+### 4.5 플랫폼별 기본값 차이
+
+`defaults.ts`는 `process.platform`에 따라 다음 값을 다르게 준다. 나머지는 동일하다.
+
+| 필드 | Windows | macOS |
+|---|---|---|
+| `hotkey` | `'Control+Alt+D'` | `'Command+Alt+D'` — 실제 구현은 `'CommandOrControl+Alt+D'` 하나로 통일 |
+| `keyboard.globalNumberModifier` | `'Control+Alt'` | `'Command+Alt'` — 역시 `'CommandOrControl+Alt'` |
+| 예시 키 2번 대상 | `app.getPath('downloads')` | 동일 (`getPath`가 알아서 처리) |
+| `autoUpdate` | `true` | **`false` 고정** — macOS는 자동 업데이트를 지원하지 않는다 (§10.1) |
+
+단축키 표기는 저장할 때 `CommandOrControl` 형태로 두고, **UI에 보여줄 때만** 플랫폼에 맞게
+`Ctrl` / `⌘`으로 변환한다 (`shared/accelerator.ts`의 `formatAccelerator()`).
+
+### 4.6 설정의 플랫폼 이식성
+
+`config.platform`에 설정을 만든 플랫폼을 기록한다. 앱 시작 시 현재 플랫폼과 다르면:
+
+- **설정을 지우거나 마이그레이션하지 않는다.** 사용자가 파일을 옮겨왔을 수 있다.
+- `url` 타입 키는 그대로 동작한다.
+- `folder`/`file`/`app`/`uwp` 키는 경로가 유효하지 않을 가능성이 높다. 앱 시작 시 존재 여부를
+  검사해, 없으면 키에 **흐린 처리 + 경고 배지**를 붙이고 툴팁에
+  "다른 운영체제에서 만든 항목입니다. 대상을 다시 지정해 주세요"를 표시한다.
+- 배지가 붙은 키를 클릭하면 실행 대신 편집기가 열리며 해당 키가 선택된다.
+- 사용자가 대상을 다시 지정하면 `config.platform`을 현재 플랫폼으로 갱신한다.
+
+### 4.7 마이그레이션
 
 `electron-store`의 `migrations` 옵션을 사용한다. v1.0은 초기 버전이라 항목은 비어 있지만
 **구조와 테스트는 지금 만들어 둔다.** `config.version`이 알 수 없는 미래 값이면
@@ -271,7 +346,7 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `deck:remove` | `{ path: string[]; id: string }` | `AppConfig` | 항목 삭제 (폴더면 하위 전체) |
 | `deck:move` | `{ from: {path,id}; to: {path,position} }` | `AppConfig` | 이동. 대상 슬롯이 차 있으면 **교환** |
 | `deck:duplicate` | `{ path: string[]; id: string }` | `AppConfig` | 다음 빈 슬롯에 복제 |
-| `button:launch` | `{ path: string[]; id: string }` | `LaunchResult` | 액션 실행 (§7) |
+| `button:launch` | `{ path: string[]; id: string; keepOpen?: boolean }` | `LaunchResult` | 액션 실행 (§7). `keepOpen`이면 자동 숨김을 건너뛴다 |
 | `picker:folder` | — | `string \| null` | 폴더 선택 다이얼로그 |
 | `picker:file` | — | `string \| null` | 파일 선택 다이얼로그 |
 | `picker:executable` | — | `{target,args,workingDir,name} \| null` | `.exe`/`.lnk` 선택. `.lnk`면 자동 해석 |
@@ -280,9 +355,12 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `apps:list` | `{ refresh?: boolean }` | `InstalledApp[]` | 설치된 앱 목록 (§6.1) |
 | `icon:resolve` | `{ type: ActionType; target: string }` | `string \| null` | 아이콘 data URL (캐시 사용) |
 | `drop:classify` | `{ paths: string[]; text?: string }` | `Partial<ActionItem>[]` | OS 드롭 대상을 액션으로 변환 (§9.6) |
-| `window:hide` | — | `void` | 패널 숨기기 |
+| `window:hide` | — | `void` | 패널 숨기기 (피크 스트립이 켜져 있으면 스트립으로 전환) |
+| `window:show` | — | `void` | 패널 다시 표시 (피크 스트립이 호출) |
 | `window:relayout` | — | `void` | 그리드 변경 후 패널 크기 재계산 |
+| `window:set-idle` | `boolean` | `void` | 유휴 반투명/클릭 통과 진입·해제 (§6.10 C) |
 | `editor:open` | `{ path?: string[]; slot?: number }` | `void` | 편집기 창 열기/포커스. 슬롯 선택 상태로 진입 |
+| `hotkey:validate` | `{ accelerator: string; itemId?: string }` | `{ok:true} \| {ok:false; reason:string}` | 전역 단축키 등록 가능 여부 검사 (§6.11-B). 실제 등록은 하지 않고 시험 등록 후 즉시 해제 |
 | `update:check` | — | `{status, version?}` | 수동 업데이트 확인 |
 | `app:info` | — | `{version, platform, isPackaged}` | 정보 표시용 |
 | `shell:reveal` | `string` | `void` | 탐색기에서 위치 열기 |
@@ -310,8 +388,9 @@ contextBridge.exposeInMainWorld('api', {
   icon:   { resolve, importPath },
   apps:   { list },
   drop:   { classify },
-  window: { hide, relayout },
+  window: { hide, show, relayout, setIdle },
   editor: { open },
+  hotkey: { validate },
   update: { check },
   app:    { info },
   shell:  { reveal },
@@ -323,11 +402,45 @@ contextBridge.exposeInMainWorld('api', {
 
 ---
 
-## 6. Windows 전용 기능 상세
+## 6. 플랫폼 통합 상세 (Windows · macOS)
 
 이 절이 가장 실수하기 쉬운 부분이다. **명세대로 정확히 구현한다.**
 
-### 6.1 설치된 앱 목록 수집 (`appScanner.ts`)
+### 6.0 플랫폼 분기 원칙
+
+플랫폼 의존 코드는 **파일 단위로 분리한다.** `if (process.platform === 'win32')`를
+코드 전체에 흩뿌리면 유지보수가 불가능해지고, macOS에서 Windows 전용 API를 호출해
+크래시하는 사고가 반드시 난다.
+
+```
+src/main/services/appScanner/
+  index.ts     // 플랫폼을 골라 구현체를 반환. 이 파일에만 분기가 있다
+  types.ts     // AppScanner 인터페이스
+  windows.ts   // shell.readShortcutLink, Get-StartApps
+  macos.ts     // .app 번들 스캔, Info.plist 파싱
+```
+
+같은 패턴을 `launcher/`, `platform/`(창·트레이·자동시작 설정값)에 적용한다.
+
+```ts
+// index.ts 형태
+export function createAppScanner(platform = process.platform): AppScanner {
+  switch (platform) {
+    case 'win32':  return new WindowsAppScanner();
+    case 'darwin': return new MacAppScanner();
+    default:       return new NullAppScanner();   // 빈 목록 반환. 절대 throw 하지 않는다
+  }
+}
+```
+
+- **`platform` 인자를 주입 가능하게 만든다.** 테스트에서 macOS 머신 위에서도
+  Windows 구현의 순수 로직(필터링 규칙 등)을 검증할 수 있어야 한다.
+- 어떤 플랫폼에서도 **throw 대신 안전한 기본값을 반환**한다.
+- 플랫폼별 상수(창 레벨, 트레이 아이콘 경로, 기본 단축키)는 `main/platform/index.ts`에 모은다.
+
+### 6.1 설치된 앱 목록 수집 (`services/appScanner/`)
+
+#### 6.1.1 Windows (`appScanner/windows.ts`)
 
 두 소스를 합치고 이름 기준으로 중복을 제거한다.
 
@@ -363,16 +476,42 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
   `!`가 없으면 소스 A와 중복되는 데스크톱 앱이므로 버린다.
 - 타임아웃 5초. 실패하면 **조용히 빈 배열을 반환**하고 소스 A만 쓴다. 절대 앱을 죽이지 않는다.
 
-**캐싱 및 성능**
+#### 6.1.2 macOS (`appScanner/macos.ts`)
+
+다음 디렉터리에서 `.app`으로 끝나는 항목을 찾는다. `.app`은 파일이 아니라 **디렉터리**다.
+
+```
+/Applications
+/Applications/Utilities          (하위 1단계까지만 재귀)
+/System/Applications
+/System/Applications/Utilities
+~/Applications
+```
+
+- 깊이 제한 **2단계**. 그 이상 파고들면 `.app` 번들 내부까지 훑게 되어 매우 느려진다.
+  `.app` 디렉터리를 만나면 **그 안으로 들어가지 않는다.**
+- 표시 이름은 `<앱>.app/Contents/Info.plist`의 `CFBundleDisplayName`,
+  없으면 `CFBundleName`, 그것도 없으면 번들 파일명(`.app` 제외)을 쓴다.
+  - plist는 **바이너리 형식일 수 있다.** `plutil -convert json -o - <plist경로>`로 변환해 읽거나,
+    실패하면 파일명으로 폴백한다. plist 파싱 실패가 스캔 전체를 중단시키면 안 된다.
+  - 한글 이름(예: `계산기.app`)이 깨지지 않도록 출력을 UTF-8로 다룬다.
+- 제외 규칙: 이름이 `Uninstall`/`제거`로 시작하는 번들, `.app` 안에 중첩된 `.app`.
+- `InstalledApp`으로 변환:
+  - `type: 'app'`, `target: '/Applications/Safari.app'`, `args: []`, `source: 'start-menu'`
+    → **`source` 필드는 그대로 두되 macOS에서는 항상 `'start-menu'`를 쓴다.**
+      값 자체에 의미를 두지 말고 UI에서 노출하지 않는다.
+- `mdfind`(Spotlight)를 쓰지 않는다. Spotlight 인덱스가 꺼져 있으면 빈 결과가 나오고,
+  디렉터리 스캔이 더 단순하고 예측 가능하다.
+
+#### 6.1.3 공통 — 캐싱 및 성능
 
 - 결과를 메모리 + `cache/apps.json`에 캐시 (TTL 24시간). `refresh: true`면 재스캔.
 - `fs.promises`로 비동기 수행한다.
 - **아이콘 추출을 목록 반환 시점에 하지 않는다.** 이름·경로만 먼저 반환하고,
   렌더러가 화면에 보이는 항목만 `icon:resolve`로 개별 요청한다 (지연 로딩).
 - 스캔 중에는 라이브러리에 스켈레톤을 표시한다.
-
-**비-Windows 폴백:** `process.platform !== 'win32'`이면 빈 배열을 반환하고,
-라이브러리에 "설치된 앱 목록은 Windows에서만 지원됩니다" 안내를 표시한다.
+- 지원되지 않는 플랫폼에서는 빈 배열을 반환하고, 라이브러리에
+  "이 운영체제에서는 설치된 앱 목록을 지원하지 않습니다" 안내를 표시한다.
 
 ### 6.2 아이콘 추출 (`iconService.ts`)
 
@@ -382,10 +521,12 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
    현재 대상 파일과 같으면 즉시 반환.
 2. `type`이 `app` / `file` / `folder`:
    - `await app.getFileIcon(target, { size: 'large' })` → `NativeImage`
+   - **양쪽 플랫폼에서 모두 동작한다.** macOS에서는 `.app` 번들 경로를 그대로 넘기면
+     번들 아이콘(`.icns`)을 뽑아준다. 별도 처리가 필요 없다.
    - `image.isEmpty()`면 `null` 반환 → 렌더러가 글자 아이콘으로 폴백
    - `image.toPNG()`를 캐시에 쓰고 `image.toDataURL()` 반환
-3. `type`이 `uwp`: `getFileIcon`이 동작하지 않는다. **`null`을 반환**하고 글자 아이콘으로 폴백한다.
-   (UWP 아이콘 추출은 매니페스트 파싱이 필요해 v1.0 범위 밖)
+3. `type`이 `uwp`(Windows 전용): `getFileIcon`이 동작하지 않는다. **`null`을 반환**하고
+   글자 아이콘으로 폴백한다. (UWP 아이콘 추출은 매니페스트 파싱이 필요해 v1.0 범위 밖)
 4. `type`이 `url`: `faviconService`로 넘긴다 (§6.3).
 5. **모든 실패는 예외를 던지지 말고 `null`을 반환한다.**
 
@@ -402,16 +543,25 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
 ### 6.4 로그인 시 자동 시작 (`autoLaunch.ts`)
 
 ```ts
+// Windows
 app.setLoginItemSettings({
   openAtLogin: enabled,
   path: process.execPath,
   args: ['--hidden'],
 });
+
+// macOS — path/args 를 넘기지 않는다. openAsHidden 을 쓴다.
+app.setLoginItemSettings({
+  openAtLogin: enabled,
+  openAsHidden: true,
+});
 ```
 
 - 개발 모드(`!app.isPackaged`)에서는 호출하지 않는다. 설정 UI는 비활성화하고
   "설치 후 사용 가능" 툴팁을 표시한다.
-- `process.argv.includes('--hidden')`이면 패널을 숨긴 채 트레이로만 시작한다.
+- Windows는 `process.argv.includes('--hidden')`으로, macOS는
+  `app.getLoginItemSettings().wasOpenedAsHidden`로 숨김 시작 여부를 판별한다.
+  두 판별을 `platform/index.ts`의 `shouldStartHidden()` 하나로 감싼다.
 
 ### 6.5 패널 창 (`panelWindow.ts`)
 
@@ -430,10 +580,27 @@ new BrowserWindow({
   webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
 });
 
-win.setAlwaysOnTop(config.window.alwaysOnTop, 'screen-saver');
+win.setAlwaysOnTop(config.window.alwaysOnTop, PLATFORM.alwaysOnTopLevel);
 win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 win.setOpacity(config.window.opacity);
 ```
+
+**플랫폼별 창 설정** (`main/platform/index.ts`에 상수로 모은다)
+
+| 항목 | Windows | macOS |
+|---|---|---|
+| `alwaysOnTopLevel` | `'screen-saver'` | **`'floating'`** — `'screen-saver'`는 macOS에서 메뉴 바·Mission Control 같은 시스템 UI까지 덮어버려 사용자를 가둔다. 절대 쓰지 않는다 |
+| 작업표시줄/Dock 숨김 | `skipTaskbar: true` | `app.dock.hide()` + `Info.plist`에 `LSUIElement: true` (§12.2 `mac.extendInfo`) |
+| 창 배경 | `transparent: true` + CSS 배경 | 동일. 추가로 `vibrancy: 'under-window'`를 켜면 네이티브 블러가 적용돼 더 자연스럽다 (선택) |
+| `hasShadow` | `false` | `false` |
+| 트래픽 라이트 버튼 | 해당 없음 | `frame: false`이므로 나타나지 않는다. `titleBarStyle`을 설정하지 않는다 |
+| 종료 동작 | `close` 가로채고 숨김 | 동일. 추가로 **`window-all-closed`에서 `app.quit()`를 호출하지 않는다** (macOS 기본 동작이 이미 그렇지만 명시적으로 막는다) |
+
+**macOS 주의 — `app.dock.hide()`와 포커스**
+
+`LSUIElement: true`로 만들면 앱이 백그라운드 액세서리 앱이 되어, 창을 띄워도 키보드
+포커스를 받지 못하는 경우가 있다. §6.11-A의 힌트 입력이 먹지 않게 되므로
+`showPanel()`에서 `app.focus({ steal: true })`를 반드시 호출한다 (§6.11-A 참조).
 
 **크기 계산 공식** (`window:relayout`):
 
@@ -469,17 +636,37 @@ FOOTER_H   = 26  (페이지가 2개 이상이거나 폴더 경로를 표시할 �
 6. 아이콘이 교체·삭제될 때 이전 파일을 지운다 (고아 파일 방지).
    앱 시작 시 `config`에서 참조되지 않는 `icons/*.png`를 정리한다.
 
-### 6.7 트레이 (`tray.ts`)
+### 6.7 트레이 / 메뉴 막대 (`tray.ts`)
 
 메뉴: `패널 표시/숨기기` · `편집기 열기` · `설정...` · `업데이트 확인` · 구분선 · `종료`
-트레이 좌클릭 = 표시/숨김 토글. 툴팁 `Stream Panel v{version}`.
+좌클릭 = 표시/숨김 토글. 툴팁 `Stream Panel v{version}`.
+
+**아이콘 에셋이 플랫폼마다 다르다.**
+
+| | Windows | macOS |
+|---|---|---|
+| 파일 | `resources/tray.ico` (16/24/32 멀티사이즈) | `resources/trayTemplate.png` (16×16) + `resources/trayTemplate@2x.png` (32×32) |
+| 형식 | 컬러 | **단색 실루엣 + 알파.** 파일명이 `Template`으로 끝나야 macOS가 템플릿 이미지로 인식해 다크/라이트 모드에 맞춰 자동 반전한다 |
+| 로드 | `nativeImage.createFromPath('tray.ico')` | `nativeImage.createFromPath('trayTemplate.png')` → `image.setTemplateImage(true)` |
+
+- macOS에서 컬러 아이콘을 쓰면 다크 모드에서 보이지 않게 된다. 반드시 템플릿으로 만든다.
+- `업데이트 확인` 항목은 macOS에서 **`릴리즈 페이지 열기`로 라벨을 바꾸고**
+  브라우저로 GitHub 릴리즈를 연다 (§10.1 — macOS는 자동 업데이트를 하지 않는다).
 
 ### 6.8 전역 단축키 (`shortcuts.ts`)
 
-- 시작 시 `config.hotkey` 등록.
+- 시작 시 `config.hotkey`(패널 표시/숨김 토글) 등록.
 - 등록 실패(다른 앱이 선점)하면 `toast`로 알리고 설정 창에서 다시 지정하도록 안내한다.
 - 설정에서 변경 시 기존 것을 `unregister` 후 새로 등록한다. 실패하면 이전 값으로 롤백한다.
 - `will-quit`에서 `globalShortcut.unregisterAll()`.
+- 키별 전역 단축키와 전역 숫자 단축키도 이 모듈이 함께 관리한다 (§6.11-B, §6.11-C).
+  등록 목록을 하나의 레지스트리로 유지해 중복 등록·해제 누락이 없게 한다.
+- **accelerator 표기는 `CommandOrControl`로 저장한다.** Electron이 Windows에서는 `Ctrl`,
+  macOS에서는 `⌘`으로 해석한다. `Control`을 하드코딩하면 macOS에서 어색한 조합이 된다.
+- 화면에 보여줄 때만 `shared/accelerator.ts`의 `formatAccelerator()`로 변환한다
+  (`CommandOrControl+Alt+D` → Windows `Ctrl+Alt+D` / macOS `⌘⌥D`).
+- macOS에서 `globalShortcut`은 별도 권한 없이 동작한다. 접근성 권한을 요구하지 않는다.
+  (키 입력을 가로채는 것이 아니라 시스템에 핫키를 등록하는 방식이기 때문)
 
 ### 6.9 단일 인스턴스
 
@@ -488,6 +675,215 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 app.on('second-instance', () => showPanel());
 ```
+
+### 6.10 패널 노출 정책 — 화면 가림 방지 (`services/visibility.ts`)
+
+**해결하려는 문제:** 항상 최상위 패널이 링크·폴더·앱을 실행한 뒤에도 화면 우상단에 남아
+작업 화면을 가린다. 물리 장치인 스트림덱에는 없는, 소프트웨어 패널만의 문제다.
+
+세 가지 정책을 겹쳐서 제공한다. A·B는 기본으로 켜고, C는 선택이다.
+
+#### A. 실행 후 자동 숨김 (`behavior.hideAfterLaunch`, 기본 `true`)
+
+- `button:launch`가 `{ok:true}`를 반환하면 `hideAfterLaunchDelayMs`(기본 180ms) 뒤에 패널을 숨긴다.
+  지연을 두는 이유는 키의 눌림 애니메이션이 보인 뒤 사라지게 하기 위함이다.
+- **폴더 키 진입은 숨기지 않는다.** 실제 액션 실행에만 적용된다.
+- 실행이 실패하면(`ok:false`) 숨기지 않는다. 사용자가 오류 토스트를 봐야 하기 때문이다.
+- **연속 실행 예외:** `Shift`를 누른 채 클릭하면 `keepOpen: true`로 실행되어 패널이 남는다.
+  이 동작을 키 툴팁과 README에 안내한다.
+- 편집기 창에서의 테스트 실행에는 적용되지 않는다.
+
+#### B. 가장자리 피크 (`behavior.edgePeek`, 기본 `true`)
+
+작업표시줄 자동 숨기기와 같은 방식. 숨김 상태에서도 단축키를 외우지 않고 되부를 수 있게 한다.
+
+- 패널이 숨겨질 때, 별도의 **트리거 스트립 창**을 화면 가장자리에 붙여 표시한다.
+  ```ts
+  new BrowserWindow({
+    width: peekThickness,           // 기본 6px
+    height: 160,
+    x: workArea.x + workArea.width - peekThickness,  // peekEdge='right'
+    y: 패널이 숨기 직전에 있던 y 위치 (workArea 안으로 클램프),
+    frame: false, transparent: true, resizable: false, skipTaskbar: true,
+    focusable: false, hasShadow: false, alwaysOnTop: true,
+  });
+  ```
+- 이 창은 **포커스를 받지 않는다**(`focusable: false`). 다른 앱의 포커스를 빼앗으면 안 된다.
+- 스트립 렌더러가 `mouseenter`를 감지하면 `peekDelayMs`(기본 220ms) 타이머를 건다.
+  타이머 만료 전에 `mouseleave`가 오면 취소한다 → 마우스가 가장자리를 스쳐 지나갈 때
+  오작동으로 튀어나오는 것을 막는다.
+- 타이머가 만료되면 `window:show` → 패널이 슬라이드 인하고 스트립은 숨는다.
+- 스트립 시각 디자인: 평소 `--accent` 25% 알파의 얇은 띠, 호버 시 100%로 밝아지고
+  가운데에 `‹` 모양 화살표가 나타난다. 존재를 알리되 거슬리지 않아야 한다.
+- **`peekEdge` 자동 추론:** 패널을 숨기는 시점에 패널 중심이 작업 영역의 어느 가장자리에
+  가장 가까운지 계산해 자동 결정한다. 설정에서 수동 고정도 가능하다.
+- `edgePeek`이 꺼져 있으면 스트립을 만들지 않는다. 이때는 `Ctrl+Alt+D`와 트레이가 유일한 복귀 수단이다.
+- 스트립 창은 패널이 보이는 동안 항상 `hide()` 상태다. 두 창이 동시에 보이면 안 된다.
+
+#### C. 유휴 시 반투명 + 클릭 통과 (`behavior.idleFade`, 기본 `false`)
+
+패널을 계속 보이게 두고 싶은 사용자를 위한 대안. A와 함께 켜도 되지만 보통은 A 대신 쓴다.
+
+- 패널 렌더러가 루트 요소의 `mouseenter`/`mouseleave`를 추적한다.
+- `mouseleave` 후 `idleFadeAfterMs`(기본 4000ms)가 지나면 `window:set-idle(true)` 호출:
+  ```ts
+  win.setOpacity(behavior.idleOpacity);                    // 기본 0.25
+  win.setIgnoreMouseEvents(true, { forward: true });       // 클릭이 뒤 창으로 통과
+  ```
+- `forward: true` 덕분에 창은 여전히 `mousemove`를 받는다. 커서가 패널 영역으로 다시 들어오면
+  `window:set-idle(false)`로 복귀한다:
+  ```ts
+  win.setOpacity(config.window.opacity);
+  win.setIgnoreMouseEvents(false);
+  ```
+- 복귀 판정은 렌더러의 `mousemove` 좌표로 한다. 커서 위치 폴링(`setInterval`)을 쓰지 않는다.
+- **주의:** `setIgnoreMouseEvents(true)` 상태에서 창을 드래그할 수 없다. 유휴 상태에서
+  타이틀바 드래그를 시도하면 먼저 복귀부터 되어야 한다 (커서 진입 → 즉시 복귀 → 그 다음 드래그).
+- `prefers-reduced-motion`이면 페이드 트랜지션 없이 즉시 전환한다.
+
+#### 상호작용 규칙
+
+| 상황 | 동작 |
+|---|---|
+| A 켬 + B 켬 (기본) | 실행 → 패널 숨김 → 가장자리 스트립 표시 → 마우스 대면 복귀 |
+| A 켬 + B 끔 | 실행 → 패널 숨김 → `Ctrl+Alt+D` 또는 트레이로만 복귀 |
+| A 끔 + C 켬 | 패널이 남지만 4초 뒤 흐려지고 클릭이 통과됨 |
+| A 켬 + C 켬 | 실행 시 숨김이 우선. 되돌아왔을 때만 C가 작동 |
+| `window.locked === true` | A·B·C 모두 그대로 동작한다 (잠금은 편집 잠금이지 표시 잠금이 아니다) |
+| 편집기 창이 열려 있음 | A를 일시 중지한다. 편집 중에 패널이 사라지면 결과를 확인할 수 없다 |
+
+#### 플랫폼 차이
+
+정책 A·C는 양쪽에서 동일하게 동작한다. 정책 B(가장자리 피크)만 다음을 지킨다.
+
+- 트리거 스트립 위치는 항상 `screen.getDisplayNearestPoint().workArea` 기준으로 계산한다.
+  macOS의 메뉴 막대와 Dock, Windows의 작업표시줄이 `workArea`에서 이미 제외되므로
+  이 값만 쓰면 양쪽 모두 올바른 위치에 붙는다. **화면 전체 크기(`bounds`)를 쓰면 안 된다.**
+- macOS에서 `peekEdge: 'left'`는 화면 왼쪽 끝의 Mission Control 핫코너와 겹칠 수 있다.
+  기본값 `'right'`를 유지하고, 사용자가 바꾸면 그대로 따른다.
+- 트리거 스트립 창은 macOS에서도 `focusable: false`로 만든다.
+  추가로 `alwaysOnTopLevel`을 패널과 동일하게 `'floating'`으로 맞춘다.
+- `setIgnoreMouseEvents(true, { forward: true })`는 양쪽 모두 지원된다.
+
+### 6.11 키보드 실행 — 마우스 없이 쓰기 (`shared/hintMap.ts`, `shortcuts.ts`)
+
+**해결하려는 문제:** §6.10 때문에 패널이 자주 숨어 있다. 숨은 패널을 마우스로 다시 꺼내
+클릭하는 것보다, 키보드로 바로 실행하는 편이 훨씬 빠르다.
+
+세 가지 방식을 제공한다. A는 항상 동작하고, B는 키별 옵트인, C는 전체 옵트인이다.
+
+#### A. 숫자 힌트 배지 (`keyboard.quickHints`, 기본 `'on-focus'`)
+
+`Ctrl+Alt+D` → 패널이 뜨고 포커스를 받는다 → 각 키 좌상단에 힌트 문자 배지가 나타난다 →
+문자를 누르면 즉시 실행된다.
+
+**힌트 배정 규칙** (`shared/hintMap.ts`에 순수 함수로 구현하고 단위 테스트한다)
+
+```ts
+const DEFAULT_HINT_KEYS =
+  '1234567890qwertyuiopasdfghjkl;zxcvbnm,./';   // 40자
+
+// 현재 보고 있는 계층·페이지의 아이템만 대상으로, position 오름차순으로 배정한다.
+// 빈 슬롯은 건너뛴다 → 3번 슬롯이 비어 있으면 4번 슬롯이 힌트 '3'을 받는다.
+```
+
+- **힌트는 "현재 화면에 보이는 키"에만 배정된다.** 페이지를 넘기거나 폴더에 들어가면
+  1번부터 다시 배정된다.
+- 빈 슬롯을 건너뛰므로 사용자는 **눈에 보이는 순서대로 1, 2, 3**을 누르면 된다.
+  (슬롯 인덱스와 힌트 번호는 다를 수 있다. 이게 의도된 동작이다)
+- 한 화면에 40개를 넘는 키가 있으면 41번째부터는 힌트를 받지 못한다.
+  화살표 키 + `Enter`로 접근한다 (그리드 상한 8×6=48이라 극단적인 설정에서만 발생).
+  두 글자 힌트는 v1.1로 미룬다.
+- 힌트 문자 순서는 `keyboard.hintKeys`로 바꿀 수 있다 (예: 한글 자판 사용자를 위한 재배열).
+  중복 문자·빈 문자열은 거부하고 기본값으로 되돌린다.
+
+**연쇄 입력 (폴더 파고들기)**
+
+- 폴더 키의 힌트를 누르면 **실행이 아니라 진입**이다. 진입 즉시 안쪽 키에 새 힌트가 배정되므로
+  `3` → `2`처럼 연달아 누를 수 있다.
+- 폴더 안에서 `Backspace`는 상위로 복귀한다. `↩ 뒤로` 키는 힌트 문자를 받지 않는다
+  (숫자 순서가 어긋나는 것을 막기 위해).
+- 연쇄 입력 중에는 타임아웃을 두지 않는다. `Esc`로 언제든 패널을 닫는다.
+
+**실행 후 동작**
+
+- `keyboard.hideAfterHotkeyLaunch`(기본 `true`)면 실행 후 패널을 숨긴다 (§6.10-A와 동일 경로).
+- `Shift` + 힌트 문자 = `keepOpen: true`. 패널이 남아 연달아 실행할 수 있다.
+- 폴더 진입은 실행이 아니므로 숨기지 않는다.
+
+**배지 표시 조건 (`quickHints`)**
+
+| 값 | 동작 |
+|---|---|
+| `'on-focus'` (기본) | 패널이 포커스를 가진 동안에만 배지 표시. 마우스로 쓸 땐 화면이 깨끗하다 |
+| `'always'` | 항상 표시 |
+| `'never'` | 배지를 숨기되 **키 입력은 그대로 동작한다** (외워서 쓰는 사용자용) |
+
+**배지 디자인:** 키 좌상단, 16×16, `border-radius: 4px`, 배경 `--accent` 85% 알파,
+흰색 11px 볼드 문자. 아이콘을 가리지 않도록 `z-index`만 올리고 크기를 키우지 않는다.
+
+**포커스 확보 — 양쪽 플랫폼 모두 함정이 있다.**
+Windows는 포그라운드 락 때문에, macOS는 `LSUIElement` 액세서리 앱이라는 이유로
+백그라운드에서 창에 포커스를 주는 것이 막힐 수 있다. `showPanel()`은 다음 순서로 수행한다.
+
+```ts
+if (process.platform === 'darwin') {
+  app.focus({ steal: true });      // LSUIElement 앱이 키보드 포커스를 가져오려면 필수
+}
+win.setAlwaysOnTop(true, PLATFORM.alwaysOnTopLevel);
+win.show();
+win.moveTop();
+win.focus();
+```
+
+포커스를 받지 못하면 힌트 입력이 먹지 않으므로, **`webContents.on('blur')`에서 배지를 숨겨**
+사용자가 "지금 키 입력이 되는 상태인지"를 눈으로 알 수 있게 한다.
+
+**힌트 문자와 IME:** macOS·Windows 모두 한글 입력 상태에서는 `keydown`의 `key`가
+조합 중 문자로 올 수 있다. 힌트 판정은 `event.key`가 아니라 **`event.code`**
+(`Digit1`, `KeyQ` …)를 기준으로 하고, `event.isComposing === true`인 입력은 무시한다.
+이렇게 하면 한글 입력기가 켜져 있어도 숫자 힌트가 정상 동작한다.
+
+#### B. 키별 전역 단축키 (`item.globalHotkey`, 기본 미지정)
+
+패널을 띄우지 않고 어디서든 특정 키를 실행한다. 자주 쓰는 두세 개에만 지정하는 용도다.
+
+- 편집기 속성 패널에 `전역 단축키` 입력 위젯을 둔다 (§9.4). 클릭하면 키 조합을 캡처한다.
+- **검증 규칙** (`validate.ts` + `hotkey:validate`):
+  1. **수식키(`Control`/`Alt`/`Shift`/`Super`)가 최소 1개 있어야 한다.**
+     단일 키를 전역 등록하면 모든 앱에서 그 키 입력이 가로채여 시스템이 망가진다. 무조건 거부.
+  2. `Shift` 단독 조합(`Shift+A` 등)도 거부한다. 대문자 입력이 막힌다.
+  3. 앱 내 다른 항목과 중복이면 거부하고 어느 키와 겹치는지 알려준다.
+  4. `config.hotkey`(패널 토글) 및 전역 숫자 단축키 범위와 겹치면 거부한다.
+  5. `globalShortcut.register()`로 **시험 등록** 후 즉시 `unregister`하여 다른 앱과의 충돌을
+     확인한다. 실패하면 "다른 프로그램이 이미 사용 중인 단축키입니다"를 반환한다.
+  6. 전체 개수 상한 **20개**. 초과 시 거부.
+- 등록된 단축키가 눌리면 `launcher.execute()`를 직접 호출한다. **패널을 띄우지 않는다.**
+  성공/실패는 트레이 풍선 알림 대신 조용히 처리하고, 실패 시에만 패널을 띄워 토스트를 보여준다.
+- 폴더 키에는 전역 단축키를 지정할 수 없다 (실행할 대상이 없으므로). UI에서 필드를 숨긴다.
+- 항목이 삭제되거나 단축키가 바뀌면 반드시 `unregister`한다. 앱 시작 시 전체를 다시 등록한다.
+- 등록 실패한 항목은 설정을 지우지 않고 **경고 배지**를 붙여 사용자가 고칠 수 있게 한다
+  (다른 앱이 나중에 종료되면 다시 유효해질 수 있으므로).
+
+#### C. 전역 숫자 단축키 (`keyboard.globalNumberHotkeys`, 기본 `false`)
+
+`Control+Alt+1` ~ `Control+Alt+0`을 **현재 보고 있는 페이지의 1~10번 힌트**에 자동 매핑한다.
+패널을 부르지 않고 바로 실행할 수 있다.
+
+- **기본값이 꺼져 있는 이유:** `Ctrl+Alt+숫자`는 이미 쓰는 프로그램이 많아 충돌 가능성이 높다.
+  원하는 사용자만 켠다.
+- 수식키 조합은 `keyboard.globalNumberModifier`로 바꿀 수 있다
+  (`Control+Alt` / `Control+Shift` / `Alt+Shift` / `Super+Alt` 중 선택).
+- 10개 중 일부만 등록에 성공할 수 있다. 실패한 것은 조용히 건너뛰고, 설정 화면에
+  **어떤 번호가 등록되지 못했는지 목록으로 표시**한다.
+- 매핑 대상은 "현재 계층·현재 페이지"다. 사용자가 폴더에 들어가 있으면 그 안의 1~10번을 가리킨다.
+  → 혼란을 줄이기 위해 설정 화면에 "현재 보고 있는 페이지 기준으로 동작합니다"를 명시한다.
+- `B`(키별 전역 단축키)와 겹치면 `B`가 우선한다. 겹친 번호는 등록하지 않는다.
+
+#### 편집기 창에서의 동작
+
+**편집기 창에서는 힌트 배지와 숫자 실행을 사용하지 않는다.** 제목·주소 입력 필드가 있어
+숫자 입력과 충돌하기 때문이다. 편집기는 클릭·화살표·`Enter`만 쓴다 (§9.8).
 
 ---
 
@@ -501,19 +897,25 @@ app.on('second-instance', () => showPanel());
 3. `validate.ts`로 `type`+`target` 조합을 재검증한다 (§8). 실패 시 `{ok:false, code:'BLOCKED'}`.
 4. 타입별 실행:
 
-| type | 구현 |
-|---|---|
-| `url` | `await shell.openExternal(target)` |
-| `folder` | `await shell.openPath(target)` — 반환 문자열이 비어있지 않으면 실패 |
-| `file` | `await shell.openPath(target)` — 동일 |
-| `app` | `spawn(target, args, { detached: true, stdio: 'ignore', cwd: workingDir ?? path.dirname(target), windowsHide: false })` 후 `child.unref()` |
-| `uwp` | `spawn('explorer.exe', ['shell:AppsFolder\\' + target], { detached: true, stdio: 'ignore' })` 후 `unref()` |
+| type | Windows | macOS |
+|---|---|---|
+| `url` | `await shell.openExternal(target)` | 동일 |
+| `folder` | `await shell.openPath(target)` — 반환 문자열이 비어있지 않으면 실패 | 동일 |
+| `file` | `await shell.openPath(target)` — 동일 | 동일 |
+| `app` | `spawn(target, args, { detached: true, stdio: 'ignore', cwd: workingDir ?? path.dirname(target), windowsHide: false })` 후 `child.unref()` | **`.app` 번들은 실행 파일이 아니므로 spawn 할 수 없다.** `args`가 비었으면 `await shell.openPath(target)`, `args`가 있으면 `spawn('open', ['-a', target, '--args', ...args], { detached: true, stdio: 'ignore' })` 후 `unref()` |
+| `uwp` | `spawn('explorer.exe', ['shell:AppsFolder\\' + target], { detached: true, stdio: 'ignore' })` 후 `unref()` | **해당 없음.** `{ok:false, code:'BLOCKED', message:'이 항목은 Windows에서만 실행할 수 있습니다'}` 반환 |
+
+`launcher/`도 §6.0 원칙에 따라 `index.ts` / `windows.ts` / `macos.ts`로 나눈다.
+`url` · `folder` · `file`은 공통 구현을 공유하고, `app` · `uwp`만 플랫폼별로 구현한다.
 
 5. **`shell: true`를 절대 쓰지 않는다.** 인자는 배열로 전달한다 (명령어 인젝션 방지).
+   macOS의 `open -a` 호출도 마찬가지로 배열 인자만 쓴다.
 6. `folder`/`file`/`app`은 실행 전 `fs.existsSync(target)`으로 존재를 확인한다.
    없으면 `{ok:false, code:'NOT_FOUND', message:'대상을 찾을 수 없습니다: <경로>'}`.
 7. 실패 시 렌더러에 `toast`로 한국어 오류 메시지를 보낸다.
-8. 성공해도 **패널을 자동으로 숨기지 않는다** (연속 실행이 잦은 도구이므로).
+8. 성공(`{ok:true}`) 시 §6.10-A의 자동 숨김 정책을 적용한다.
+   `behavior.hideAfterLaunch`가 켜져 있고 `keepOpen !== true`이며 편집기 창이 닫혀 있으면,
+   `hideAfterLaunchDelayMs` 뒤에 패널을 숨긴다. 실패했거나 폴더 진입이면 숨기지 않는다.
 
 **시각 피드백:** 클릭 즉시 키에 눌림 애니메이션(scale 0.94, 90ms). 실패 시 키가 빨갛게 흔들린다.
 
@@ -535,8 +937,17 @@ app.on('second-instance', () => showPanel());
 
 - 절대 경로만 허용. 상대 경로·`..` 포함 경로 거부. `path.normalize` 후 재검사.
 - `folder` 타입은 `statSync().isDirectory()`가 참, `file`은 거짓이어야 한다.
-- `app` 타입의 `target` 확장자는 `.exe`, `.bat`, `.cmd` 중 하나.
-  `.bat`/`.cmd`는 허용하되 편집기 속성 패널에 "스크립트 파일입니다. 신뢰하는 파일만 등록하세요" 경고를 띄운다.
+  **macOS 예외:** `.app`은 디렉터리이지만 `folder`가 아니라 `app`으로 분류한다.
+  경로가 `.app`으로 끝나면 `folder` 타입 지정을 거부하고 `app`을 쓰라고 안내한다.
+- `app` 타입의 `target` 규칙:
+  - **Windows:** 확장자가 `.exe`, `.bat`, `.cmd` 중 하나.
+  - **macOS:** `.app`으로 끝나는 디렉터리, 또는 실행 권한(`fs.constants.X_OK`)이 있는 파일
+    (`.sh`, `.command`, 확장자 없는 바이너리 포함).
+  - **스크립트 경고:** `.bat`/`.cmd`/`.sh`/`.command`는 허용하되 편집기 속성 패널에
+    "스크립트 파일입니다. 신뢰하는 파일만 등록하세요" 경고를 띄운다.
+- `uwp` 타입은 **Windows에서만 생성 가능**하다. macOS에서 이 타입으로 저장을 시도하면 거부한다.
+- 플랫폼별 확장자 규칙은 `validate.ts`에서 `platform` 인자를 받는 순수 함수로 구현해
+  양쪽 규칙을 한 머신에서 모두 테스트할 수 있게 한다.
 
 ### 8.3 구조·문자열 제한
 
@@ -610,6 +1021,8 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
 ```
 
 - **키 클릭 = 실행.** 폴더 키 클릭 = 폴더 진입 (경로 브레드크럼 갱신).
+- **`Shift` + 클릭 = 실행하되 패널을 닫지 않음** (`keepOpen: true`, §6.10-A).
+  여러 개를 연달아 실행할 때 쓴다. 키 툴팁에 "Shift+클릭: 패널 유지"를 표시한다.
 - **빈 칸 클릭 = 편집기 창이 열리고 해당 슬롯이 선택된 상태로 진입** (`editor:open`).
   사용자가 패널에서 바로 추가를 시작할 수 있게 하는 다리 역할.
 - 페이지 전환: 하단 도트 클릭 · 마우스 휠 · `Ctrl+←/→`.
@@ -674,6 +1087,11 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
     `작업 폴더`(선택).
   - `uwp`: AppID를 읽기 전용으로 표시. 편집 불가.
   - `folder`(FolderItem): 제목·아이콘·색상만. 대상 필드 없음.
+- **`전역 단축키` 필드** (§6.11-B): 클릭하면 키 조합을 캡처하는 위젯. 비워두면 미지정.
+  입력 즉시 `hotkey:validate`로 검사하고, 실패하면 필드 아래에 한국어 사유를 표시한다
+  (수식키 없음 / 다른 키와 중복 / 다른 프로그램이 사용 중 / 20개 초과).
+  `FolderItem`에는 이 필드를 표시하지 않는다.
+  옆에 `지우기` 버튼과 현재 등록 상태 배지(`등록됨` / `충돌`)를 둔다.
 - 모든 편집은 **즉시 저장**된다(별도 저장 버튼 없음). 400ms 디바운스 후 `deck:upsert`.
 - 유효성 실패 시 해당 필드 아래에 한국어 오류 메시지를 표시하고 저장을 보류한다.
 
@@ -711,8 +1129,11 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
 1. `dragover`/`drop`에서 **`event.preventDefault()`를 반드시 호출**한다 (§8.4).
 2. `event.dataTransfer`에서:
    - `files` → 각 파일의 경로를 `drop:classify`로 보낸다.
-     - 디렉터리면 `type:'folder'`, 파일이면 `type:'file'`, `.exe`/`.lnk`면 `type:'app'`
-       (`.lnk`는 `readShortcutLink`로 해석)
+     - Windows: 디렉터리면 `type:'folder'`, 파일이면 `type:'file'`,
+       `.exe`/`.lnk`면 `type:'app'` (`.lnk`는 `readShortcutLink`로 해석)
+     - macOS: **`.app`으로 끝나면 `type:'app'`**(디렉터리여도 폴더가 아니다),
+       그 외 디렉터리는 `type:'folder'`, 파일은 `type:'file'`.
+       심볼릭 링크는 `fs.realpath`로 해석한 뒤 분류한다
      - **이미지 파일을 기존 키 위에 떨어뜨리면** 새 키를 만들지 않고 그 키의 **아이콘을 교체**한다.
    - `text/uri-list` 또는 `text/plain`이 유효한 http(s) URL이면 → `type:'url'`
 3. `label`은 파일명(확장자 제외) 또는 URL 호스트명으로 자동 설정한다.
@@ -743,24 +1164,66 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
 
 ### 9.8 키보드
 
-- 그리드는 roving tabindex. 화살표 키로 이동, `Enter`/`Space`로 실행(패널) 또는 선택(편집기).
-- 폴더 키에서 `Enter` = 진입, `Backspace` = 상위 복귀.
-- `Ctrl+←/→` 페이지 전환. `Delete` 삭제. `Ctrl+C/X/V` 클립보드. `F2` 이름 변경(편집기).
+**패널 창**
+
+| 키 | 동작 |
+|---|---|
+| 힌트 문자 (`1`~`0`, `q`~`/`) | 해당 키 실행. 폴더면 진입 (§6.11-A) |
+| `Shift` + 힌트 문자 | 실행하되 패널 유지 (`keepOpen`) |
+| 화살표 | 그리드 내 이동 (roving tabindex) |
+| `Enter` / `Space` | 포커스된 키 실행 / 폴더 진입 |
+| `Backspace` | 상위 폴더로 복귀 |
+| `Ctrl+←/→` | 페이지 전환 |
+| `Esc` | 패널 숨기기 |
+| `Delete` | 삭제 (잠금 해제 상태에서만) |
+| `Ctrl+C/X/V` | 클립보드 (§9.7) |
+
+**편집기 창**
+
+- 화살표 이동, `Enter` 선택, `F2` 이름 변경, `Delete` 삭제, `Ctrl+C/X/V` 클립보드.
+- **힌트 문자 실행은 동작하지 않는다** (입력 필드와 충돌하므로, §6.11).
+
+**공통**
+
 - 다이얼로그·팝오버는 포커스 트랩 + `Esc` 닫기.
-- 모든 아이콘 버튼에 한국어 `aria-label`.
+- 모든 아이콘 버튼에 한국어 `aria-label`. 힌트 배지는 `aria-hidden`으로 두고,
+  키 자체의 `aria-keyshortcuts` 속성에 힌트 문자를 넣는다.
 - `prefers-reduced-motion: reduce`면 모든 트랜지션을 0ms로.
 
 ### 9.9 설정 (편집기 내 모달)
 
-탭 4개: `일반` / `모양` / `단축키` / `정보`
+탭 5개: `일반` / `동작` / `모양` / `단축키` / `정보`
 
 - **일반**: 로그인 시 자동 시작 · 시작 시 숨김 · 자동 업데이트 확인 · 설정 초기화(2단계 확인)
+- **동작** (§6.10 — 화면 가림 방지):
+  - `실행 후 패널 숨기기` 토글 (기본 켬) + 지연 시간 슬라이더(0~600ms)
+    → 아래에 안내: "Shift를 누른 채 클릭하면 패널이 유지됩니다"
+  - `화면 가장자리에서 다시 꺼내기` 토글 (기본 켬)
+    → 하위 설정: 가장자리(자동/좌/우/상/하) · 띠 두께(4~12px) · 반응 지연(0~600ms)
+    → `실행 후 패널 숨기기`가 꺼져 있어도 단축키·트레이 숨김에 그대로 적용된다
+  - `가만히 두면 흐려지기` 토글 (기본 끔)
+    → 하위 설정: 대기 시간(1~15초) · 흐린 상태 투명도(0.1~0.9)
+    → 안내: "흐려진 상태에서는 클릭이 뒤쪽 창으로 통과됩니다"
+  - 각 토글 옆에 한 줄 설명을 붙여 무엇이 달라지는지 바로 알 수 있게 한다
 - **모양**: 테마(시스템/라이트/다크) · 그리드 열 슬라이더(2~8) · 행 슬라이더(1~6) ·
   버튼 크기(64~140) · 투명도(0.3~1.0) · 항상 최상위 토글
   → **모두 라이브 프리뷰**: 변경 즉시 패널과 편집기 그리드에 반영된다.
   → 그리드를 줄여서 기존 항목이 범위를 벗어나면 "N개 항목이 다음 페이지로 이동합니다" 안내를 띄운다.
     **항목을 삭제하지 않는다.**
-- **단축키**: 클릭하면 키 입력을 캡처하는 위젯. 충돌 시 즉시 오류 표시 + 롤백.
+- **단축키** (§6.11):
+  - `패널 표시/숨김` 캡처 위젯 (기본 `Ctrl+Alt+D`). 충돌 시 즉시 오류 표시 + 롤백.
+  - `숫자 힌트 표시` 선택: 포커스 시에만(기본) / 항상 / 숨김
+    → 안내: "숨김을 선택해도 키 입력은 그대로 동작합니다"
+  - `힌트 문자 순서` 입력 (기본 `1234567890qwertyuiop...`). 중복 문자 입력 시 오류.
+  - `힌트로 실행 후 패널 숨기기` 토글 (기본 켬)
+    → 안내: "Shift를 함께 누르면 패널이 유지됩니다"
+  - `전역 숫자 단축키` 토글 (기본 끔) + 수식키 조합 선택
+    (`Ctrl+Alt` / `Ctrl+Shift` / `Alt+Shift` / `Win+Alt`)
+    → 안내: "현재 보고 있는 페이지의 1~10번 키에 연결됩니다"
+    → 켠 뒤 등록에 실패한 번호가 있으면 목록으로 표시한다
+  - **`등록된 전역 단축키` 목록**: 키별로 지정된 `globalHotkey`를 한 표에 모아 보여준다.
+    각 행에 키 이름 · 단축키 · 상태(`등록됨`/`충돌`) · `해제` 버튼.
+    어디에 무엇이 걸려 있는지 한눈에 보이지 않으면 관리가 불가능해진다.
 - **정보**: 버전 · 저장소 링크 · 라이선스 · `업데이트 확인` 버튼 + 진행 상태
 
 ### 9.10 문구 언어
@@ -773,12 +1236,35 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
 
 ## 10. 자동 업데이트 (`updater.ts`)
 
+### 10.1 플랫폼별 정책 (먼저 읽을 것)
+
+| | Windows | macOS |
+|---|---|---|
+| 자동 업데이트 | **동작한다** | **동작하지 않는다** |
+| 이유 | 무서명 NSIS도 `electron-updater`가 처리 가능 | Squirrel.Mac이 코드 서명을 검증한다. 서명 없는 앱은 업데이트 적용이 실패한다 |
+| 대체 동작 | 자동 다운로드 후 "재시작하면 적용" 안내 | **버전만 확인하고 알림.** 새 버전이 있으면 GitHub 릴리즈 페이지를 여는 버튼을 제공한다 |
+
+**macOS 구현 (`updater/macos.ts`)**
+
+- `electron-updater`를 **초기화하지 않는다.** 초기화만 해도 서명 검증 오류가 로그를 채운다.
+- 대신 GitHub Releases API로 최신 태그만 조회한다:
+  `https://api.github.com/repos/deepsky616/stream-panel/releases/latest` → `tag_name`
+- `net.fetch` 사용, 타임아웃 6초, 실패 시 조용히 무시.
+- 현재 버전보다 높으면 `update:status`로 `{state:'available', version}`을 보낸다.
+- 사용자가 `릴리즈 페이지 열기`를 누르면 `shell.openExternal`로 릴리즈 URL을 연다.
+- 설정 `정보` 탭에 "macOS에서는 자동 업데이트를 지원하지 않습니다. 새 버전은 직접 내려받아
+  설치해 주세요"를 명시한다. 조용히 동작하지 않는 것보다 이유를 밝히는 편이 낫다.
+- `defaults.ts`에서 macOS는 `autoUpdate: false`로 시작하지만, 이 값은
+  "**버전 확인 알림**을 받을지"를 의미한다. 설정 UI 라벨도 그렇게 바꾼다.
+
+### 10.2 Windows 자동 업데이트
+
 ```ts
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 ```
 
-- `app.isPackaged`이고 `config.autoUpdate === true`일 때만 동작한다.
+- `app.isPackaged`이고 `process.platform === 'win32'`이고 `config.autoUpdate === true`일 때만 동작한다.
 - 시작 후 10초 뒤 1회, 이후 6시간마다 `checkForUpdates()`.
 - 이벤트를 `update:status`로 렌더러에 중계한다.
 - `update-downloaded` 시:
@@ -795,26 +1281,31 @@ autoUpdater.autoInstallOnAppQuit = true;
 ```
 stream-panel/
 ├─ .github/workflows/{ci.yml, release.yml}
-├─ build/{icon.ico, icon.png}
-├─ resources/tray.ico
+├─ build/{icon.ico, icon.icns, icon.png}
+├─ resources/{tray.ico, trayTemplate.png, trayTemplate@2x.png}
 ├─ src/
 │  ├─ main/
 │  │  ├─ index.ts                    # 라이프사이클, 단일 인스턴스, --hidden 처리
-│  │  ├─ windows/{panelWindow.ts, editorWindow.ts}
+│  │  ├─ windows/{panelWindow.ts, editorWindow.ts, peekWindow.ts}
 │  │  ├─ tray.ts
-│  │  ├─ shortcuts.ts
+│  │  ├─ shortcuts.ts               # 전역 단축키 레지스트리 (§6.8, §6.11-B/C)
 │  │  ├─ store.ts                    # electron-store + 마이그레이션 + 정규화
 │  │  ├─ ipc/{index.ts, configHandlers.ts, deckHandlers.ts, launchHandlers.ts,
 │  │  │       pickerHandlers.ts, iconHandlers.ts, dropHandlers.ts, windowHandlers.ts}
-│  │  ├─ services/{launcher.ts, appScanner.ts, iconService.ts, faviconService.ts,
-│  │  │            autoLaunch.ts, updater.ts}
+│  │  ├─ platform/index.ts          # 플랫폼별 상수·판별 (§6.0). 창 레벨, 트레이 에셋 등
+│  │  ├─ services/
+│  │  │  ├─ appScanner/{index.ts, types.ts, windows.ts, macos.ts}
+│  │  │  ├─ launcher/{index.ts, common.ts, windows.ts, macos.ts}
+│  │  │  ├─ updater/{index.ts, windows.ts, macos.ts}
+│  │  │  └─ {visibility.ts, iconService.ts, faviconService.ts, autoLaunch.ts}
 │  │  └─ security/validate.ts
 │  ├─ preload/index.ts
 │  ├─ renderer/
 │  │  ├─ index.html                  # 패널
 │  │  ├─ editor.html                 # 편집기
+│  │  ├─ peek.html                   # 가장자리 트리거 스트립 (§6.10-B)
 │  │  └─ src/
-│  │     ├─ {main.tsx, editor.tsx}
+│  │     ├─ {main.tsx, editor.tsx, peek.tsx}
 │  │     ├─ panel/{PanelApp.tsx, TitleBar.tsx, PanelGrid.tsx, Footer.tsx}
 │  │     ├─ editor/{EditorApp.tsx, KeyGrid.tsx, ActionLibrary.tsx, PropertiesPanel.tsx,
 │  │     │          TrashZone.tsx, SettingsModal.tsx}
@@ -828,9 +1319,12 @@ stream-panel/
 │     ├─ ipcChannels.ts    # §5
 │     ├─ layout.ts         # §4.3 슬롯 계산 순수 함수
 │     ├─ tree.ts           # 계층 탐색·이동·복제 순수 함수
+│     ├─ hintMap.ts        # §6.11-A 힌트 문자 배정 순수 함수
+│     ├─ accelerator.ts    # CommandOrControl ↔ 화면 표기 변환 (§6.8)
 │     └─ defaults.ts
-├─ tests/{layout.test.ts, tree.test.ts, validate.test.ts, store-migration.test.ts,
-│         appScanner.test.ts, launcher.test.ts, dropClassify.test.ts}
+├─ tests/{layout.test.ts, tree.test.ts, hintMap.test.ts, accelerator.test.ts,
+│         validate.test.ts, store-migration.test.ts, appScanner.test.ts,
+│         launcher.test.ts, dropClassify.test.ts}
 ├─ electron.vite.config.ts
 ├─ electron-builder.yml
 ├─ package.json
@@ -859,7 +1353,9 @@ stream-panel/
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
     "build:win": "npm run build && electron-builder --win --publish never",
-    "release:win": "npm run build && electron-builder --win --publish always"
+    "build:mac": "npm run build && electron-builder --mac --publish never",
+    "release:win": "npm run build && electron-builder --win --publish always",
+    "release:mac": "npm run build && electron-builder --mac --publish always"
   }
 }
 ```
@@ -884,6 +1380,28 @@ win:
       arch: [x64]
   icon: build/icon.ico
   artifactName: StreamPanel-${version}-Setup.${ext}
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  artifactName: StreamPanel-${version}-${arch}.${ext}
+  darkModeSupport: true
+  # 서명하지 않는다 (§10.1). 공증도 하지 않는다.
+  identity: null
+  extendInfo:
+    LSUIElement: true          # Dock 아이콘 숨김 — 트레이 상주 앱 (§6.5)
+dmg:
+  title: Stream Panel ${version}
+  contents:
+    - x: 140
+      y: 180
+      type: file
+    - x: 400
+      y: 180
+      type: link
+      path: /Applications
 nsis:
   oneClick: false
   perMachine: false
@@ -908,7 +1426,21 @@ publish:
 ### 12.3 `.github/workflows/ci.yml`
 
 트리거: `push`(main), `pull_request`.
-`runs-on: windows-latest`, Node 22, `npm ci` → `lint` → `typecheck` → `test` → `build:win`.
+**매트릭스로 `windows-latest`와 `macos-latest` 양쪽에서 돌린다.**
+Node 22, `npm ci` → `lint` → `typecheck` → `test` → 각 OS의 `build:*`.
+
+```yaml
+strategy:
+  fail-fast: false
+  matrix:
+    include:
+      - os: windows-latest
+        build: npm run build:win
+      - os: macos-latest
+        build: npm run build:mac
+```
+
+`fail-fast: false`로 두어 한쪽이 깨져도 다른 쪽 결과를 볼 수 있게 한다.
 
 ### 12.4 `.github/workflows/release.yml`
 
@@ -920,15 +1452,10 @@ on:
 permissions:
   contents: write
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  verify:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
       - name: Verify tag matches package.json version
         shell: bash
         run: |
@@ -938,43 +1465,97 @@ jobs:
             echo "::error::Tag v$TAG != package.json $PKG"
             exit 1
           fi
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: release:win
+          - os: macos-latest
+            script: release:mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - name: Build and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release:win
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # macOS 자동 서명 탐색 비활성화 (§10.1)
+        run: npm run ${{ matrix.script }}
 ```
 
-**태그와 `package.json` 버전이 다르면 즉시 실패시키는 단계를 반드시 넣는다.**
-두 값이 어긋나면 자동 업데이트가 조용히 망가진다.
+- **버전 검증을 별도 `verify` 잡으로 분리**한다. 두 OS 잡이 각각 검증하면 중복이고,
+  실패 원인이 어느 잡인지 헷갈린다.
+- `CSC_IDENTITY_AUTO_DISCOVERY: 'false'`가 없으면 electron-builder가 macOS 러너에서
+  서명 인증서를 찾다가 실패하며 빌드가 깨진다. **반드시 넣는다.**
+- 두 잡이 같은 릴리즈에 순서 없이 업로드한다. electron-builder가 이미 존재하는 릴리즈에
+  에셋을 추가하므로 충돌하지 않는다.
+- **태그와 `package.json` 버전이 다르면 즉시 실패시킨다.** 두 값이 어긋나면
+  Windows 자동 업데이트가 조용히 망가진다.
 
 ### 12.5 릴리즈 산출물
 
 ```
-StreamPanel-1.0.0-Setup.exe        # NSIS 인스톨러
+StreamPanel-1.0.0-Setup.exe          # Windows NSIS 인스톨러
 StreamPanel-1.0.0-Setup.exe.blockmap
-latest.yml                          # electron-updater가 읽는 메타데이터 — 반드시 포함
+latest.yml                            # Windows 자동 업데이트 메타데이터 — 반드시 포함
+StreamPanel-1.0.0-arm64.dmg           # macOS Apple Silicon
+StreamPanel-1.0.0-x64.dmg             # macOS Intel
 ```
+
+`latest-mac.yml`이 생성되더라도 macOS 자동 업데이트는 쓰지 않으므로 무시한다 (§10.1).
 
 ---
 
 ## 13. README 필수 내용 (한국어)
 
 1. 패널 + 편집기 스크린샷 각 1장
-2. **설치 방법**
+2. **설치 방법 — Windows**
    - Releases에서 `StreamPanel-x.y.z-Setup.exe` 다운로드 → 실행
    - **SmartScreen 경고 안내:** "Windows에서 PC를 보호했습니다" 화면이 나오면
      `추가 정보` → `실행`. 코드 서명 인증서를 구매하지 않은 오픈소스 앱이라 나타나는
      정상적인 경고임을 설명한다. **(이 문구를 빠뜨리면 사용자가 설치를 포기한다)**
+2-1. **설치 방법 — macOS**
+   - 칩에 맞는 파일을 받는다: Apple Silicon(M1~) → `-arm64.dmg`, Intel → `-x64.dmg`
+     (`Apple 메뉴 → 이 Mac에 관하여`에서 확인하는 법을 함께 적는다)
+   - DMG를 열고 앱을 `Applications` 폴더로 끌어다 놓는다
+   - **Gatekeeper 허용 절차 (반드시 스크린샷과 함께):**
+     1. 앱을 처음 실행하면 "개발자를 확인할 수 없기 때문에 열 수 없습니다"가 뜬다. `완료`를 누른다
+     2. `시스템 설정` → `개인정보 보호 및 보안`으로 간다
+     3. 아래로 스크롤하면 "\"Stream Panel\"이(가) 차단되었습니다"가 보인다. `그대로 열기`를 누른다
+     4. 확인 창에서 다시 `그대로 열기` → 이후로는 정상 실행된다
+   - 코드 서명 인증서(연 $99)를 구매하지 않은 오픈소스 앱이라 나타나는 정상 절차임을 설명한다
+   - **macOS는 자동 업데이트를 지원하지 않는다**는 점과, 새 버전 알림이 뜨면
+     릴리즈 페이지에서 직접 받아야 한다는 점을 명시한다 (§10.1)
+   - Dock에 아이콘이 나타나지 않고 **메뉴 막대에만 상주**한다는 점을 안내한다
 3. 사용법 — 스트림덱 흐름 그대로:
    오른쪽 액션 목록에서 키로 끌어다 놓기 → 이름·아이콘 지정 → 폴더로 묶기 → 패널에서 클릭
-4. 단축키 표, 트레이 메뉴 설명
-5. 설정 파일 위치 (`%APPDATA%\stream-panel\config.json`) 및 백업 방법
-6. 개발 방법: `npm install` → `npm run dev`
-   (macOS/Linux에서도 UI 개발은 되지만 앱 목록·아이콘 추출은 Windows 전용임을 명시)
-7. 라이선스 (MIT)
+4. **"마우스 없이 쓰기"** 절 (§6.11) — 단축키 표 포함
+   - `Ctrl+Alt+D` → 번호 배지 → 숫자 입력의 3단계를 GIF로 보여준다
+   - 폴더 연쇄 입력(`3` → `2`), `Shift`+숫자로 연달아 실행
+   - 자주 쓰는 키에 전역 단축키를 지정하는 법, 수식키가 왜 필수인지
+   - 전역 숫자 단축키를 켜는 법과 충돌 시 대처
+   - 트레이 메뉴 설명
+5. **"패널이 화면을 가리지 않게 하는 방법"** 절 (§6.10)
+   - 기본 동작: 키를 누르면 패널이 자동으로 사라지고, 화면 오른쪽 끝에 마우스를 대면 다시 나온다
+   - `Shift`+클릭으로 여러 개를 연달아 실행하는 법
+   - 설정 `동작` 탭에서 세 정책을 각각 끄고 켜는 법 (GIF 또는 스크린샷 권장)
+6. 설정 파일 위치 (`%APPDATA%\stream-panel\config.json`) 및 백업 방법
+7. 개발 방법: `npm install` → `npm run dev`
+   - `npm run build:win` / `npm run build:mac`으로 각 OS 산출물을 만든다
+   - **크로스 빌드는 불가능하다.** Windows 인스톨러는 Windows에서, macOS DMG는
+     macOS에서만 만들어진다. CI 매트릭스가 이를 대신한다는 점을 명시
+8. 라이선스 (MIT)
 
 ---
 
@@ -986,78 +1567,183 @@ latest.yml                          # electron-updater가 읽는 메타데이터
   빈 칸 유지, 마지막 빈 페이지 제거, 손상된 position 정규화
 - `tree.test.ts` — 경로 탐색, 이동·교환, 폴더 안으로 이동, **순환 참조 거부**,
   깊이 5 초과 거부, 깊은 복사 시 새 id 발급
+- `hintMap.test.ts` — §6.11-A 힌트 배정. **빈 슬롯을 건너뛰고 보이는 순서대로 배정**,
+  페이지·폴더 전환 시 1번부터 재배정, `↩ 뒤로` 키는 힌트를 받지 않음,
+  40개 초과분은 힌트 없음, 사용자 지정 `hintKeys`의 중복 문자 거부
 - `validate.test.ts` — URL 프로토콜 화이트리스트, `javascript:`/`file:` 차단,
-  경로 traversal 차단, 라벨/args 길이 제한, 색상 정규식, 항목 수 상한
+  경로 traversal 차단, 라벨/args 길이 제한, 색상 정규식, 항목 수 상한,
+  **전역 단축키 규칙**(수식키 없음 거부, `Shift` 단독 조합 거부, 중복 거부, 20개 상한)
 - `store-migration.test.ts` — 기본값 생성, 미래 버전 감지 시 백업+초기화, 손상된 JSON 복구
-- `appScanner.test.ts` — `.lnk` 필터링 규칙(제거 프로그램/문서 링크 배제),
-  `Get-StartApps` JSON 파싱, `!` 없는 AppID 제외, 이름 기준 중복 제거
+- `appScanner.test.ts` — **양쪽 플랫폼 구현을 한 머신에서 모두 테스트한다** (§6.0의 주입 구조).
+  - Windows: `.lnk` 필터링 규칙(제거 프로그램/문서 링크 배제), `Get-StartApps` JSON 파싱,
+    `!` 없는 AppID 제외, 이름 기준 중복 제거
+  - macOS: `.app` 번들 판별, `.app` 내부로 재귀하지 않음, 깊이 2단계 제한,
+    `Info.plist`의 `CFBundleDisplayName` → `CFBundleName` → 파일명 폴백,
+    바이너리 plist 파싱 실패 시 파일명 폴백
+- `accelerator.test.ts` — `CommandOrControl+Alt+D`가 Windows에서 `Ctrl+Alt+D`,
+  macOS에서 `⌘⌥D`로 표시되는지. 저장 형식은 항상 `CommandOrControl`임을 검증
 - `launcher.test.ts` — 타입별로 올바른 함수가 호출되는지 (`shell`/`child_process` 모킹),
   **`shell: true`가 절대 쓰이지 않음을 검증**, 존재하지 않는 경로에서 `NOT_FOUND` 반환,
-  `FolderItem`은 실행되지 않음
+  `FolderItem`은 실행되지 않음,
+  **macOS `app` 분기**: `args`가 비면 `openPath`, 있으면 `open -a … --args`,
+  **macOS에서 `uwp` 타입은 `BLOCKED` 반환**
 - `dropClassify.test.ts` — 디렉터리/파일/exe/lnk/URL/이미지 분류, 라벨 자동 생성
 
 **수동 QA 체크리스트 (Windows 실기, §15).** E2E 자동화는 v1.0 범위 밖.
 
-### 14.1 macOS 개발 시 크래시 방지 (중요)
+### 14.1 플랫폼 안전성 (중요)
 
-작성자는 macOS에서 개발한다. 다음이 `process.platform !== 'win32'`에서 반드시 안전해야 한다:
+개발 머신은 macOS이고 배포 대상은 Windows·macOS 둘 다다.
+**어느 플랫폼에서도 `npm run dev`가 크래시 없이 실행되어야 한다.**
 
-- `shell.readShortcutLink` — **Windows 전용. 호출 전 플랫폼 가드 필수** (없으면 throw)
-- `Get-StartApps` PowerShell — 존재하지 않음. try/catch로 빈 배열 반환
-- `app.setLoginItemSettings` — 개발 모드에서는 호출하지 않음
-- `app.getFileIcon` — macOS에서도 동작하므로 그대로 둔다
-- `%APPDATA%` 등 하드코딩 금지. 반드시 `app.getPath()` / `process.env` 사용
-- 경로 조합은 항상 `path.join`. `\\` 리터럴 금지 (`shell:AppsFolder\\` 제외)
+**플랫폼 전용 API 목록 — 반드시 §6.0 구조로 격리한다**
 
-`appScanner`는 `process.platform`을 주입 가능한 형태로 만들어 테스트에서 Windows 경로를
-시뮬레이션할 수 있게 한다. **`npm run dev`가 macOS에서 크래시 없이 실행되어야 한다.**
+| API | 지원 | 잘못 부르면 |
+|---|---|---|
+| `shell.readShortcutLink` | Windows 전용 | macOS에서 **throw**. 가드 없이 부르면 앱이 죽는다 |
+| `Get-StartApps` (PowerShell) | Windows 전용 | macOS에 명령이 없음. try/catch로 빈 배열 |
+| `plutil` | macOS 전용 | Windows에 명령이 없음. try/catch로 파일명 폴백 |
+| `app.dock.hide()` | macOS 전용 | Windows에서 `app.dock`이 `undefined`. **옵셔널 체이닝 필수** |
+| `spawn('open', …)` | macOS 전용 | Windows에는 `open` 명령이 없다 |
+| `spawn('explorer.exe', …)` | Windows 전용 | macOS에 없다 |
+| `app.getFileIcon` | 양쪽 지원 | 그대로 쓴다 |
+| `globalShortcut` | 양쪽 지원 | accelerator만 `CommandOrControl`로 통일 |
+| `setIgnoreMouseEvents({forward})` | 양쪽 지원 | 그대로 쓴다 |
+
+**공통 규칙**
+
+- `%APPDATA%`, `/Applications` 같은 경로를 코드에 흩뿌리지 않는다.
+  `app.getPath()` 또는 `platform/index.ts`의 상수만 쓴다.
+- 경로 조합은 항상 `path.join`. `\\`나 `/` 리터럴 금지
+  (`shell:AppsFolder\\` 같은 Windows 고유 문자열은 `windows.ts` 안에서만 허용).
+- 모든 스캐너·런처·업데이터는 `platform` 인자를 주입 가능하게 만들어,
+  **한 머신에서 양쪽 구현의 순수 로직을 모두 테스트**할 수 있게 한다.
+- 지원하지 않는 플랫폼에서는 throw 대신 안전한 기본값(빈 배열, `BLOCKED` 결과)을 반환한다.
 
 ---
 
-## 15. Windows 실기 QA 체크리스트
+## 15. 실기 QA 체크리스트
 
-릴리즈 전 Windows 머신에서 전부 통과해야 한다.
+**§15.1 ~ §15.5는 Windows·macOS 양쪽에서 각각 수행한다.**
+§15.6은 Windows 전용, §15.7은 macOS 전용이다.
 
-**설치 · 패널**
-- [ ] 설치 파일 실행 → 설치 경로 변경 가능 → 설치 완료 → 자동 실행
+### 15.1 설치 · 패널
+
+- [ ] 설치 파일 실행 → 설치 완료 → 자동 실행
 - [ ] 패널이 화면 우상단에 뜨고 항상 최상위로 유지된다 (다른 창을 최대화해도 가려지지 않음)
 - [ ] 타이틀바 드래그로 이동, 재시작 후 위치 유지
-- [ ] 작업표시줄에 아이콘이 없고 트레이에 아이콘이 있다
-- [ ] `Ctrl+Alt+D`로 숨김/표시 토글
+- [ ] 작업표시줄(Win) / Dock(mac)에 아이콘이 없고, 트레이 / 메뉴 막대에 아이콘이 있다
+- [ ] `Ctrl+Alt+D`(Win) / `⌘⌥D`(mac)로 숨김/표시 토글
 - [ ] 잠금 토글 시 이동·재배치·`+`가 모두 비활성화된다
 
-**편집기 · 드래그 앤 드롭 (스트림덱 흐름)**
+### 15.2 화면 가림 방지 (§6.10)
+- [ ] 링크 키를 누르면 브라우저가 열리고 **패널이 사라져 화면을 가리지 않는다**
+- [ ] 폴더·파일·앱 키도 동일하게 실행 후 패널이 사라진다
+- [ ] 폴더 키(계층 진입)를 눌렀을 때는 패널이 사라지지 않는다
+- [ ] 실행이 실패했을 때(경로 없음)는 패널이 남고 오류 토스트가 보인다
+- [ ] `Shift`+클릭하면 실행되지만 패널이 유지된다
+- [ ] 패널이 숨겨진 뒤 화면 오른쪽 가장자리에 얇은 띠가 보인다
+- [ ] 그 띠에 마우스를 올리고 잠깐 기다리면 패널이 다시 나온다
+- [ ] 마우스로 가장자리를 빠르게 스쳐 지나가면 패널이 튀어나오지 않는다
+- [ ] 패널이 보이는 동안에는 가장자리 띠가 보이지 않는다
+- [ ] 가장자리 띠가 다른 앱의 포커스를 빼앗지 않는다 (타이핑 중 커서가 유지된다)
+- [ ] 패널을 화면 왼쪽으로 옮긴 뒤 숨기면 띠가 왼쪽 가장자리에 생긴다
+- [ ] 편집기 창이 열려 있는 동안에는 키를 눌러도 패널이 사라지지 않는다
+- [ ] `가만히 두면 흐려지기`를 켜면 4초 뒤 흐려지고, **그 상태에서 패널 위를 클릭하면
+      뒤에 있는 창이 클릭된다**
+- [ ] 흐려진 패널 위로 마우스를 옮기면 즉시 선명해지고 다시 클릭할 수 있다
+- [ ] 설정에서 `실행 후 패널 숨기기`를 끄면 이전처럼 패널이 계속 떠 있는다
+
+### 15.3 키보드 실행 (§6.11)
+- [ ] 패널 토글 단축키로 패널을 부르면 패널이 **포커스를 받고** 각 키에 번호 배지가 나타난다
+- [ ] 다른 앱에서 작업하다가 불러도 포커스를 정상적으로 가져온다 (포그라운드 락 미발생)
+- [ ] `1`을 누르면 1번 키가 실행되고 패널이 사라진다
+- [ ] 중간 슬롯이 비어 있어도 **눈에 보이는 순서대로** 1, 2, 3 번호가 매겨진다
+- [ ] 폴더 키의 번호를 누르면 실행이 아니라 폴더로 진입하고, 안쪽 키가 1번부터 다시 매겨진다
+- [ ] `3` → `2` 처럼 연달아 눌러 폴더 안의 키를 실행할 수 있다
+- [ ] 폴더 안에서 `Backspace`로 상위로 돌아간다
+- [ ] `Shift`+숫자로 실행하면 패널이 유지되어 연달아 실행할 수 있다
+- [ ] `Esc`로 패널이 닫힌다
+- [ ] 키가 10개를 넘으면 `q`, `w`, `e`... 로 힌트가 이어진다
+- [ ] 페이지를 넘기면 번호가 1부터 다시 매겨진다
+- [ ] 패널이 포커스를 잃으면 배지가 사라진다 (지금 키 입력이 안 되는 상태임을 알 수 있다)
+- [ ] 힌트 표시를 `숨김`으로 바꿔도 숫자 키 입력은 그대로 동작한다
+- [ ] 편집기 창에서 제목을 입력할 때 숫자를 쳐도 키가 실행되지 않는다
+- [ ] **한글 입력기가 켜진 상태에서도 숫자 힌트가 정상 동작한다** (`event.code` 기반)
+- [ ] 단축키 표기가 OS에 맞게 보인다 (Windows `Ctrl+Alt+D` / macOS `⌘⌥D`)
+- [ ] 키에 전역 단축키를 지정하면 다른 앱에서 눌러도 실행된다 (패널이 뜨지 않음)
+- [ ] 수식키 없는 단일 키(`G`)를 지정하려 하면 거부되고 이유가 표시된다
+- [ ] 다른 프로그램이 쓰는 단축키를 지정하면 "이미 사용 중" 오류가 뜬다
+- [ ] 설정 `단축키` 탭에 등록된 전역 단축키 목록이 표로 보이고 개별 해제가 된다
+- [ ] 전역 단축키가 지정된 키를 삭제하면 단축키도 함께 해제된다
+- [ ] `전역 숫자 단축키`를 켜면 `수식키+1`이 1번 키를 실행한다
+- [ ] 등록에 실패한 번호가 설정 화면에 목록으로 표시된다
+- [ ] 앱을 완전히 종료하면 모든 전역 단축키가 해제되어 다른 앱에서 그 조합을 쓸 수 있다
+
+### 15.4 편집기 · 드래그 앤 드롭 (스트림덱 흐름)
 - [ ] `⚙` 또는 트레이에서 편집기가 열린다
 - [ ] 오른쪽 `🔗 웹사이트`를 왼쪽 키로 끌어다 놓으면 키가 생기고 주소 입력에 포커스가 간다
 - [ ] `설치된 앱` 목록에서 앱을 끌어다 놓으면 이름·아이콘이 자동으로 채워져 바로 완성된다
-- [ ] 설치된 앱 목록에 한글 이름이 깨지지 않고, 제거 프로그램·설명서 링크가 섞여 있지 않다
-- [ ] Microsoft Store 앱(예: 계산기)이 목록에 있고 실행된다
+- [ ] 설치된 앱 목록에 한글 이름이 깨지지 않고, 불필요한 항목이 섞여 있지 않다
+      (Win: 제거 프로그램·설명서 링크 / mac: `.app` 내부의 중첩 번들)
 - [ ] `🗂️ 폴더 만들기`를 놓으면 폴더 키가 생긴다
 - [ ] 키를 폴더 키 위로 500ms 끌면 폴더가 열리고 그 안에 놓을 수 있다
 - [ ] 폴더에 들어가면 0번 슬롯이 `↩ 뒤로`이고, 눌러서 상위로 돌아온다
 - [ ] 키를 다른 키 위로 끌면 위치가 교환된다
 - [ ] 키를 휴지통으로 끌면 삭제된다 (폴더는 확인 다이얼로그)
-- [ ] 탐색기에서 폴더를 편집기 그리드로 끌어다 놓으면 폴더 키가 생성된다
+- [ ] 파일 탐색기(Win) / Finder(mac)에서 폴더를 그리드로 끌어다 놓으면 폴더 키가 생성된다
+- [ ] **macOS: Finder에서 `.app`을 끌어다 놓으면 폴더가 아니라 앱 키가 생성된다**
 - [ ] 브라우저 주소창에서 URL을 끌어다 놓으면 웹사이트 키가 생성된다
 - [ ] 이미지 파일을 기존 키 위에 떨어뜨리면 아이콘이 교체된다 (새 키가 생기지 않음)
 - [ ] 우클릭 → 복사 / 잘라내기 / 붙여넣기 / 복제 / 삭제가 모두 동작한다
 
-**실행**
+### 15.5 실행
 - [ ] URL 키 → 기본 브라우저에서 열리고 파비콘이 표시된다
-- [ ] 폴더 키(액션) → 탐색기에서 열린다
-- [ ] 앱 키 → 해당 앱이 뜨고 exe 아이콘이 추출된다
+- [ ] 폴더 키(액션) → 탐색기(Win) / Finder(mac)에서 열린다
+- [ ] 앱 키 → 해당 앱이 뜨고 아이콘이 추출된다
+      (Win: exe 아이콘 / mac: `.app` 번들 아이콘)
 - [ ] 삭제된 폴더를 가리키는 키를 눌러도 한국어 오류 토스트만 뜨고 앱이 죽지 않는다
 - [ ] 패널 빈 칸 `+`를 누르면 편집기가 열리며 그 슬롯이 선택된다
 
 **설정 · 안정성**
 - [ ] 그리드 5×3 → 4×2로 줄여도 **항목이 삭제되지 않고** 다음 페이지로 넘어간다
 - [ ] 투명도·테마·버튼 크기가 실시간 반영된다
-- [ ] 로그인 시 자동 시작 켜고 재부팅 → 트레이에 상주한 채 시작된다
+- [ ] 로그인 시 자동 시작 켜고 재부팅 → 트레이 / 메뉴 막대에 상주한 채 시작된다
 - [ ] 모니터 해상도/개수를 바꿔도 패널이 화면 밖으로 사라지지 않는다
-- [ ] 트레이 → 종료로 완전히 종료된다 (작업 관리자에 프로세스가 남지 않는다)
-- [ ] 제거 후 재설치 시 설정이 유지된다 (`deleteAppDataOnUninstall: false`)
+- [ ] 트레이 → 종료로 완전히 종료된다 (프로세스가 남지 않는다)
 - [ ] 네트워크를 끊어도 앱이 정상 동작한다 (파비콘만 글자 아이콘으로 폴백)
-- [ ] v1.0.1 태그 푸시 → 릴리즈 생성 → 기존 v1.0.0 설치본이 업데이트를 감지하고 적용한다
+- [ ] OS 다크/라이트 모드를 전환하면 테마가 따라간다 (`theme: 'system'`)
+
+### 15.6 Windows 전용
+- [ ] 설치 시 설치 경로를 변경할 수 있고 UAC 프롬프트가 뜨지 않는다
+- [ ] SmartScreen 경고에서 `추가 정보` → `실행`으로 설치가 진행된다
+- [ ] Microsoft Store 앱(예: 계산기)이 목록에 있고 실행된다
+- [ ] 제거 후 재설치 시 설정이 유지된다 (`deleteAppDataOnUninstall: false`)
+- [ ] v1.0.1 태그 푸시 → 릴리즈 생성 → 기존 v1.0.0 설치본이 **자동 업데이트를 감지하고 적용한다**
+- [ ] 작업 관리자에 프로세스가 남지 않는다
+
+### 15.7 macOS 전용
+- [ ] 칩에 맞는 DMG(`arm64` / `x64`)가 릴리즈에 둘 다 올라와 있다
+- [ ] DMG를 열면 앱 아이콘과 `Applications` 폴더 별칭이 나란히 보인다
+- [ ] **README의 Gatekeeper 절차대로 시스템 설정 → 개인정보 보호 및 보안 →
+      `그대로 열기`를 누르면 정상 실행된다**
+- [ ] 한 번 허용한 뒤로는 경고 없이 실행된다
+- [ ] **Dock에 아이콘이 나타나지 않고 메뉴 막대에만 상주한다** (`LSUIElement`)
+- [ ] 메뉴 막대 아이콘이 **다크/라이트 모드에서 모두 보인다** (템플릿 이미지)
+- [ ] 패널이 **메뉴 막대와 Dock을 덮지 않는다** (`workArea` 기준 배치)
+- [ ] 패널이 시스템 UI(Mission Control, 알림 센터) 위로 올라오지 않는다 (`'floating'` 레벨)
+- [ ] 다른 Space로 전환해도 패널이 따라온다 (`setVisibleOnAllWorkspaces`)
+- [ ] 전체 화면 앱 위에서도 패널을 부를 수 있다
+- [ ] 다른 앱에서 작업하다 단축키로 패널을 불러도 **키보드 포커스를 가져온다**
+      (`app.focus({steal:true})`가 동작한다)
+- [ ] `/Applications`와 `~/Applications`의 앱이 모두 목록에 나온다
+- [ ] `Utilities` 하위 앱(예: 터미널, 디스크 유틸리티)이 목록에 나온다
+- [ ] 한글 이름 앱(예: `계산기`)이 깨지지 않고 표시된다
+- [ ] 인자가 있는 앱 키가 `open -a … --args`로 정상 실행된다
+- [ ] 새 버전이 있으면 알림이 뜨고 `릴리즈 페이지 열기`가 브라우저를 연다
+      (**자동 업데이트는 시도조차 하지 않는다**)
+- [ ] 설정 `정보` 탭에 "macOS에서는 자동 업데이트를 지원하지 않습니다" 안내가 보인다
+- [ ] Windows에서 만든 `config.json`을 가져오면 경로 키에 경고 배지가 뜨고 앱이 죽지 않는다
 
 ---
 
@@ -1065,27 +1751,41 @@ latest.yml                          # electron-updater가 읽는 메타데이터
 
 각 마일스톤은 독립 커밋으로 끝낸다. 수용 기준을 모두 만족해야 다음으로 넘어간다.
 
-### M0 — 스캐폴드
+### M0 — 스캐폴드 (양쪽 플랫폼)
 저장소 초기화, electron-vite + React + TS (엔트리 2개: 패널·편집기), ESLint/Prettier,
-Vitest, `ci.yml`, MIT LICENSE, `.gitignore`.
+Vitest, `ci.yml`(**windows-latest + macos-latest 매트릭스**), MIT LICENSE, `.gitignore`,
+`main/platform/index.ts` 골격.
 **수용 기준:** `npm run dev`로 빈 프레임리스 창이 뜬다. `npm run build`, `npm test` 통과.
+**CI가 양쪽 OS에서 모두 초록불이어야 한다.**
 
-### M1 — 데이터 모델 + 슬롯 레이아웃 (순수 로직 먼저)
-`shared/types.ts`, `shared/layout.ts`, `shared/tree.ts`, `shared/defaults.ts`,
-`store.ts`(마이그레이션 + position 정규화).
-**수용 기준:** `layout.test.ts`, `tree.test.ts`, `store-migration.test.ts` 전부 통과.
-UI 없이 순수 함수만으로 폴더 중첩·페이지네이션·이동·교환·순환 거부가 검증된다.
+### M1 — 데이터 모델 + 슬롯 레이아웃 + 힌트 배정 (순수 로직 먼저)
+`shared/types.ts`, `shared/layout.ts`, `shared/tree.ts`, `shared/hintMap.ts`,
+`shared/accelerator.ts`, `shared/defaults.ts`(플랫폼별 기본값 §4.5),
+`store.ts`(마이그레이션 + position 정규화 + `config.platform` 처리 §4.6).
+**수용 기준:** `layout.test.ts`, `tree.test.ts`, `hintMap.test.ts`,
+`accelerator.test.ts`, `store-migration.test.ts` 전부 통과.
+UI 없이 순수 함수만으로 폴더 중첩·페이지네이션·이동·교환·순환 거부·힌트 배정·
+단축키 표기 변환이 검증된다.
 
-### M2 — 패널 창
-`panelWindow.ts`, preload, `config:get`/`config:set`, 창 크기 자동 계산,
-위치 저장/복원 및 화면 밖 보정, `KeyTile`/`BackTile`/`EmptyTile`, 폴더 진입·복귀,
-페이지 도트, 브레드크럼.
+### M2 — 패널 창 + 플랫폼 상수
+`main/platform/index.ts` 완성(창 레벨·트레이 에셋·숨김 시작 판별 §6.0),
+`panelWindow.ts`(Windows `skipTaskbar` / macOS `dock.hide()` + `'floating'` 레벨),
+preload, `config:get`/`config:set`, 창 크기 자동 계산,
+위치 저장/복원 및 화면 밖 보정(**`workArea` 기준**), `KeyTile`/`BackTile`/`EmptyTile`,
+폴더 진입·복귀, 페이지 도트, 브레드크럼.
 **수용 기준:** config.json을 직접 편집하면 패널이 그대로 반영한다. 폴더에 들어가고 나올 수 있다.
-창을 옮기고 재시작하면 위치가 복원된다.
+창을 옮기고 재시작하면 위치가 복원된다. **macOS에서 Dock 아이콘이 없고 메뉴 막대·Dock을
+덮지 않으며, 시스템 UI 위로 올라오지 않는다.**
 
-### M3 — 실행 엔진 + 보안 검증
-`validate.ts`, `launcher.ts`, `button:launch`, 토스트.
-**수용 기준:** URL·폴더·파일 키가 실제로 열린다. `validate.test.ts`, `launcher.test.ts` 통과.
+### M3 — 실행 엔진 + 보안 검증 + 자동 숨김 + 숫자 힌트 실행
+`validate.ts`(플랫폼별 확장자 규칙 §8.2),
+`launcher/{index,common,windows,macos}.ts`(§6.0 구조), `button:launch`, 토스트,
+`services/visibility.ts`의 **정책 A(실행 후 자동 숨김, §6.10-A)** 및 `Shift`+클릭 예외,
+**숫자 힌트 배지 + 키 입력 실행(§6.11-A)** — 배지 렌더링, 연쇄 입력(폴더 파고들기),
+`Shift`+힌트, 포커스 확보(`show`→`moveTop`→`focus`), 포커스 상실 시 배지 숨김.
+**수용 기준:** URL·폴더·파일 키가 실제로 열리고 **패널이 화면을 가리지 않게 사라진다.**
+`Ctrl+Alt+D` → `1` 만으로 마우스 없이 실행된다. `3` → `2` 연쇄 입력이 동작한다.
+실패 시·폴더 진입 시에는 숨지 않는다. `validate.test.ts`, `launcher.test.ts` 통과.
 `javascript:` 등 위험한 프로토콜이 차단된다. 폴더 키는 실행되지 않는다.
 
 ### M4 — 편집기 창 (클릭 기반 먼저)
@@ -1101,27 +1801,43 @@ UI 없이 순수 함수만으로 폴더 중첩·페이지네이션·이동·교�
 **수용 기준:** §15의 "편집기 · 드래그 앤 드롭" 항목 중 설치된 앱 관련을 제외한 전부가 통과한다.
 `dropClassify.test.ts` 통과.
 
-### M6 — 설치된 앱 + 아이콘
-`appScanner.ts`, `iconService.ts`, `faviconService.ts`, 아이콘 144×144 정규화,
+### M6 — 설치된 앱 + 아이콘 (양쪽 플랫폼)
+`appScanner/{index,types,windows,macos}.ts`(§6.0 구조),
+`iconService.ts`, `faviconService.ts`, 아이콘 144×144 정규화,
 라이브러리의 설치된 앱 섹션(검색 + 가상 스크롤 + 지연 로딩), `IconPicker`.
 **수용 기준:** 앱 목록에서 앱을 끌어다 놓으면 바로 완성된 키가 만들어진다.
-exe 아이콘과 파비콘이 표시된다. 오프라인에서도 크래시하지 않는다. `appScanner.test.ts` 통과.
+Windows는 exe 아이콘, macOS는 `.app` 번들 아이콘이 표시된다.
+**양쪽 모두 한글 앱 이름이 깨지지 않는다.** 오프라인에서도 크래시하지 않는다.
+`appScanner.test.ts`가 두 플랫폼 구현을 모두 검증하며 통과한다.
 
-### M7 — 트레이 · 단축키 · 설정 · 자동 시작 · 마감
-`tray.ts`, `shortcuts.ts`, `SettingsModal`, `autoLaunch.ts`,
+### M7 — 트레이 · 단축키 · 가장자리 피크 · 설정 · 자동 시작 · 마감
+`tray.ts`, `shortcuts.ts`, `autoLaunch.ts`,
+`services/visibility.ts`의 **정책 B(가장자리 피크 트리거 스트립, §6.10-B)** 와
+**정책 C(유휴 반투명 + 클릭 통과, §6.10-C)**,
+**키별 전역 단축키(§6.11-B)와 전역 숫자 단축키(§6.11-C)** — 레지스트리, `hotkey:validate`,
+편집기 속성 패널의 `전역 단축키` 위젯, 설정의 등록 목록 표,
+`SettingsModal`의 `동작` 탭 포함 5개 탭(§9.9),
 컨텍스트 메뉴 + 클립보드(§9.7), 키보드 내비게이션(§9.8), 테마 전환,
 `prefers-reduced-motion`, 전체 문구 한국어 검수.
-**수용 기준:** §9 UI 명세를 모두 만족한다. 키보드만으로 키를 실행할 수 있다.
-단축키 충돌 시 롤백된다.
+**수용 기준:** §15의 "화면 가림 방지"와 "키보드 실행" 체크리스트 전체가 통과한다.
+가장자리 띠가 다른 앱의 포커스를 빼앗지 않고, 스쳐 지나갈 때 오작동하지 않는다.
+§9 UI 명세를 모두 만족한다. 키보드만으로 키를 실행할 수 있다. 단축키 충돌 시 롤백된다.
 
-### M8 — 자동 업데이트 + 릴리즈 파이프라인
-`updater.ts`, `electron-builder.yml`, `release.yml`,
-아이콘 에셋(`build/icon.ico`, `resources/tray.ico`), README 작성.
-**수용 기준:** `git tag v1.0.0 && git push --tags` 하면 GitHub Actions가 통과하고
-릴리즈에 `StreamPanel-1.0.0-Setup.exe`와 `latest.yml`이 첨부된다.
+### M8 — 업데이트 + 릴리즈 파이프라인 (양쪽 플랫폼)
+`updater/{index,windows,macos}.ts`(§10.1 — macOS는 버전 확인만),
+`electron-builder.yml`(win nsis + mac dmg arm64/x64), `release.yml`(verify + 매트릭스),
+아이콘 에셋(`build/icon.ico`, `build/icon.icns`, `resources/tray.ico`,
+`resources/trayTemplate.png`, `resources/trayTemplate@2x.png`), README 작성.
+**수용 기준:** `git tag v1.0.0 && git push --tags` 하면 두 OS 잡이 모두 통과하고
+릴리즈에 `StreamPanel-1.0.0-Setup.exe` · `latest.yml` ·
+`StreamPanel-1.0.0-arm64.dmg` · `StreamPanel-1.0.0-x64.dmg`가 전부 첨부된다.
+**macOS 빌드가 서명 인증서를 찾다가 실패하지 않는다** (`CSC_IDENTITY_AUTO_DISCOVERY: false`).
 
-### M9 — Windows 실기 QA
-§15 체크리스트 전체 수행 → 버그 수정 → `v1.0.1` 태그로 업데이트 경로 검증.
+### M9 — 실기 QA (Windows + macOS)
+§15.1~15.5를 양쪽 OS에서 각각 수행하고, §15.6(Windows) · §15.7(macOS)를 추가로 수행한다.
+발견된 버그 수정 후 `v1.0.1` 태그로 Windows 자동 업데이트 경로와
+macOS 버전 알림 경로를 각각 검증한다.
+**macOS는 개발 머신에서 직접 확인할 수 있고, Windows는 실기가 필요하다.**
 
 ---
 
@@ -1157,12 +1873,31 @@ git push origin main --tags        # release.yml 트리거
 | `Get-StartApps` 실행 정책 차단 | Store 앱 목록 누락 | `-ExecutionPolicy Bypass` + 실패 시 조용히 무시 |
 | 한글 앱 이름 인코딩 깨짐 | 목록이 읽기 불가 | PowerShell 출력 인코딩 UTF-8 강제 + 자식 프로세스 출력 UTF-8 디코드 |
 | 투명 + 항상최상위 창 렌더링 깜빡임 | 시각적 결함 | 수동 리사이즈 제거, 크기는 설정에서만 변경. `hasShadow: false` |
+| **항상 최상위 패널이 작업 화면을 가림** | 실사용 불가 수준의 불편 | §6.10 정책 A+B 기본 활성화. 실행 즉시 숨고 가장자리 띠로 복귀 |
+| 가장자리 띠가 마우스를 스칠 때마다 튀어나옴 | 짜증 유발 | `peekDelayMs` 220ms 지연 + `mouseleave` 시 타이머 취소 |
+| 가장자리 띠가 다른 앱의 포커스를 빼앗음 | 타이핑 중 입력 끊김 | 트리거 창을 `focusable: false`로 생성 |
+| 유휴 클릭 통과 상태에서 창을 잡을 수 없음 | 패널을 옮길 수 없음 | 커서 진입 시 즉시 `setIgnoreMouseEvents(false)` 복귀 후 드래그 허용 |
+| 편집 중 패널이 사라져 결과 확인 불가 | 편집 흐름 단절 | 편집기 창이 열려 있으면 정책 A를 일시 중지 |
+| **수식키 없는 전역 단축키 등록** | 모든 앱에서 그 키 입력이 막혀 시스템이 망가짐 | `validate.ts`에서 무조건 거부 + 단위 테스트 (§6.11-B) |
+| 전역 단축키가 다른 앱과 충돌 | 조용히 동작 안 함 | 시험 등록 후 즉시 해제로 사전 검사, 실패 시 사유 표시, 설정에 `충돌` 배지 |
+| 종료 후 전역 단축키가 남음 | 다른 앱이 그 조합을 못 씀 | `will-quit`에서 `unregisterAll()` + 레지스트리 단일화 (§6.8) |
+| 백그라운드에서 패널에 포커스를 못 줌 | 힌트 입력이 먹지 않음 | `show`→`moveTop`→`focus` 순서 + 포커스 상실 시 배지 숨김으로 상태를 시각화 |
+| 힌트 번호와 슬롯 인덱스 불일치로 혼동 | 엉뚱한 키 실행 | 빈 슬롯을 건너뛰어 **눈에 보이는 순서**로 배정 + `hintMap.test.ts` |
+| 편집기 입력 중 숫자키가 실행으로 새어나감 | 의도치 않은 실행 | 편집기 창에서는 힌트 입력을 아예 비활성화 (§6.11) |
 | 폴더 중첩으로 인한 순환 참조 | 무한 루프·데이터 손상 | `tree.ts`에서 이동 전 조상 검사 + 단위 테스트 (§14) |
 | 그리드 축소 시 항목 유실 | 데이터 손실 | 삭제하지 않고 다음 페이지로 넘김 + 사용자 안내 (§9.9) |
 | 드롭 시 Electron이 파일로 내비게이션 | 앱 화면이 깨짐 | 모든 드롭 핸들러에서 `preventDefault()` (§8.4) |
 | 태그와 package.json 버전 불일치 | 자동 업데이트 무음 실패 | CI에 버전 검증 단계 (§12.4) |
 | 초안(draft) 릴리즈로 게시 | 업데이트 미감지 | `releaseType: release` 고정 |
-| macOS 개발 중 Windows 전용 API 호출로 크래시 | 개발 불가 | 모든 Windows API에 플랫폼 가드 (§14.1) |
+| 플랫폼 전용 API를 반대편에서 호출해 크래시 | 앱이 즉시 죽음 | §6.0의 파일 단위 분리 + §14.1의 API 표. `readShortcutLink`·`app.dock`이 대표적 |
+| **macOS Gatekeeper가 무서명 앱을 차단** | 사용자가 실행 자체를 못 함 | README에 시스템 설정 허용 절차를 스크린샷과 함께 명시 (§13). 이걸 빠뜨리면 macOS 사용자는 앱을 열지 못한다 |
+| **macOS 자동 업데이트 불가** | 사용자가 구버전에 머무름 | Squirrel.Mac이 서명을 요구하므로 시도하지 않는다. 대신 버전 확인 후 릴리즈 페이지 안내 (§10.1) |
+| CI의 macOS 잡이 서명 인증서를 찾다 실패 | 릴리즈 빌드 실패 | `CSC_IDENTITY_AUTO_DISCOVERY: 'false'` + `mac.identity: null` (§12.4) |
+| macOS에서 `'screen-saver'` 창 레벨 사용 | 메뉴 막대·Mission Control까지 덮어 사용자를 가둠 | macOS는 `'floating'` 고정. `platform/index.ts`에서만 결정 (§6.5) |
+| `LSUIElement` 앱이 키보드 포커스를 못 받음 | 숫자 힌트가 먹지 않음 | `showPanel()`에서 `app.focus({steal:true})` 선행 호출 (§6.11-A) |
+| macOS에서 컬러 트레이 아이콘 사용 | 다크 모드에서 아이콘이 안 보임 | `trayTemplate.png` + `setTemplateImage(true)` (§6.7) |
+| `.app`을 폴더로 오분류 | 앱이 Finder 창으로 열림 | `.app` 접미사를 `folder`보다 먼저 검사 (§8.2, §9.6) |
+| Windows 설정 파일을 macOS에서 사용 | 경로 키가 전부 깨짐 | `config.platform` 기록 + 경고 배지, 삭제하지 않음 (§4.6) |
 | 앱 스캔이 UI를 멈춤 | 라이브러리 프리즈 | 비동기 스캔 + 24h 캐시 + 아이콘 지연 로딩 |
 | 고아 아이콘 파일 누적 | 디스크 낭비 | 앱 시작 시 미참조 아이콘 정리 (§6.6) |
 
@@ -1172,24 +1907,112 @@ git push origin main --tags        # release.yml 트리거
 
 ```
 /Users/youngmini/stream-panel/PLAN.md 를 처음부터 끝까지 읽고 그대로 구현해줘.
+1500줄이 넘으니 요약하지 말고 전부 읽어야 한다.
 
-이 앱은 Elgato Stream Deck의 사용 흐름을 소프트웨어로 재현하는 것이 목표다.
-§1의 대응표가 무엇을 흉내 내야 하는지 정의한다.
+# 무엇을 만드는가
+Windows·macOS 바탕화면용 Elgato Stream Deck 클론. 물리 장치 없이 소프트웨어로 재현한다.
+링크·폴더·파일·설치된 앱을 키로 등록해두고 눌러서 실행하는 런처다.
+§1의 대응표가 스트림덱의 어떤 동작을 흉내 내야 하는지 정의한다.
+두 OS 모두 1급 지원 대상이다. Linux는 만들지 않는다.
 
-규칙:
-- 타입 정의(§4), 슬롯 배치 규칙(§4.3), IPC 채널(§5)은 이름과 형태를 그대로 사용할 것.
-- §16의 마일스톤 M0부터 M8까지 순서대로 진행하고, 각 마일스톤이 끝날 때마다
-  수용 기준을 확인한 뒤 별도 커밋을 만들 것.
-- M1(순수 로직 + 테스트)을 UI보다 먼저 끝낼 것. layout.ts / tree.ts 가 이 앱의 심장이다.
-- 보안 요구사항(§8)은 타협하지 말 것. 특히 child_process에 shell:true 금지,
-  contextIsolation/sandbox 활성화, 모든 IPC 입력 검증, 드롭 핸들러의 preventDefault.
-- 드래그 앤 드롭(§9.5)과 OS 드롭(§9.6)은 이 앱의 핵심 사용성이다. 6가지 경로를 전부 구현할 것.
+# 작업 방식
+- §16의 마일스톤 M0 → M8을 순서대로 진행한다. 건너뛰지 않는다.
+- 각 마일스톤이 끝날 때마다 수용 기준을 실제로 확인하고 별도 커밋을 만든다.
+- M1(순수 로직 + 테스트)을 UI보다 먼저 완성한다.
+  shared/layout.ts, shared/tree.ts, shared/hintMap.ts 세 파일이 이 앱의 심장이고,
+  여기가 틀리면 나머지가 전부 무너진다. 테스트를 먼저 통과시킨 뒤 UI로 넘어간다.
+- §4의 타입 정의, §4.3의 슬롯 배치 규칙, §5의 IPC 채널은 이름과 형태를 그대로 쓴다.
+  더 좋은 설계가 떠올라도 바꾸지 말고 먼저 물어봐라.
+
+# 절대 타협하면 안 되는 것
+
+보안 (§8)
+- child_process 에 shell:true 금지. 인자는 항상 배열로 전달.
+- 모든 창에 contextIsolation:true, nodeIntegration:false, sandbox:true.
+- 모든 IPC 핸들러는 첫 줄에서 입력을 검증한다. 렌더러는 신뢰하지 않는다.
+- URL은 http/https/mailto 화이트리스트. javascript:, file:, data: 는 차단.
+- 드롭 핸들러에서 preventDefault() 누락 금지. 빠뜨리면 앱 화면이 파일로 대체된다.
+- 폴더를 자기 자신의 하위로 옮기는 순환 참조를 거부한다.
+
+전역 단축키 (§6.11-B)
+- 수식키(Ctrl/Alt/Shift/Win/Cmd) 없는 단일 키의 전역 등록을 절대 허용하지 마라.
+  'G' 하나를 전역으로 잡으면 사용자의 모든 앱에서 G 타이핑이 막힌다.
+- will-quit 에서 unregisterAll(). 종료 후 단축키가 남으면 안 된다.
+- accelerator는 항상 CommandOrControl 로 저장한다. Control 하드코딩 금지.
+
+플랫폼 분기 (§6.0)
+- 플랫폼 의존 코드는 services/<이름>/{index,windows,macos}.ts 로 파일을 나눈다.
+  if (process.platform === 'win32') 를 코드 전체에 흩뿌리지 마라.
+- 어떤 플랫폼에서도 throw 대신 안전한 기본값을 반환한다.
+- platform 인자를 주입 가능하게 만들어, 한 머신에서 양쪽 구현을 모두 테스트한다.
+
+# 이 앱의 성패를 가르는 4가지
+
+1. 드래그 앤 드롭 (§9.5, §9.6)
+   오른쪽 액션 목록에서 왼쪽 키로 끌어다 놓는 것이 스트림덱의 핵심 사용법이다.
+   6가지 경로를 전부 구현한다. 탐색기/Finder에서 폴더를, 브라우저에서 URL을
+   직접 끌어다 놓는 것(§9.6)까지 포함한다.
+   macOS에서 .app 은 디렉터리지만 폴더가 아니라 앱으로 분류해야 한다.
+
+2. 패널이 화면을 가리지 않게 하기 (§6.10)
+   항상 최상위 패널이 링크를 연 뒤에도 화면에 남아 작업을 가리는 것이
+   이 앱의 가장 큰 실사용 문제다.
+   정책 A(실행 후 자동 숨김)와 B(가장자리 피크)가 기본으로 켜져 있어야 한다.
+
+3. 키보드만으로 실행 (§6.11)
+   패널 토글 단축키 → 숫자 한 번이 주 사용 경로다.
+   힌트 번호는 슬롯 인덱스가 아니라 눈에 보이는 순서로 배정한다.
+   빈 슬롯은 건너뛴다. 이걸 틀리면 엉뚱한 키가 실행된다.
+   힌트 판정은 event.key 가 아니라 event.code 로 한다.
+   한글 입력기가 켜져 있으면 event.key 가 조합 중 문자로 와서 먹지 않는다.
+
+4. 두 OS에서 똑같이 동작하기 (§6.0, §14.1)
+   Windows와 macOS 모두 1급 지원 대상이다.
+   macOS에서 창 레벨은 'floating' 이다. 'screen-saver' 를 쓰면 메뉴 막대와
+   Mission Control 까지 덮어서 사용자가 앱에서 빠져나올 수 없게 된다.
+   LSUIElement 앱은 키보드 포커스를 못 받을 수 있으므로 패널을 띄우기 전에
+   app.focus({steal:true}) 를 먼저 호출해야 숫자 힌트가 동작한다.
+
+# 개발 환경 제약
+- 개발 머신은 macOS다. macOS 동작은 직접 확인할 수 있지만 Windows는 확인할 수 없다.
+- §14.1의 플랫폼 API 표를 반드시 지켜라. shell.readShortcutLink 와 PowerShell
+  Get-StartApps 는 Windows 전용이고, app.dock 과 plutil 은 macOS 전용이다.
+  가드 없이 호출하면 반대편에서 즉시 크래시한다.
+- npm run dev 가 macOS에서 크래시 없이 실행되는 것이 모든 마일스톤의 전제 조건이다.
+- Windows 인스톨러는 로컬에서 만들 수 없다. GitHub Actions 매트릭스가
+  windows-latest / macos-latest 양쪽에서 빌드한다.
+- macOS는 코드 서명을 하지 않는다. 그래서 자동 업데이트를 구현하지 마라(§10.1).
+  electron-updater 를 macOS에서 초기화조차 하지 않는다.
+
+# 코드 스타일
 - 모든 사용자 대면 문구는 한국어. 코드 식별자와 주석은 영어.
-- 개발 환경은 macOS이므로 §14.1의 플랫폼 가드를 반드시 지킬 것.
-  npm run dev 가 macOS에서 크래시 없이 실행되어야 한다.
-- §14의 단위 테스트를 실제로 작성하고 통과시킬 것.
-- 완료 후 gh repo create 로 deepsky616/stream-panel (public) 을 만들고 푸시한 뒤,
-  v1.0.0 태그를 밀어 GitHub Actions 릴리즈가 성공하는지 확인할 것.
+- 오류 메시지는 원인과 해결책을 함께 준다.
+  나쁜 예: "실행 실패"
+  좋은 예: "대상 폴더를 찾을 수 없습니다. 이동되었거나 삭제되었을 수 있습니다: D:\작업"
+- CSS 프레임워크를 쓰지 않는다. 순수 CSS + CSS 변수로 테마를 만든다.
+- 파비콘 조회를 제외하고 런타임에 외부 네트워크를 쓰지 않는다.
 
-불명확한 점이 있으면 임의로 정하지 말고 물어봐.
+# 완료 조건
+1. §14의 단위 테스트 9개 파일을 실제로 작성하고 전부 통과시킨다.
+   (layout / tree / hintMap / accelerator / validate / store-migration /
+    appScanner / launcher / dropClassify)
+   appScanner 와 launcher 는 Windows·macOS 구현을 한 머신에서 모두 검증해야 한다.
+2. gh repo create 로 deepsky616/stream-panel 을 public 으로 만들고 푸시한다.
+3. package.json 을 1.0.0 으로 맞추고 v1.0.0 태그를 푸시한다.
+4. GitHub Actions 의 두 잡(windows-latest / macos-latest)이 모두 통과하고,
+   릴리즈에 아래 5개가 전부 첨부된 것을 확인한다.
+     StreamPanel-1.0.0-Setup.exe
+     StreamPanel-1.0.0-Setup.exe.blockmap
+     latest.yml               ← 없으면 Windows 자동 업데이트가 죽는다
+     StreamPanel-1.0.0-arm64.dmg
+     StreamPanel-1.0.0-x64.dmg
+5. macOS DMG를 실제로 설치해 §15.7 체크리스트를 직접 수행한다 (개발 머신이 macOS이므로 가능).
+6. §15의 Windows 항목(§15.1~15.6)은 직접 확인할 수 없으므로 README에 체크리스트로
+   옮겨 적어 사용자가 검증할 수 있게 한다.
+7. README에 macOS Gatekeeper 허용 절차를 반드시 넣는다.
+   이게 없으면 macOS 사용자는 앱을 아예 열지 못한다.
+
+# 막혔을 때
+불명확한 점이 있으면 임의로 정하지 말고 물어봐라.
+특히 §4 타입이나 §5 IPC 채널을 바꿔야 할 것 같으면 반드시 먼저 확인받아라.
 ```
