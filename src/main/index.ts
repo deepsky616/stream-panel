@@ -16,7 +16,10 @@ type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
 app.setName('stream-panel');
 const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) app.quit();
+if (!gotLock) {
+  console.error('다른 Stream Panel 실행 과정이 이미 단일 실행 잠금을 사용하고 있습니다.');
+  app.quit();
+}
 
 app.on('web-contents-created', (_event, contents) => {
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -62,6 +65,9 @@ app.whenReady().then(() => {
     }
   });
   app.on('second-instance', () => showPanel());
+}).catch((error: unknown) => {
+  console.error('앱을 시작하지 못했습니다. 설치 파일과 설정을 확인해 주세요.', error);
+  app.quit();
 });
 
 function createSafeWindowList(): BrowserWindow[] {

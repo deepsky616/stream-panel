@@ -165,8 +165,8 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
         <div className="app-skeleton" aria-label="설치된 앱을 불러오는 중">
           <span /><span /><span /><span />
         </div>
-      ) : platform && platform !== 'win32' ? (
-        <p className="library-note">설치된 앱 목록은 Windows에서만 지원됩니다.</p>
+      ) : platform && !['win32', 'darwin'].includes(platform) ? (
+        <p className="library-note">이 운영체제에서는 설치된 앱 목록을 지원하지 않습니다.</p>
       ) : filteredApps.length ? (
         <InstalledAppList apps={filteredApps} onAdd={(app) => onAdd({ kind: 'installed-app', app })} />
       ) : (

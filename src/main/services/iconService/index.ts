@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { app, nativeImage } from 'electron';
-import type { ActionType } from '../../shared/types';
-import { resolveFavicon } from './faviconService';
+import { nativeImage } from 'electron';
+import type { ActionType } from '../../../shared/types';
+import { resolveFavicon } from '../faviconService';
+import { getMacosBundleIcon } from './macos';
+import { getNativeFileIcon } from './windows';
 
 interface IconMetadata {
   mtimeMs: number;
@@ -26,6 +28,7 @@ export async function resolveActionIcon(
   type: ActionType,
   target: string,
   userDataPath: string,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
   try {
     if (type === 'url') return resolveFavicon(target, userDataPath);
@@ -44,9 +47,12 @@ export async function resolveActionIcon(
     } catch {
       // Missing or stale cache entries are regenerated.
     }
-    const image = await app.getFileIcon(target, { size: 'large' });
-    if (image.isEmpty()) return null;
     await mkdir(directory, { recursive: true });
+    const image =
+      platform === 'darwin' && type === 'app'
+        ? await getMacosBundleIcon(target, imagePath)
+        : await getNativeFileIcon(target);
+    if (!image || image.isEmpty()) return null;
     await Promise.all([
       writeFile(imagePath, image.toPNG()),
       writeFile(metadataPath, JSON.stringify({ mtimeMs: targetStats.mtimeMs }), 'utf8'),
