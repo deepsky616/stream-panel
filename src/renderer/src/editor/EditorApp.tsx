@@ -15,22 +15,41 @@ import {
   getPageCount,
   positionToSlot,
 } from '../../../shared/layout';
-import { countDeckItems, findItemAtPath, getItemsAtPath } from '../../../shared/tree';
+import {
+  cloneItemWithNewIds,
+  countDeckItems,
+  findItemAtPath,
+  getItemsAtPath,
+} from '../../../shared/tree';
 import type { ActionItem, DeckItem, LibraryEntry } from '../../../shared/types';
 import { Breadcrumb } from '../common/Breadcrumb';
 import { PageDots } from '../common/PageDots';
 import { Toast } from '../common/Toast';
+import { ContextMenu, type ContextMenuItem } from '../common/ContextMenu';
 import { useConfig } from '../hooks/useConfig';
+import {
+  clearDeckClipboard,
+  getDeckClipboard,
+  setDeckClipboard,
+} from '../hooks/useClipboard';
 import { useDeckStore } from '../store/deckStore';
 import { ActionLibrary } from './ActionLibrary';
 import { isDragData, isDropData, type DragData } from './dndTypes';
 import { KeyGrid } from './KeyGrid';
 import { PropertiesPanel } from './PropertiesPanel';
 import { TrashZone } from './TrashZone';
+import { SettingsModal } from './SettingsModal';
 
 interface FocusSlotPayload {
   path?: string[];
   slot?: number;
+}
+
+interface MenuState {
+  x: number;
+  y: number;
+  item: DeckItem | null;
+  position: number;
 }
 
 function isFocusSlot(payload: unknown): payload is FocusSlotPayload {
@@ -72,6 +91,8 @@ export function EditorApp() {
   const [activeDrag, setActiveDrag] = useState<DragData | null>(null);
   const [highlightedFolderId, setHighlightedFolderId] = useState<string | null>(null);
   const [dndMessage, setDndMessage] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const folderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoveredFolderKey = useRef<string | null>(null);
   const springDestination = useRef<string[] | null>(null);
@@ -98,6 +119,16 @@ export function EditorApp() {
   }, []);
 
   useEffect(() => () => clearFolderHover(true), [clearFolderHover]);
+  useEffect(() => {
+    const openSettingsFromHash = () => {
+      if (window.location.hash !== '#settings') return;
+      setSettingsOpen(true);
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    };
+    openSettingsFromHash();
+    window.addEventListener('hashchange', openSettingsFromHash);
+    return () => window.removeEventListener('hashchange', openSettingsFromHash);
+  }, []);
   useEffect(() => {
     return window.api.on('editor:focus-slot', (payload) => {
       if (!isFocusSlot(payload)) return;
@@ -369,8 +400,109 @@ export function EditorApp() {
     setFocusField(null);
   };
   const saved = useCallback((item: DeckItem) => setSelectedId(item.id), []);
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  const removeDeckItem = useCallback(async (item: DeckItem, path = location.path) => {
+    if (
+      item.kind === 'folder' &&
+      !window.confirm(`이 폴더와 하위 ${countDeckItems(item.children)}개 항목을 함께 삭제할까요?`)
+    ) {
+      return;
+    }
+    try {
+      await window.api.deck.remove({ path, id: item.id });
+      setSelectedId(null);
+      setSelectedPosition(null);
+    } catch (error) {
+      setDndMessage(userError(error));
+    }
+  }, [location.path]);
+
+  const pasteAt = useCallback(async (position: number) => {
+    const clipboard = getDeckClipboard();
+    if (!clipboard) return;
+    try {
+      if (clipboard.cut) {
+        await window.api.deck.move({
+          from: { path: clipboard.path, id: clipboard.item.id },
+          to: { path: location.path, position },
+        });
+        clearDeckClipboard();
+        setSelectedId(clipboard.item.id);
+      } else {
+        const copy = cloneItemWithNewIds(clipboard.item);
+        copy.position = position;
+        await window.api.deck.upsert({ path: location.path, item: copy });
+        setSelectedId(copy.id);
+      }
+      setSelectedPosition(position);
+    } catch (error) {
+      setDndMessage(userError(error));
+    }
+  }, [location.path]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (settingsOpen || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      const command = event.ctrlKey || event.metaKey;
+      const item = selectedId ? items.find((candidate) => candidate.id === selectedId) : null;
+      if (command && event.key.toLowerCase() === 'c' && item) {
+        event.preventDefault();
+        setDeckClipboard(item, location.path, false);
+      } else if (command && event.key.toLowerCase() === 'x' && item) {
+        event.preventDefault();
+        setDeckClipboard(item, location.path, true);
+      } else if (command && event.key.toLowerCase() === 'v') {
+        event.preventDefault();
+        const position = selectedId
+          ? findFirstEmptyPosition(items)
+          : (selectedPosition ?? findFirstEmptyPosition(items));
+        void pasteAt(position);
+      } else if (event.key === 'Delete' && item) {
+        event.preventDefault();
+        void removeDeckItem(item);
+      } else if (event.key === 'F2' && item) {
+        event.preventDefault();
+        setFocusField(null);
+        requestAnimationFrame(() => setFocusField('label'));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [items, location.path, pasteAt, removeDeckItem, selectedId, selectedPosition, settingsOpen]);
 
   if (!config) return <main className="editor-app loading">편집기를 불러오는 중입니다...</main>;
+
+  const menuItems: ContextMenuItem[] = menu?.item
+    ? [
+        {
+          label: '편집',
+          onSelect: () => {
+            selectItem(menu.item!.id, menu.position);
+            setFocusField('label');
+          },
+        },
+        { label: '복사', shortcut: 'Ctrl+C', onSelect: () => setDeckClipboard(menu.item!, location.path, false) },
+        { label: '잘라내기', shortcut: 'Ctrl+X', onSelect: () => setDeckClipboard(menu.item!, location.path, true) },
+        { label: '복제', onSelect: () => void window.api.deck.duplicate({ path: location.path, id: menu.item!.id }) },
+        { label: '아이콘 변경', onSelect: () => selectItem(menu.item!.id, menu.position) },
+        {
+          label: '위치 열기',
+          disabled: menu.item.kind === 'folder' || menu.item.type === 'url' || menu.item.type === 'uwp',
+          onSelect: () => menu.item?.kind === 'action' && void window.api.shell.reveal(menu.item.target),
+        },
+        { separator: true },
+        { label: '삭제', shortcut: 'Delete', danger: true, onSelect: () => void removeDeckItem(menu.item!) },
+      ]
+    : [
+        {
+          label: '붙여넣기',
+          shortcut: 'Ctrl+V',
+          disabled: !getDeckClipboard(),
+          onSelect: () => menu && void pasteAt(menu.position),
+        },
+      ];
 
   return (
     <DndContext
@@ -411,6 +543,14 @@ export function EditorApp() {
               selectedPosition={selectedPosition}
               highlightedFolderId={highlightedFolderId}
               onOsDrop={(event) => void handleOsDrop(event)}
+              onContextItem={(event, item) => {
+                event.preventDefault();
+                setMenu({ x: event.clientX, y: event.clientY, item, position: item.position });
+              }}
+              onContextEmpty={(event, position) => {
+                event.preventDefault();
+                setMenu({ x: event.clientX, y: event.clientY, item: null, position });
+              }}
               onSelectItem={selectItem}
               onSelectEmpty={(position) => {
                 setSelectedId(null);
@@ -448,9 +588,11 @@ export function EditorApp() {
             if (selectedId) void window.api.deck.duplicate({ path: location.path, id: selectedId });
           }}
         />
-        <button className="settings-button" type="button" disabled>
+        <button className="settings-button" type="button" onClick={() => setSettingsOpen(true)}>
           설정
         </button>
+        <SettingsModal open={settingsOpen} config={config} onClose={() => setSettingsOpen(false)} />
+        {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />}
         {dndMessage && (
           <div className="dnd-message" role="status">
             <span>{dndMessage}</span>

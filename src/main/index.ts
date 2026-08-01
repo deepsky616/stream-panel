@@ -5,6 +5,9 @@ import { registerIpcHandlers } from './ipc';
 import { ConfigStore } from './store';
 import { applyPanelLayout, createPanelWindow, showPanel } from './windows/panelWindow';
 import { cleanupOrphanIcons } from './services/iconCleanup';
+import { createTray } from './tray';
+import { registerShortcuts } from './shortcuts';
+import { setAutoLaunch } from './services/autoLaunch';
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
@@ -36,10 +39,18 @@ app.whenReady().then(() => {
   registerIpcHandlers(configStore);
   void cleanupOrphanIcons(configStore.get().root, app.getPath('userData'));
   createPanelWindow(configStore);
+  createTray();
+  registerShortcuts(configStore);
+  let launchAtLogin = configStore.get().launchAtLogin;
+  setAutoLaunch(launchAtLogin);
   configStore.onDidChange((config) => {
     applyPanelLayout(config);
     for (const window of createSafeWindowList()) {
       window.webContents.send(IPC_CHANNELS.CONFIG_CHANGED, config);
+    }
+    if (config.launchAtLogin !== launchAtLogin) {
+      launchAtLogin = config.launchAtLogin;
+      setAutoLaunch(launchAtLogin);
     }
   });
   app.on('second-instance', () => showPanel());

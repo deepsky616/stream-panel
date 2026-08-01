@@ -1,7 +1,7 @@
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, shell } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type { ConfigStore } from '../store';
-import { assertEditorOpenInput } from '../security/inputValidation';
+import { assertEditorOpenInput, assertRevealPathInput } from '../security/inputValidation';
 import { applyPanelLayout, hidePanel } from '../windows/panelWindow';
 import { openEditorWindow } from '../windows/editorWindow';
 
@@ -20,4 +20,8 @@ export function registerWindowHandlers(configStore: ConfigStore): void {
     platform: process.platform,
     isPackaged: app.isPackaged,
   }));
+  ipcMain.handle(IPC_CHANNELS.SHELL_REVEAL, (_event, input: unknown) => {
+    assertRevealPathInput(input);
+    shell.showItemInFolder(input);
+  });
 }

@@ -27,6 +27,14 @@ function errorMessage(error: unknown): string {
   return marker >= 0 ? raw.slice(marker + 7) : raw;
 }
 
+const ACTION_TYPE_LABELS = {
+  url: '웹사이트',
+  folder: '폴더 열기',
+  file: '파일 열기',
+  app: '앱 실행',
+  uwp: '스토어 앱',
+} as const;
+
 export function PropertiesPanel({
   item,
   path,
@@ -117,7 +125,7 @@ export function PropertiesPanel({
           <IconPicker icon={draft.icon} onChange={(icon) => patch({ icon })} />
         </label>
         <div className="property-kind">
-          종류 <strong>{draft.kind === 'folder' ? '폴더 키' : draft.type}</strong>
+          종류 <strong>{draft.kind === 'folder' ? '폴더 키' : ACTION_TYPE_LABELS[draft.type]}</strong>
         </div>
         {draft.kind === 'action' && (
           <label className="property-target">

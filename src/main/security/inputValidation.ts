@@ -81,6 +81,7 @@ export function assertEditorOpenInput(
 ): asserts value is { path?: string[]; slot?: number } {
   assertRecord(value, '편집기');
   if (
+    Object.keys(value).some((key) => !['path', 'slot'].includes(key)) ||
     ('path' in value &&
       (!Array.isArray(value.path) || value.path.some((id) => typeof id !== 'string'))) ||
     ('slot' in value && (!Number.isInteger(value.slot) || Number(value.slot) < 0))
@@ -188,5 +189,17 @@ export function assertIconResolveInput(
     !/^icon-file:[0-9a-f-]+\.png$/i.test(value.target)
   ) {
     throw new TypeError('사용자 아이콘 경로가 올바르지 않습니다.');
+  }
+}
+
+export function assertRevealPathInput(value: unknown): asserts value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > 2048 ||
+    (!isAbsolute(value) && !win32.isAbsolute(value)) ||
+    value.split(/[\\/]+/).includes('..')
+  ) {
+    throw new TypeError('열 위치가 올바르지 않습니다.');
   }
 }

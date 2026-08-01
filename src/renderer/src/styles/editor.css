@@ -519,6 +519,131 @@
   cursor: pointer;
 }
 
+.modal-backdrop {
+  position: absolute;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 54%);
+}
+
+.settings-modal {
+  display: grid;
+  width: min(700px, calc(100% - 56px));
+  height: min(500px, calc(100% - 56px));
+  grid-template-rows: 48px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 45%);
+}
+
+.settings-modal > header {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-modal > header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.settings-modal > header button {
+  margin-left: auto;
+  color: var(--text);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-body {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+}
+
+.settings-tabs button {
+  padding: 8px 10px;
+  color: var(--text-dim);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings-tabs button.active {
+  color: var(--text);
+  background: var(--tile-hover);
+}
+
+.settings-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  overflow: auto;
+}
+
+.settings-content label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+}
+
+.settings-content label > input[type='range'] {
+  flex: 1;
+}
+
+.settings-content select,
+.hotkey-input {
+  margin-left: auto;
+  padding: 6px 8px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--tile);
+}
+
+.hotkey-input {
+  width: 220px;
+  margin-left: 0;
+}
+
+.settings-content button {
+  align-self: flex-start;
+  padding: 7px 11px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--tile);
+  cursor: pointer;
+}
+
+.settings-content .reset-settings {
+  color: #ef7777;
+}
+
+.settings-message {
+  margin: 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+
 @media (max-width: 900px) {
   .editor-workspace {
     grid-template-columns: minmax(0, 1fr) 240px;

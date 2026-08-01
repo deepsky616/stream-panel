@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { app, BrowserWindow, screen } from 'electron';
+import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type { ConfigStore } from '../store';
 import { getPageCount } from '../../shared/layout';
 import type { AppConfig } from '../../shared/types';
@@ -123,8 +124,16 @@ export function showPanel(): void {
   if (!panelWindow || panelWindow.isDestroyed()) return;
   panelWindow.show();
   panelWindow.focus();
+  panelWindow.webContents.send(IPC_CHANNELS.PANEL_VISIBILITY, true);
 }
 
 export function hidePanel(): void {
   panelWindow?.hide();
+  panelWindow?.webContents.send(IPC_CHANNELS.PANEL_VISIBILITY, false);
+}
+
+export function togglePanel(): void {
+  if (!panelWindow || panelWindow.isDestroyed()) return;
+  if (panelWindow.isVisible()) hidePanel();
+  else showPanel();
 }

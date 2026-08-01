@@ -7,6 +7,7 @@ let editorWindow: BrowserWindow | null = null;
 export interface EditorOpenOptions {
   path?: string[];
   slot?: number;
+  settings?: boolean;
 }
 
 export function getEditorWindow(): BrowserWindow | null {
@@ -19,6 +20,9 @@ export function openEditorWindow(options: EditorOpenOptions = {}): BrowserWindow
     editorWindow.focus();
     if (options.path || options.slot !== undefined) {
       editorWindow.webContents.send(IPC_CHANNELS.EDITOR_FOCUS_SLOT, options);
+    }
+    if (options.settings) {
+      void editorWindow.webContents.executeJavaScript("window.location.hash = 'settings'");
     }
     return editorWindow;
   }
@@ -43,9 +47,13 @@ export function openEditorWindow(options: EditorOpenOptions = {}): BrowserWindow
   });
   editorWindow = window;
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(`${process.env.ELECTRON_RENDERER_URL}/editor.html`);
+    void window.loadURL(
+      `${process.env.ELECTRON_RENDERER_URL}/editor.html${options.settings ? '#settings' : ''}`,
+    );
   } else {
-    void window.loadFile(join(__dirname, '../renderer/editor.html'));
+    void window.loadFile(join(__dirname, '../renderer/editor.html'), {
+      hash: options.settings ? 'settings' : undefined,
+    });
   }
   window.once('ready-to-show', () => {
     window.show();

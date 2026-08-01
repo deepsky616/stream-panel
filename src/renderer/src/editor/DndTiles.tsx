@@ -12,6 +12,7 @@ interface DraggableDeckTileProps {
   highlighted: boolean;
   onSelect: () => void;
   onEnterFolder: () => void;
+  onContextMenu: (event: React.MouseEvent) => void;
 }
 
 export function DraggableDeckTile({
@@ -22,6 +23,7 @@ export function DraggableDeckTile({
   highlighted,
   onSelect,
   onEnterFolder,
+  onContextMenu,
 }: DraggableDeckTileProps) {
   const dragData: DragData = { source: 'grid', path, item };
   const dropData: DropData =
@@ -41,6 +43,7 @@ export function DraggableDeckTile({
       style={{ opacity: draggable.isDragging ? 0.35 : 1 }}
       data-item-id={item.id}
       data-position={item.position}
+      onContextMenu={onContextMenu}
       {...draggable.attributes}
       {...draggable.listeners}
     >
@@ -60,6 +63,7 @@ interface DroppableEmptyTileProps {
   size: number;
   selected: boolean;
   onSelect: () => void;
+  onContextMenu: (event: React.MouseEvent) => void;
 }
 
 export function DroppableEmptyTile({
@@ -68,6 +72,7 @@ export function DroppableEmptyTile({
   size,
   selected,
   onSelect,
+  onContextMenu,
 }: DroppableEmptyTileProps) {
   const data: DropData = { target: 'slot', path, position };
   const { setNodeRef, isOver } = useDroppable({ id: `empty:${path.join('/')}:${position}`, data });
@@ -76,6 +81,7 @@ export function DroppableEmptyTile({
       ref={setNodeRef}
       className={`${selected ? 'grid-selection' : ''} ${isOver ? 'slot-drop-ready' : ''}`}
       data-position={position}
+      onContextMenu={onContextMenu}
     >
       <EmptyTile buttonSize={size} locked={false} onClick={onSelect} />
     </div>

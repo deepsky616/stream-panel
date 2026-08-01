@@ -2,6 +2,7 @@ import { getPageSlots } from '../../../shared/layout';
 import type { AppConfig, DeckItem } from '../../../shared/types';
 import { BackTile } from '../common/BackTile';
 import { DraggableDeckTile, DroppableEmptyTile } from './DndTiles';
+import { useKeyboardGrid } from '../hooks/useKeyboardGrid';
 
 interface KeyGridProps {
   config: AppConfig;
@@ -16,6 +17,8 @@ interface KeyGridProps {
   onBack: () => void;
   highlightedFolderId: string | null;
   onOsDrop: (event: React.DragEvent<HTMLDivElement>) => void;
+  onContextItem: (event: React.MouseEvent, item: DeckItem) => void;
+  onContextEmpty: (event: React.MouseEvent, position: number) => void;
 }
 
 export function KeyGrid({
@@ -31,11 +34,17 @@ export function KeyGrid({
   onBack,
   highlightedFolderId,
   onOsDrop,
+  onContextItem,
+  onContextEmpty,
 }: KeyGridProps) {
   const slots = getPageSlots(items, config.grid, page, path.length > 0);
+  const signature = slots.map((slot) => slot.kind === 'item' ? slot.item.id : `${slot.kind}:${slot.slot}`).join('|');
+  const { ref: gridRef, onKeyDown: handleGridKeyDown } = useKeyboardGrid(config.grid.cols, signature);
   return (
     <div
+      ref={gridRef}
       className="editor-grid"
+      onKeyDown={handleGridKeyDown}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
@@ -58,6 +67,7 @@ export function KeyGrid({
               size={size}
               selected={selectedPosition === slot.position}
               onSelect={() => onSelectEmpty(slot.position)}
+              onContextMenu={(event) => onContextEmpty(event, slot.position)}
             />
           );
         }
@@ -71,6 +81,7 @@ export function KeyGrid({
             highlighted={highlightedFolderId === slot.item.id}
             onSelect={() => onSelectItem(slot.item.id, slot.position)}
             onEnterFolder={() => onEnterFolder(slot.item.id)}
+            onContextMenu={(event) => onContextItem(event, slot.item)}
           />
         );
       })}
