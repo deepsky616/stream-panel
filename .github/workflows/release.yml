@@ -8,8 +8,33 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match package.json $PKG"
+            exit 1
+          fi
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: build:win
+            artifact: windows-release
+          - os: macos-latest
+            script: build:mac
+            artifact: macos-release
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,54 +42,70 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Verify tag matches package.json version
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          PKG=$(node -p "require('./package.json').version")
-          if [ "$TAG" != "$PKG" ]; then
-            echo "::error::Tag v$TAG != package.json $PKG"
-            exit 1
-          fi
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - name: Build Windows installer
-        run: npm run build:win
-      - name: Publish release
-        shell: pwsh
+      - name: Build release files
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run ${{ matrix.script }}
+      - name: Upload Windows files
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            dist/StreamPanel-*-Setup.exe
+            dist/StreamPanel-*-Setup.exe.blockmap
+            dist/latest.yml
+      - name: Upload macOS files
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            dist/StreamPanel-*-arm64.dmg
+            dist/StreamPanel-*-x64.dmg
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-release'
+          path: release-assets
+          merge-multiple: true
+      - name: Verify and publish all release files
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $version = node -p "require('./package.json').version"
-          $tag = $env:GITHUB_REF_NAME
-          $assets = @(
-            "dist/StreamPanel-$version-Setup.exe"
-            "dist/StreamPanel-$version-Setup.exe.blockmap"
-            "dist/latest.yml"
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="$GITHUB_REF_NAME"
+          ASSETS=(
+            "release-assets/StreamPanel-$VERSION-Setup.exe"
+            "release-assets/StreamPanel-$VERSION-Setup.exe.blockmap"
+            "release-assets/latest.yml"
+            "release-assets/StreamPanel-$VERSION-arm64.dmg"
+            "release-assets/StreamPanel-$VERSION-x64.dmg"
           )
-
-          foreach ($asset in $assets) {
-            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
-              throw "Missing release asset: $asset"
+          for ASSET in "${ASSETS[@]}"; do
+            test -f "$ASSET" || { echo "::error::Missing release file: $ASSET"; exit 1; }
+          done
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" "${ASSETS[@]}" --title "$VERSION" --generate-notes --verify-tag
+          fi
+          PUBLISHED=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for ASSET in "${ASSETS[@]}"; do
+            NAME=$(basename "$ASSET")
+            grep -Fxq "$NAME" <<<"$PUBLISHED" || {
+              echo "::error::Missing published release file: $NAME"
+              exit 1
             }
-          }
-
-          gh release view $tag --json tagName *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $assets --clobber
-          } else {
-            gh release create $tag $assets --title $version --generate-notes --verify-tag
-          }
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to publish release assets."
-          }
-
-          $publishedAssets = gh release view $tag --json assets --jq '.assets[].name'
-          foreach ($asset in $assets) {
-            $name = Split-Path -Leaf $asset
-            if ($publishedAssets -notcontains $name) {
-              throw "Missing published release asset: $name"
-            }
-          }
+          done

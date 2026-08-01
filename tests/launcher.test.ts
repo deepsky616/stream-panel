@@ -3,6 +3,7 @@ import type { SpawnOptions } from 'node:child_process';
 import type { ActionItem, DeckItem } from '../src/shared/types';
 import { launchDeckItem, type LauncherDependencies } from '../src/main/services/launcher';
 import { createDefaultConfig } from '../src/shared/defaults';
+import { compareVersions } from '../src/main/services/updater/version';
 import {
   createVisibilityService,
   getPeekBounds,
@@ -219,5 +220,13 @@ describe('panel edge peek geometry', () => {
     expect(
       getPeekBounds({ x: 1370, y: 50, width: 200, height: 300 }, workArea, 'top', 5),
     ).toEqual({ x: 1280, y: 24, width: 160, height: 5 });
+  });
+});
+
+describe('release version comparison', () => {
+  it('compares numeric release parts without lexical ordering mistakes', () => {
+    expect(compareVersions('1.0.10', '1.0.9')).toBeGreaterThan(0);
+    expect(compareVersions('v1.0.1', '1.0.1')).toBe(0);
+    expect(compareVersions('2.0.0', '10.0.0')).toBeLessThan(0);
   });
 });
