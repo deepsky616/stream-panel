@@ -1,41 +1,56 @@
-import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
+import { createDefaultConfig } from '../shared/defaults';
+import { IPC_CHANNELS } from '../shared/ipcChannels';
+import { registerIpcHandlers } from './ipc';
+import { ConfigStore } from './store';
+import { applyPanelLayout, createPanelWindow, showPanel } from './windows/panelWindow';
 
-function createPanelWindow(): BrowserWindow {
-  const window = new BrowserWindow({
-    width: 520,
-    height: 360,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    hasShadow: false,
-    show: false,
-    backgroundColor: '#00000000',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
+type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
-  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(`${process.env.ELECTRON_RENDERER_URL}/index.html`);
-  } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'));
-  }
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit();
 
-  window.once('ready-to-show', () => window.show());
-  return window;
-}
-
-app.whenReady().then(() => {
-  createPanelWindow();
+app.on('web-contents-created', (_event, contents) => {
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-navigate', (event) => event.preventDefault());
+  contents.on('will-attach-webview', (event) => event.preventDefault());
+  if (app.isPackaged) contents.on('devtools-opened', () => contents.closeDevTools());
 });
 
-app.on('window-all-closed', () => app.quit());
+app.whenReady().then(() => {
+  const defaultConfig = createDefaultConfig({
+    downloads: app.getPath('downloads'),
+    documents: app.getPath('documents'),
+  });
+  const configStore = new ConfigStore({
+    userDataPath: app.getPath('userData'),
+    defaultConfig,
+    onWarning: (message) => {
+      console.warn(message);
+      for (const window of app.isReady() ? createSafeWindowList() : []) {
+        window.webContents.send(IPC_CHANNELS.TOAST, { level: 'info', message });
+      }
+    },
+  });
+  registerIpcHandlers(configStore);
+  createPanelWindow(configStore);
+  configStore.onDidChange((config) => {
+    applyPanelLayout(config);
+    for (const window of createSafeWindowList()) {
+      window.webContents.send(IPC_CHANNELS.CONFIG_CHANGED, config);
+    }
+  });
+  app.on('second-instance', () => showPanel());
+});
+
+function createSafeWindowList(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows();
+}
+
+app.on('before-quit', () => {
+  (app as QuitAwareApp).isQuitting = true;
+});
+
+app.on('window-all-closed', () => {
+  if ((app as QuitAwareApp).isQuitting) app.quit();
+});

@@ -62,6 +62,7 @@ export interface ConfigStoreOptions {
 
 export class ConfigStore {
   private readonly store: ElectronStore<AppConfig>;
+  private readonly defaultConfig: AppConfig;
 
   constructor({
     userDataPath,
@@ -69,6 +70,7 @@ export class ConfigStore {
     now = Date.now,
     onWarning = console.warn,
   }: ConfigStoreOptions) {
+    this.defaultConfig = cloneConfig(defaultConfig);
     const configPath = join(userDataPath, 'config.json');
     const existingText = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
     const recovery = recoverConfigText(existingText, defaultConfig);
@@ -89,6 +91,7 @@ export class ConfigStore {
       defaults: recovery.config,
       migrations: {},
       clearInvalidConfig: false,
+      watch: true,
     });
     this.store.store = recovery.config;
     if (recovery.recovered && !recovery.reason) {
@@ -109,7 +112,13 @@ export class ConfigStore {
     return this.set({ ...this.get(), ...cloneConfig(patch as AppConfig) });
   }
 
-  reset(defaultConfig: AppConfig): AppConfig {
+  reset(defaultConfig: AppConfig = this.defaultConfig): AppConfig {
     return this.set(defaultConfig);
+  }
+
+  onDidChange(listener: (config: AppConfig) => void): () => void {
+    return this.store.onDidAnyChange((config) => {
+      if (config) listener(cloneConfig(config));
+    });
   }
 }

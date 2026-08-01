@@ -1,0 +1,89 @@
+import type { AppConfig } from '../../shared/types';
+
+function assertRecord(value: unknown, name: string): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`${name} 입력이 올바르지 않습니다.`);
+  }
+}
+
+export function assertConfigPatch(value: unknown): asserts value is Partial<AppConfig> {
+  assertRecord(value, '설정');
+  const allowed = new Set([
+    'version',
+    'root',
+    'grid',
+    'window',
+    'theme',
+    'hotkey',
+    'launchAtLogin',
+    'autoUpdate',
+  ]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new TypeError('허용되지 않은 설정 항목입니다.');
+  }
+  if ('version' in value && value.version !== 1) throw new TypeError('지원하지 않는 설정 버전입니다.');
+  if ('theme' in value && !['dark', 'light', 'system'].includes(String(value.theme))) {
+    throw new TypeError('테마 설정이 올바르지 않습니다.');
+  }
+  if ('hotkey' in value && (typeof value.hotkey !== 'string' || value.hotkey.length > 80)) {
+    throw new TypeError('단축키 설정이 올바르지 않습니다.');
+  }
+  if ('launchAtLogin' in value && typeof value.launchAtLogin !== 'boolean') {
+    throw new TypeError('자동 시작 설정이 올바르지 않습니다.');
+  }
+  if ('autoUpdate' in value && typeof value.autoUpdate !== 'boolean') {
+    throw new TypeError('자동 업데이트 설정이 올바르지 않습니다.');
+  }
+  if ('grid' in value) {
+    assertRecord(value.grid, '그리드');
+    const { cols, rows, buttonSize, gap } = value.grid;
+    if (
+      !Number.isInteger(cols) ||
+      Number(cols) < 2 ||
+      Number(cols) > 8 ||
+      !Number.isInteger(rows) ||
+      Number(rows) < 1 ||
+      Number(rows) > 6 ||
+      !Number.isInteger(buttonSize) ||
+      Number(buttonSize) < 64 ||
+      Number(buttonSize) > 140 ||
+      !Number.isInteger(gap) ||
+      Number(gap) < 0 ||
+      Number(gap) > 32
+    ) {
+      throw new TypeError('그리드 설정 범위를 확인해 주세요.');
+    }
+  }
+  if ('window' in value) {
+    assertRecord(value.window, '창');
+    const window = value.window;
+    if (
+      !(
+        (window.x === null || Number.isInteger(window.x)) &&
+        (window.y === null || Number.isInteger(window.y)) &&
+        typeof window.alwaysOnTop === 'boolean' &&
+        typeof window.opacity === 'number' &&
+        window.opacity >= 0.3 &&
+        window.opacity <= 1 &&
+        typeof window.locked === 'boolean' &&
+        typeof window.hideOnLaunch === 'boolean'
+      )
+    ) {
+      throw new TypeError('창 설정 범위를 확인해 주세요.');
+    }
+  }
+  if ('root' in value && !Array.isArray(value.root)) throw new TypeError('키 목록이 올바르지 않습니다.');
+}
+
+export function assertEditorOpenInput(
+  value: unknown,
+): asserts value is { path?: string[]; slot?: number } {
+  assertRecord(value, '편집기');
+  if (
+    ('path' in value &&
+      (!Array.isArray(value.path) || value.path.some((id) => typeof id !== 'string'))) ||
+    ('slot' in value && (!Number.isInteger(value.slot) || Number(value.slot) < 0))
+  ) {
+    throw new TypeError('편집기 위치가 올바르지 않습니다.');
+  }
+}

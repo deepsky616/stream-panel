@@ -1,0 +1,32 @@
+:root,
+.theme-dark {
+  --bg: rgb(22 22 26 / 92%);
+  --tile: #2a2a31;
+  --tile-hover: #35353e;
+  --text: #f0f0f3;
+  --text-dim: #9a9aa5;
+  --accent: #5b8cff;
+  --border: rgb(255 255 255 / 8%);
+}
+
+.theme-light {
+  --bg: rgb(248 248 250 / 94%);
+  --tile: #ffffff;
+  --tile-hover: #f0f0f4;
+  --text: #1a1a1f;
+  --text-dim: #6a6a76;
+  --accent: #3b6fe0;
+  --border: rgb(0 0 0 / 8%);
+}
+
+@media (prefers-color-scheme: light) {
+  .theme-system {
+    --bg: rgb(248 248 250 / 94%);
+    --tile: #ffffff;
+    --tile-hover: #f0f0f4;
+    --text: #1a1a1f;
+    --text-dim: #6a6a76;
+    --accent: #3b6fe0;
+    --border: rgb(0 0 0 / 8%);
+  }
+}

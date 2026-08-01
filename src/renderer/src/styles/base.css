@@ -20,12 +20,229 @@ body {
   background: transparent;
 }
 
-.placeholder {
-  display: grid;
+.panel {
+  position: relative;
   width: 100%;
   height: 100%;
-  place-items: center;
-  border: 1px solid rgb(255 255 255 / 8%);
+  overflow: hidden;
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgb(22 22 26 / 92%);
+  background: var(--bg);
+  backdrop-filter: blur(20px);
+}
+
+.panel.loading {
+  display: grid;
+  place-items: center;
+}
+
+button {
+  color: inherit;
+  font: inherit;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 8px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.titlebar.locked {
+  -webkit-app-region: no-drag;
+}
+
+.drag-mark {
+  margin-right: 7px;
+  color: var(--text-dim);
+}
+
+.titlebar strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.title-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+.title-actions button,
+.breadcrumb button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.title-actions button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  place-items: center;
+  border-radius: 6px;
+}
+
+.title-actions button:hover {
+  background: var(--tile-hover);
+}
+
+.panel-grid {
+  display: grid;
+}
+
+.key-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 7px;
+  overflow: hidden;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--item-color, transparent) 12%, transparent), transparent),
+    var(--tile);
+  cursor: pointer;
+  transition:
+    transform 120ms ease-out,
+    background 120ms ease-out;
+}
+
+.key-tile:hover:not(:disabled) {
+  background: var(--tile-hover);
+  transform: translateY(-1px);
+}
+
+.key-tile:active:not(:disabled) {
+  transform: scale(0.94);
+  transition-duration: 90ms;
+}
+
+.key-icon {
+  display: grid;
+  height: 48%;
+  place-items: center;
+  font-size: calc(var(--button-size, 88px) * 0.3);
+}
+
+.key-label {
+  display: -webkit-box;
+  max-width: 100%;
+  margin-top: 5px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.15;
+  text-align: center;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.folder-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.back-tile {
+  background: var(--tile-hover);
+}
+
+.empty-tile {
+  color: var(--text-dim);
+  border-style: dashed;
+  background: transparent;
+  font-size: 22px;
+  opacity: 0.48;
+}
+
+.empty-tile:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+  opacity: 1;
+}
+
+.empty-tile:disabled {
+  cursor: default;
+  opacity: 0.18;
+}
+
+.panel-footer {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.breadcrumb,
+.breadcrumb span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.breadcrumb button {
+  max-width: 86px;
+  padding: 2px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-dots {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.page-dots button {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.45;
+}
+
+.page-dots button.active {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.panel-error {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: #b4232c;
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
 }

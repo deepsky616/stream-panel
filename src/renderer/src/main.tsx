@@ -1,13 +1,11 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { PanelApp } from './panel/PanelApp';
 import './styles/base.css';
-
-export function PanelPlaceholder(): React.JSX.Element {
-  return <main className="placeholder">Stream Panel</main>;
-}
+import './styles/theme.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <PanelPlaceholder />
+    <PanelApp />
   </React.StrictMode>,
 );
