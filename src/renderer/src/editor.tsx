@@ -1,13 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { EditorApp } from './editor/EditorApp';
 import './styles/base.css';
-
-export function EditorPlaceholder(): React.JSX.Element {
-  return <main className="placeholder">Stream Panel 편집기</main>;
-}
+import './styles/theme.css';
+import './styles/editor.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <EditorPlaceholder />
+    <EditorApp />
   </React.StrictMode>,
 );

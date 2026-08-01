@@ -1,4 +1,4 @@
-import type { AppConfig } from '../../shared/types';
+import type { AppConfig, DeckItem } from '../../shared/types';
 
 function assertRecord(value: unknown, name: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -100,5 +100,32 @@ export function assertDeckReferenceInput(
     value.id.length > 100
   ) {
     throw new TypeError('키 위치가 올바르지 않습니다.');
+  }
+}
+
+export function assertDeckUpsertInput(
+  value: unknown,
+): asserts value is { path: string[]; item: DeckItem } {
+  assertRecord(value, '키 저장');
+  if (!Array.isArray(value.path) || value.path.some((id) => typeof id !== 'string')) {
+    throw new TypeError('키 저장 위치가 올바르지 않습니다.');
+  }
+  assertRecord(value.item, '키');
+}
+
+export function assertDeckMoveInput(value: unknown): asserts value is {
+  from: { path: string[]; id: string };
+  to: { path: string[]; position: number };
+} {
+  assertRecord(value, '키 이동');
+  assertDeckReferenceInput(value.from);
+  assertRecord(value.to, '이동 위치');
+  if (
+    !Array.isArray(value.to.path) ||
+    value.to.path.some((id) => typeof id !== 'string') ||
+    !Number.isInteger(value.to.position) ||
+    Number(value.to.position) < 0
+  ) {
+    throw new TypeError('키 이동 위치가 올바르지 않습니다.');
   }
 }
