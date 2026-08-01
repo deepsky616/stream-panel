@@ -29,7 +29,42 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - name: Build and publish
+      - name: Build Windows installer
+        run: npm run build:win
+      - name: Publish release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release:win
+        run: |
+          $version = node -p "require('./package.json').version"
+          $tag = $env:GITHUB_REF_NAME
+          $assets = @(
+            "dist/StreamPanel-$version-Setup.exe"
+            "dist/StreamPanel-$version-Setup.exe.blockmap"
+            "dist/latest.yml"
+          )
+
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+              throw "Missing release asset: $asset"
+            }
+          }
+
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $assets --clobber
+          } else {
+            gh release create $tag $assets --title $version --generate-notes --verify-tag
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to publish release assets."
+          }
+
+          $publishedAssets = gh release view $tag --json assets --jq '.assets[].name'
+          foreach ($asset in $assets) {
+            $name = Split-Path -Leaf $asset
+            if ($publishedAssets -notcontains $name) {
+              throw "Missing published release asset: $name"
+            }
+          }
