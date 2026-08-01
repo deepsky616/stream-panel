@@ -6,6 +6,7 @@ import { useDeckStore } from '../store/deckStore';
 import { Footer } from './Footer';
 import { PanelGrid } from './PanelGrid';
 import { TitleBar } from './TitleBar';
+import { Toast } from '../common/Toast';
 
 export function PanelApp() {
   const config = useConfig();
@@ -74,6 +75,7 @@ export function PanelApp() {
         />
       )}
       {error && <div className="panel-error">{error}</div>}
+      <Toast />
     </main>
   );
 }

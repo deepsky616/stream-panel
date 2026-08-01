@@ -5,6 +5,7 @@ interface KeyTileProps {
   buttonSize: number;
   onClick: () => void;
   onDoubleClick?: () => void;
+  failed?: boolean;
 }
 
 function iconText(item: DeckItem): string {
@@ -16,10 +17,10 @@ function iconText(item: DeckItem): string {
   return '🖥️';
 }
 
-export function KeyTile({ item, buttonSize, onClick, onDoubleClick }: KeyTileProps) {
+export function KeyTile({ item, buttonSize, onClick, onDoubleClick, failed = false }: KeyTileProps) {
   return (
     <button
-      className={`key-tile ${item.kind === 'folder' ? 'folder-tile' : ''}`}
+      className={`key-tile ${item.kind === 'folder' ? 'folder-tile' : ''} ${failed ? 'launch-failed' : ''}`}
       style={{
         width: buttonSize,
         height: buttonSize,

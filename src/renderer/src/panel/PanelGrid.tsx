@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { getPageSlots } from '../../../shared/layout';
 import type { AppConfig, DeckItem } from '../../../shared/types';
 import { BackTile } from '../common/BackTile';
@@ -15,6 +16,12 @@ interface PanelGridProps {
 
 export function PanelGrid({ config, items, path, page, onEnterFolder, onBack }: PanelGridProps) {
   const slots = getPageSlots(items, config.grid, page, path.length > 0);
+  const [failedId, setFailedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!failedId) return;
+    const timer = setTimeout(() => setFailedId(null), 560);
+    return () => clearTimeout(timer);
+  }, [failedId]);
   return (
     <div
       className="panel-grid"
@@ -38,16 +45,20 @@ export function PanelGrid({ config, items, path, page, onEnterFolder, onBack }: 
             />
           );
         }
-        const onClick = () => {
+        const onClick = async () => {
           if (slot.item.kind === 'folder') onEnterFolder(slot.item.id);
-          else void window.api.button.launch({ path, id: slot.item.id });
+          else {
+            const result = await window.api.button.launch({ path, id: slot.item.id });
+            if (!result.ok) setFailedId(slot.item.id);
+          }
         };
         return (
           <KeyTile
             key={slot.item.id}
             item={slot.item}
             buttonSize={config.grid.buttonSize}
-            onClick={onClick}
+            onClick={() => void onClick()}
+            failed={failedId === slot.item.id}
           />
         );
       })}

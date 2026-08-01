@@ -87,3 +87,18 @@ export function assertEditorOpenInput(
     throw new TypeError('편집기 위치가 올바르지 않습니다.');
   }
 }
+
+export function assertDeckReferenceInput(
+  value: unknown,
+): asserts value is { path: string[]; id: string } {
+  assertRecord(value, '키');
+  if (
+    !Array.isArray(value.path) ||
+    value.path.some((id) => typeof id !== 'string' || id.length > 100) ||
+    typeof value.id !== 'string' ||
+    value.id.length < 1 ||
+    value.id.length > 100
+  ) {
+    throw new TypeError('키 위치가 올바르지 않습니다.');
+  }
+}

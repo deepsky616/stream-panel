@@ -237,6 +237,55 @@ button {
   font-size: 11px;
 }
 
+.key-tile.launch-failed {
+  border-color: #ef4444;
+  animation: launch-failed 360ms ease-in-out;
+}
+
+@keyframes launch-failed {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+.toast {
+  position: absolute;
+  z-index: 20;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 92%, #000000);
+  box-shadow: 0 6px 22px rgb(0 0 0 / 28%);
+  font-size: 11px;
+}
+
+.toast-error {
+  border-color: rgb(239 68 68 / 60%);
+}
+
+.toast span {
+  flex: 1;
+}
+
+.toast button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type { ConfigStore } from '../store';
 import { assertConfigPatch } from '../security/inputValidation';
+import { validateAppConfig } from '../security/validate';
 import { applyPanelLayout } from '../windows/panelWindow';
 
 export function broadcastConfig(configStore: ConfigStore): void {
@@ -15,7 +16,9 @@ export function registerConfigHandlers(configStore: ConfigStore): void {
   ipcMain.handle(IPC_CHANNELS.CONFIG_GET, () => configStore.get());
   ipcMain.handle(IPC_CHANNELS.CONFIG_SET, (_event, input: unknown) => {
     assertConfigPatch(input);
-    const config = configStore.patch(input);
+    const candidate = { ...configStore.get(), ...input };
+    validateAppConfig(candidate);
+    const config = configStore.set(candidate);
     applyPanelLayout(config);
     return config;
   });
