@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DeckItem, FolderItem } from '../src/shared/types';
+import type { ActionItem, DeckItem, FolderItem } from '../src/shared/types';
 import {
   cloneItemWithNewIds,
   duplicateItem,
@@ -7,9 +7,10 @@ import {
   getItemsAtPath,
   moveItem,
   moveItemIntoFolder,
+  shouldAdoptCurrentPlatform,
 } from '../src/shared/tree';
 
-function action(id: string, position: number): DeckItem {
+function action(id: string, position: number): ActionItem {
   return {
     id,
     kind: 'action',
@@ -90,5 +91,16 @@ describe('tree', () => {
     const duplicated = duplicateItem([source], [], source.id, () => 'duplicate');
     expect(duplicated).toHaveLength(2);
     expect(duplicated[1].position).toBe(1);
+  });
+
+  it('adopts the current platform only when an action target is newly selected or changed', () => {
+    const previous = action('item', 0);
+    expect(shouldAdoptCurrentPlatform(previous, { ...previous, label: '새 이름' })).toBe(false);
+    expect(
+      shouldAdoptCurrentPlatform(previous, { ...previous, target: 'https://changed.example.com' }),
+    ).toBe(true);
+    expect(shouldAdoptCurrentPlatform(undefined, { ...previous, target: '' })).toBe(false);
+    expect(shouldAdoptCurrentPlatform(undefined, previous)).toBe(true);
+    expect(shouldAdoptCurrentPlatform(previous, folder('folder', 0))).toBe(false);
   });
 });

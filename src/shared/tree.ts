@@ -43,6 +43,14 @@ export function findItemAtPath(
   return getItemsAtPath(root, path).find((item) => item.id === id);
 }
 
+export function shouldAdoptCurrentPlatform(
+  previous: DeckItem | undefined,
+  next: DeckItem,
+): boolean {
+  if (next.kind !== 'action' || next.target.length === 0) return false;
+  return previous?.kind !== 'action' || previous.target !== next.target;
+}
+
 export function getFolderDepth(item: DeckItem): number {
   if (item.kind !== 'folder') return 0;
   return 1 + Math.max(0, ...item.children.map(getFolderDepth));

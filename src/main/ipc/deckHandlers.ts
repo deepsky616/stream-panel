@@ -1,6 +1,14 @@
 import { app, ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
-import { duplicateItem, moveItem, removeItem, upsertItem } from '../../shared/tree';
+import { resolveConfigPlatform } from '../../shared/defaults';
+import {
+  duplicateItem,
+  findItemAtPath,
+  moveItem,
+  removeItem,
+  shouldAdoptCurrentPlatform,
+  upsertItem,
+} from '../../shared/tree';
 import type { ConfigStore } from '../store';
 import {
   assertDeckMoveInput,
@@ -21,7 +29,14 @@ export function registerDeckHandlers(configStore: ConfigStore): void {
     assertDeckUpsertInput(input);
     validateDeckItemShallow(input.item);
     const current = configStore.get();
-    const candidate = { ...current, root: upsertItem(current.root, input.path, input.item) };
+    const previous = findItemAtPath(current.root, input.path, input.item.id);
+    const candidate = {
+      ...current,
+      platform: shouldAdoptCurrentPlatform(previous, input.item)
+        ? resolveConfigPlatform(process.platform)
+        : current.platform,
+      root: upsertItem(current.root, input.path, input.item),
+    };
     validateAppConfig(candidate);
     return saveConfig(configStore, candidate);
   });

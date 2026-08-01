@@ -164,7 +164,9 @@ export function PropertiesPanel({
                 </button>
               </span>
             </label>
-            {['.bat', '.cmd'].some((extension) => draft.target.toLowerCase().endsWith(extension)) && (
+            {['.bat', '.cmd', '.sh', '.command'].some((extension) =>
+              draft.target.toLowerCase().endsWith(extension),
+            ) && (
               <p className="script-warning">스크립트 파일입니다. 신뢰하는 파일만 등록하세요.</p>
             )}
           </>

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ActionItem, DeckItem } from '../src/shared/types';
 import {
   validateActionTarget,
@@ -7,6 +7,10 @@ import {
   validatePathTarget,
   validateUrl,
 } from '../src/main/security/validate';
+import {
+  getExecutableDialogOptions,
+  resolveExecutableSelection,
+} from '../src/main/services/executablePicker';
 
 function action(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -129,5 +133,43 @@ describe('security validation', () => {
       ),
     }));
     expect(() => validateDeck(roots)).toThrow(/500/);
+  });
+});
+
+describe('executable picker', () => {
+  it('offers Windows shortcuts only on Windows and app bundles on macOS', () => {
+    expect(getExecutableDialogOptions('win32')?.filters?.[0].extensions).toEqual(['exe', 'lnk']);
+    expect(getExecutableDialogOptions('darwin')).toEqual({ properties: ['openFile'] });
+    expect(getExecutableDialogOptions('linux')).toBeNull();
+  });
+
+  it('resolves Windows shortcuts through an injected reader', () => {
+    const readShortcutLink = vi.fn(() => ({
+      target: 'C:\\Tools\\tool.exe',
+      args: '--safe "한글 값"',
+      cwd: 'C:\\Tools',
+    }));
+    expect(
+      resolveExecutableSelection('C:\\Menu\\Tool.lnk', 'win32', { readShortcutLink }),
+    ).toEqual({
+      target: 'C:\\Tools\\tool.exe',
+      args: ['--safe', '한글 값'],
+      workingDir: 'C:\\Tools',
+      name: 'Tool',
+    });
+    expect(readShortcutLink).toHaveBeenCalledOnce();
+  });
+
+  it('resolves macOS app bundles without calling Windows APIs', () => {
+    const readShortcutLink = vi.fn();
+    expect(
+      resolveExecutableSelection('/Applications/Tool.app', 'darwin', { readShortcutLink }),
+    ).toEqual({
+      target: '/Applications/Tool.app',
+      args: [],
+      workingDir: '/Applications',
+      name: 'Tool',
+    });
+    expect(readShortcutLink).not.toHaveBeenCalled();
   });
 });
