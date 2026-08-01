@@ -261,12 +261,13 @@ export function EditorApp() {
   };
 
   const handleDragEnd = async ({ active, over }: DragEndEvent) => {
-    const source = active.data.current;
+    const eventSource = active.data.current;
+    const source = isDragData(eventSource) ? eventSource : activeDrag;
     const target = over?.data.current;
     const enteredPath = springDestination.current;
     clearFolderHover(true);
     setActiveDrag(null);
-    if (!isDragData(source)) return;
+    if (!source) return;
 
     if (source.source === 'library') {
       if (isDropData(target) && target.target === 'slot' && !target.occupiedId) {
@@ -297,11 +298,6 @@ export function EditorApp() {
       return;
     }
 
-    if (isDropData(target) && target.target === 'slot') {
-      await moveGridItem(source, target.path, target.position);
-      return;
-    }
-
     if (enteredPath && config) {
       try {
         const destinationItems = getItemsAtPath(config.root, enteredPath);
@@ -309,6 +305,25 @@ export function EditorApp() {
       } catch (error) {
         setDndMessage(userError(error));
       }
+      return;
+    }
+
+    if (isDropData(target) && target.target === 'slot') {
+      await moveGridItem(source, target.path, target.position);
+    }
+  };
+
+  const handleDragCancel = async () => {
+    const source = activeDrag;
+    const enteredPath = springDestination.current;
+    clearFolderHover(true);
+    setActiveDrag(null);
+    if (!config || !enteredPath || source?.source !== 'grid') return;
+    try {
+      const destinationItems = getItemsAtPath(config.root, enteredPath);
+      await moveGridItem(source, enteredPath, findFirstEmptyPosition(destinationItems));
+    } catch (error) {
+      setDndMessage(userError(error));
     }
   };
 
@@ -511,10 +526,7 @@ export function EditorApp() {
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={(event) => void handleDragEnd(event)}
-      onDragCancel={() => {
-        clearFolderHover(true);
-        setActiveDrag(null);
-      }}
+      onDragCancel={() => void handleDragCancel()}
     >
       <main className={`editor-app theme-${config.theme}`}>
         <section className="editor-workspace">
