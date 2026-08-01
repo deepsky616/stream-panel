@@ -1,3 +1,4 @@
+import { isAbsolute, win32 } from 'node:path';
 import type { AppConfig, DeckItem } from '../../shared/types';
 
 function assertRecord(value: unknown, name: string): asserts value is Record<string, unknown> {
@@ -127,5 +128,38 @@ export function assertDeckMoveInput(value: unknown): asserts value is {
     Number(value.to.position) < 0
   ) {
     throw new TypeError('키 이동 위치가 올바르지 않습니다.');
+  }
+}
+
+export function assertDropClassifyInput(
+  value: unknown,
+): asserts value is { paths: string[]; text?: string } {
+  assertRecord(value, '드롭');
+  if (
+    !Array.isArray(value.paths) ||
+    value.paths.length > 50 ||
+    value.paths.some(
+      (path) =>
+        typeof path !== 'string' ||
+        path.length < 1 ||
+        path.length > 2048 ||
+        (!isAbsolute(path) && !win32.isAbsolute(path)) ||
+        path.split(/[\\/]+/).includes('..'),
+    ) ||
+    ('text' in value && (typeof value.text !== 'string' || value.text.length > 4096))
+  ) {
+    throw new TypeError('드롭한 항목이 너무 많거나 경로가 올바르지 않습니다.');
+  }
+}
+
+export function assertImportPathInput(value: unknown): asserts value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > 2048 ||
+    (!isAbsolute(value) && !win32.isAbsolute(value)) ||
+    value.split(/[\\/]+/).includes('..')
+  ) {
+    throw new TypeError('이미지 경로가 올바르지 않습니다.');
   }
 }

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC_CHANNELS, RENDERER_EVENTS, type RendererEvent } from '../shared/ipcChannels';
 import type { ActionType, AppConfig, DeckItem } from '../shared/types';
 
@@ -41,6 +41,7 @@ const api = {
   drop: {
     classify: (input: { paths: string[]; text?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.DROP_CLASSIFY, input),
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
   },
   window: {
     hide: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_HIDE),

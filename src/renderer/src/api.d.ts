@@ -42,6 +42,7 @@ interface StreamPanelApi {
   apps: { list(input?: { refresh?: boolean }): Promise<InstalledApp[]> };
   drop: {
     classify(input: { paths: string[]; text?: string }): Promise<Partial<ActionItem>[]>;
+    getPathForFile(file: File): string;
   };
   window: { hide(): Promise<void>; relayout(): Promise<void> };
   editor: { open(input?: { path?: string[]; slot?: number }): Promise<void> };

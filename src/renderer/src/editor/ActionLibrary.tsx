@@ -1,4 +1,6 @@
+import { useDraggable } from '@dnd-kit/core';
 import type { LibraryEntry } from '../../../shared/types';
+import type { DragData } from './dndTypes';
 
 type TemplateEntry = Exclude<LibraryEntry, { kind: 'installed-app' }>;
 
@@ -14,6 +16,27 @@ interface ActionLibraryProps {
   onAdd: (entry: LibraryEntry) => void;
 }
 
+function DraggableTemplate({ entry, onAdd }: { entry: TemplateEntry; onAdd: () => void }) {
+  const data: DragData = { source: 'library', entry };
+  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
+    id: `library:${entry.kind}:${entry.kind === 'action-template' ? entry.type : 'folder'}`,
+    data,
+  });
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      style={{ opacity: isDragging ? 0.35 : 1 }}
+      onClick={onAdd}
+      {...attributes}
+      {...listeners}
+    >
+      <span aria-hidden="true">{entry.emoji}</span>
+      {entry.label}
+    </button>
+  );
+}
+
 export function ActionLibrary({ onAdd }: ActionLibraryProps) {
   return (
     <aside className="action-library">
@@ -24,14 +47,11 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
       </label>
       <div className="template-list">
         {ACTION_TEMPLATES.map((entry) => (
-          <button
+          <DraggableTemplate
             key={`${entry.kind}-${entry.label}`}
-            type="button"
-            onClick={() => onAdd(entry)}
-          >
-            <span aria-hidden="true">{entry.emoji}</span>
-            {entry.label}
-          </button>
+            entry={entry}
+            onAdd={() => onAdd(entry)}
+          />
         ))}
       </div>
       <div className="library-divider">
