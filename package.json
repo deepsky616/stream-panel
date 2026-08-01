@@ -38,6 +38,7 @@
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.4.26",
+    "png-to-ico": "3.0.2",
     "typescript": "6.0.2",
     "vitest": "4.1.10"
   }

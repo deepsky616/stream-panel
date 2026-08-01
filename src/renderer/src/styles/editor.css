@@ -644,6 +644,11 @@
   font-size: 12px;
 }
 
+.update-ready {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 @media (max-width: 900px) {
   .editor-workspace {
     grid-template-columns: minmax(0, 1fr) 240px;

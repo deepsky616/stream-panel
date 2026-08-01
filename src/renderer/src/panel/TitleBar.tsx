@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { AppConfig } from '../../../shared/types';
 
 interface TitleBarProps {
@@ -5,6 +6,12 @@ interface TitleBarProps {
 }
 
 export function TitleBar({ config }: TitleBarProps) {
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => window.api.on('update:status', (payload) => {
+    if (payload && typeof payload === 'object' && 'state' in payload) {
+      setUpdateReady((payload as { state: string }).state === 'downloaded');
+    }
+  }), []);
   const toggleLock = () => {
     void window.api.config.set({ window: { ...config.window, locked: !config.window.locked } });
   };
@@ -18,8 +25,9 @@ export function TitleBar({ config }: TitleBarProps) {
         <button type="button" onClick={toggleLock} aria-label={config.window.locked ? '잠금 해제' : '잠금'}>
           {config.window.locked ? '🔒' : '🔓'}
         </button>
-        <button type="button" onClick={() => void window.api.editor.open()} aria-label="편집기 열기">
+        <button className="editor-title-button" type="button" onClick={() => void window.api.editor.open()} aria-label="편집기 열기">
           ⚙
+          {updateReady && <span className="update-dot" aria-label="업데이트 준비됨" />}
         </button>
         <button
           type="button"

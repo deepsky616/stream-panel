@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { createDefaultConfig } from '../shared/defaults';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc';
@@ -8,9 +8,12 @@ import { cleanupOrphanIcons } from './services/iconCleanup';
 import { createTray } from './tray';
 import { registerShortcuts } from './shortcuts';
 import { setAutoLaunch } from './services/autoLaunch';
+import { configureUpdater } from './services/updater';
+import { openEditorWindow } from './windows/editorWindow';
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
+app.setName('stream-panel');
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 
@@ -39,8 +42,11 @@ app.whenReady().then(() => {
   registerIpcHandlers(configStore);
   void cleanupOrphanIcons(configStore.get().root, app.getPath('userData'));
   createPanelWindow(configStore);
+  if (process.argv.includes('--editor')) openEditorWindow();
   createTray();
   registerShortcuts(configStore);
+  const updater = configureUpdater(configStore);
+  ipcMain.handle(IPC_CHANNELS.UPDATE_CHECK, () => updater.check());
   let launchAtLogin = configStore.get().launchAtLogin;
   setAutoLaunch(launchAtLogin);
   configStore.onDidChange((config) => {

@@ -6,6 +6,7 @@ import { openEditorWindow } from './windows/editorWindow';
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
 let tray: Tray | null = null;
+let updateVersion: string | null = null;
 
 function fallbackTrayImage() {
   return nativeImage.createFromDataURL(
@@ -49,4 +50,13 @@ export function createTray(): Tray {
   });
   tray.on('right-click', showMenu);
   return tray;
+}
+
+export function setTrayUpdateVersion(version: string): void {
+  updateVersion = version;
+  tray?.setToolTip(`Stream Panel v${app.getVersion()} · 다시 시작하면 v${version} 적용`);
+}
+
+export function getTrayUpdateVersion(): string | null {
+  return updateVersion;
 }

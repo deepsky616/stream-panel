@@ -1,0 +1,33 @@
+appId: com.deepsky616.streampanel
+productName: Stream Panel
+copyright: Copyright © 2026 deepsky616
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - resources/**
+  - package.json
+asar: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  artifactName: StreamPanel-${version}-Setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Stream Panel
+  deleteAppDataOnUninstall: false
+  installerLanguages: [ko-KR, en-US]
+  language: "1042"
+publish:
+  provider: github
+  owner: deepsky616
+  repo: stream-panel
+  releaseType: release

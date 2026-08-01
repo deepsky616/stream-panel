@@ -13,6 +13,7 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [info, setInfo] = useState<{ version: string; platform: string; isPackaged: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [updateReady, setUpdateReady] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,6 +48,15 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [onClose, open]);
+  useEffect(() => window.api.on('update:status', (payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    const status = payload as { state?: string; version?: string; message?: string; progress?: number };
+    if (status.state === 'downloaded' && status.version) setUpdateReady(status.version);
+    if (status.message) setMessage(status.message);
+    else if (status.state === 'downloading' && status.progress !== undefined) {
+      setMessage(`업데이트를 ${Math.round(status.progress)}퍼센트 내려받았습니다.`);
+    }
+  }), []);
 
   if (!open) return null;
   const setConfig = (patch: Partial<AppConfig>) => {
@@ -179,6 +189,7 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                 <p>Stream Panel v{info?.version ?? '1.0.0'}</p>
                 <p>공개 저장소: github.com/deepsky616/stream-panel</p>
                 <p>라이선스: MIT</p>
+                {updateReady && <p className="update-ready">앱을 다시 시작하면 v{updateReady} 업데이트가 적용됩니다.</p>}
                 <button
                   type="button"
                   onClick={() => void window.api.update.check().then((result) => setMessage(result.status)).catch(() => setMessage('개발 모드에서는 업데이트를 확인하지 않습니다.'))}
