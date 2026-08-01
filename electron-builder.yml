@@ -8,6 +8,13 @@ files:
   - out/**
   - resources/**
   - package.json
+extraResources:
+  - from: resources
+    to: resources
+    filter:
+      - tray.ico
+      - trayTemplate.png
+      - trayTemplate@2x.png
 asar: true
 win:
   target:

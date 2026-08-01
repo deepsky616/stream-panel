@@ -4,6 +4,7 @@ import type { ActionItem, DeckItem } from '../src/shared/types';
 import { launchDeckItem, type LauncherDependencies } from '../src/main/services/launcher';
 import { createDefaultConfig } from '../src/shared/defaults';
 import { compareVersions } from '../src/main/services/updater/version';
+import { resolveTrayAssetPaths } from '../src/main/trayAsset';
 import {
   createVisibilityService,
   getPeekBounds,
@@ -228,5 +229,21 @@ describe('release version comparison', () => {
     expect(compareVersions('1.0.10', '1.0.9')).toBeGreaterThan(0);
     expect(compareVersions('v1.0.1', '1.0.1')).toBe(0);
     expect(compareVersions('2.0.0', '10.0.0')).toBeLessThan(0);
+  });
+});
+
+describe('tray asset paths', () => {
+  it('keeps the packaged tray icon reachable outside and inside the app archive', () => {
+    expect(
+      resolveTrayAssetPaths({
+        isPackaged: true,
+        resourcesPath: '/installed/Resources',
+        appPath: '/installed/Resources/app.asar',
+        assetName: 'tray.ico',
+      }),
+    ).toEqual([
+      '/installed/Resources/resources/tray.ico',
+      '/installed/Resources/app.asar/resources/tray.ico',
+    ]);
   });
 });
