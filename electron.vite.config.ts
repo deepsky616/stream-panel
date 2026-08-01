@@ -22,6 +22,7 @@ export default defineConfig({
         input: {
           index: resolve('src/renderer/index.html'),
           editor: resolve('src/renderer/editor.html'),
+          peek: resolve('src/renderer/peek.html'),
         },
       },
     },

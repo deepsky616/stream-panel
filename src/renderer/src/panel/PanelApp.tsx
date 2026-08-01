@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assignHints, findHintByCode } from '../../../shared/hintMap';
 import { findFirstEmptyPosition, getPageCount, getPageSlots } from '../../../shared/layout';
 import { cloneItemWithNewIds, countDeckItems, getItemsAtPath } from '../../../shared/tree';
@@ -30,6 +30,8 @@ export function PanelApp() {
   const error = useDeckStore((state) => state.error);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [panelFocused, setPanelFocused] = useState(() => document.hasFocus());
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idleActive = useRef(false);
   const items = useMemo(
     () => (config ? getItemsAtPath(config.root, location.path) : []),
     [config, location.path],
@@ -47,6 +49,13 @@ export function PanelApp() {
     [config, items, location.page, location.path.length],
   );
   const closeMenu = useCallback(() => setMenu(null), []);
+  const restoreIdle = useCallback(() => {
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    idleTimer.current = null;
+    if (!idleActive.current) return;
+    idleActive.current = false;
+    void window.api.window.setIdle(false);
+  }, []);
 
   const removeItem = useCallback(async (item: DeckItem) => {
     if (
@@ -78,6 +87,16 @@ export function PanelApp() {
     document.title = showFooter ? 'Stream Panel [footer]' : 'Stream Panel';
     void window.api.window.relayout();
   }, [showFooter]);
+  useEffect(() => {
+    const encoded = encodeURIComponent(JSON.stringify(location));
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}#panel=${encoded}`);
+  }, [location]);
+  useEffect(() => {
+    if (config?.behavior.idleFade) return;
+    restoreIdle();
+    void window.api.window.setIdle(false);
+  }, [config?.behavior.idleFade, restoreIdle]);
+  useEffect(() => () => restoreIdle(), [restoreIdle]);
   useEffect(() => {
     if (location.page >= pageCount) setLocation({ ...location, page: pageCount - 1 });
   }, [location, pageCount, setLocation]);
@@ -191,6 +210,19 @@ export function PanelApp() {
       className={`panel theme-${config.theme}`}
       onWheel={onWheel}
       onContextMenu={(event) => event.preventDefault()}
+      onMouseEnter={restoreIdle}
+      onMouseMove={() => {
+        if (idleActive.current) restoreIdle();
+      }}
+      onMouseLeave={() => {
+        if (!config.behavior.idleFade) return;
+        if (idleTimer.current) clearTimeout(idleTimer.current);
+        idleTimer.current = setTimeout(() => {
+          idleTimer.current = null;
+          idleActive.current = true;
+          void window.api.window.setIdle(true);
+        }, config.behavior.idleFadeAfterMs);
+      }}
     >
       <TitleBar config={config} />
       <PanelGrid

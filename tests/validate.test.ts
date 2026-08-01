@@ -4,6 +4,7 @@ import {
   validateActionTarget,
   validateDeck,
   validateDeckItemShallow,
+  validateGlobalHotkey,
   validatePathTarget,
   validateUrl,
 } from '../src/main/security/validate';
@@ -133,6 +134,27 @@ describe('security validation', () => {
       ),
     }));
     expect(() => validateDeck(roots)).toThrow(/500/);
+  });
+
+  it('rejects unsafe, duplicate, and excessive per-key global hotkeys', () => {
+    expect(validateGlobalHotkey('G')).toMatchObject({ ok: false, reason: expect.stringMatching(/수식키/) });
+    expect(validateGlobalHotkey('Shift+G')).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/Shift/),
+    });
+    expect(
+      validateGlobalHotkey('Control+Alt+G', {
+        conflicts: [{ accelerator: 'CommandOrControl+Alt+G', label: '개발 폴더' }],
+      }),
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/개발 폴더/) });
+    expect(validateGlobalHotkey('CommandOrControl+Alt+G', { assignedCount: 20 })).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/20개/),
+    });
+    expect(validateGlobalHotkey('Control+Alt+G')).toEqual({
+      ok: true,
+      accelerator: 'CommandOrControl+Alt+G',
+    });
   });
 });
 

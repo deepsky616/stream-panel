@@ -1,8 +1,63 @@
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { extname, isAbsolute, normalize, win32 } from 'node:path';
 import type { Stats } from 'node:fs';
+import { normalizeAccelerator } from '../../shared/accelerator';
 import { validateHintKeys } from '../../shared/hintMap';
 import type { ActionItem, AppConfig, DeckItem, IconSpec } from '../../shared/types';
+
+export interface GlobalHotkeyConflict {
+  accelerator: string;
+  label: string;
+}
+
+export interface GlobalHotkeyValidationOptions {
+  conflicts?: readonly GlobalHotkeyConflict[];
+  reserved?: readonly string[];
+  assignedCount?: number;
+}
+
+export type GlobalHotkeyValidationResult =
+  | { ok: true; accelerator: string }
+  | { ok: false; reason: string };
+
+export function validateGlobalHotkey(
+  input: string,
+  {
+    conflicts = [],
+    reserved = [],
+    assignedCount = 0,
+  }: GlobalHotkeyValidationOptions = {},
+): GlobalHotkeyValidationResult {
+  const accelerator = normalizeAccelerator(input);
+  const tokens = accelerator.split('+').map((token) => token.trim()).filter(Boolean);
+  const modifierSet = new Set(['CommandOrControl', 'Alt', 'Shift', 'Super']);
+  const modifiers = tokens.filter((token) => modifierSet.has(token));
+  const keys = tokens.filter((token) => !modifierSet.has(token));
+  if (modifiers.length === 0 || keys.length !== 1) {
+    return { ok: false, reason: '수식키와 일반 키 하나를 함께 눌러 주세요.' };
+  }
+  if (modifiers.length === 1 && modifiers[0] === 'Shift') {
+    return { ok: false, reason: 'Shift만 쓴 조합은 대문자 입력을 막으므로 등록할 수 없습니다.' };
+  }
+  if (assignedCount >= 20) {
+    return { ok: false, reason: '키별 전역 단축키는 최대 20개까지 등록할 수 있습니다.' };
+  }
+  const normalizedLower = accelerator.toLowerCase();
+  const conflict = conflicts.find(
+    (entry) => normalizeAccelerator(entry.accelerator).toLowerCase() === normalizedLower,
+  );
+  if (conflict) {
+    return { ok: false, reason: `이미 '${conflict.label}' 키가 쓰는 단축키입니다.` };
+  }
+  if (
+    reserved.some(
+      (entry) => normalizeAccelerator(entry).toLowerCase() === normalizedLower,
+    )
+  ) {
+    return { ok: false, reason: '패널 또는 전역 숫자 단축키와 겹칩니다.' };
+  }
+  return { ok: true, accelerator };
+}
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -144,9 +199,18 @@ export function validateDeckItemShallow(item: DeckItem): void {
   if (!Number.isInteger(item.position) || item.position < 0) {
     throw new ValidationError('키 위치가 올바르지 않습니다.');
   }
+  if (
+    item.globalHotkey !== undefined &&
+    (typeof item.globalHotkey !== 'string' || item.globalHotkey.length < 1 || item.globalHotkey.length > 80)
+  ) {
+    throw new ValidationError('전역 단축키 값이 올바르지 않습니다. 키 조합을 다시 입력해 주세요.');
+  }
   validateIcon(item.icon);
   if (item.kind === 'folder') {
     if (!Array.isArray(item.children)) throw new ValidationError('폴더 내용이 올바르지 않습니다.');
+    if (item.globalHotkey) {
+      throw new ValidationError('폴더 키에는 전역 단축키를 지정할 수 없습니다. 실행 키에 지정해 주세요.');
+    }
     return;
   }
   if (!['url', 'folder', 'file', 'app', 'uwp'].includes(item.type)) {
@@ -189,7 +253,9 @@ export function validateDeck(
 ): void {
   const ids = new Set<string>();
   const objects = new WeakSet<object>();
+  const hotkeys: GlobalHotkeyConflict[] = [];
   let total = 0;
+  let assignedHotkeys = 0;
 
   const visit = (level: readonly DeckItem[], depth: number): void => {
     if (!Array.isArray(level) || level.length > 120) {
@@ -206,6 +272,15 @@ export function validateDeck(
       positions.add(item.position);
       if (objects.has(item)) throw new ValidationError('폴더 순환 구조는 저장할 수 없습니다.');
       objects.add(item);
+      if (item.kind === 'action' && item.globalHotkey) {
+        const result = validateGlobalHotkey(item.globalHotkey, {
+          conflicts: hotkeys,
+          assignedCount: assignedHotkeys,
+        });
+        if (!result.ok) throw new ValidationError(result.reason);
+        hotkeys.push({ accelerator: result.accelerator, label: item.label });
+        assignedHotkeys += 1;
+      }
       if (item.kind === 'folder') {
         if (depth + 1 > 5) throw new ValidationError('폴더는 다섯 단계까지 만들 수 있습니다.');
         visit(item.children, depth + 1);
@@ -248,6 +323,8 @@ export function validateAppConfig(config: AppConfig): void {
   ) {
     throw new ValidationError('앱 설정이 올바르지 않습니다.');
   }
+  const panelHotkey = validateGlobalHotkey(config.hotkey);
+  if (!panelHotkey.ok) throw new ValidationError(panelHotkey.reason);
   if (
     !(
       (config.window.x === null || Number.isInteger(config.window.x)) &&
@@ -299,5 +376,40 @@ export function validateAppConfig(config: AppConfig): void {
   ) {
     throw new ValidationError('키보드 설정이 올바르지 않습니다. 힌트 문자는 중복 없이 입력해 주세요.');
   }
+  const numberModifier = normalizeAccelerator(config.keyboard.globalNumberModifier);
+  if (
+    ![
+      'CommandOrControl+Alt',
+      'CommandOrControl+Shift',
+      'Alt+Shift',
+      'Super+Alt',
+    ].includes(numberModifier)
+  ) {
+    throw new ValidationError('전역 숫자 단축키의 수식키 조합을 다시 선택해 주세요.');
+  }
   validateDeck(config.root, config.platform);
+  const itemHotkeys: GlobalHotkeyConflict[] = [];
+  const collect = (items: readonly DeckItem[]): void => {
+    for (const item of items) {
+      if (item.kind === 'folder') collect(item.children);
+      else if (item.globalHotkey) {
+        const validation = validateGlobalHotkey(item.globalHotkey, {
+          conflicts: itemHotkeys,
+          reserved: [
+            config.hotkey,
+            ...(config.keyboard.globalNumberHotkeys
+              ? Array.from(
+                  { length: 10 },
+                  (_, index) => `${numberModifier}+${index === 9 ? 0 : index + 1}`,
+                )
+              : []),
+          ],
+          assignedCount: itemHotkeys.length,
+        });
+        if (!validation.ok) throw new ValidationError(validation.reason);
+        itemHotkeys.push({ accelerator: validation.accelerator, label: item.label });
+      }
+    }
+  };
+  collect(config.root);
 }

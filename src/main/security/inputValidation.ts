@@ -266,3 +266,25 @@ export function assertRevealPathInput(value: unknown): asserts value is string {
     throw new TypeError('열 위치가 올바르지 않습니다.');
   }
 }
+
+export function assertIdleInput(value: unknown): asserts value is boolean {
+  if (typeof value !== 'boolean') {
+    throw new TypeError('패널 유휴 상태 값이 올바르지 않습니다. 설정을 다시 확인해 주세요.');
+  }
+}
+
+export function assertHotkeyValidateInput(
+  value: unknown,
+): asserts value is { accelerator: string; itemId?: string } {
+  assertRecord(value, '전역 단축키');
+  if (
+    Object.keys(value).some((key) => !['accelerator', 'itemId'].includes(key)) ||
+    typeof value.accelerator !== 'string' ||
+    value.accelerator.length < 1 ||
+    value.accelerator.length > 80 ||
+    ('itemId' in value &&
+      (typeof value.itemId !== 'string' || value.itemId.length < 1 || value.itemId.length > 100))
+  ) {
+    throw new TypeError('전역 단축키 입력이 올바르지 않습니다. 키 조합을 다시 입력해 주세요.');
+  }
+}

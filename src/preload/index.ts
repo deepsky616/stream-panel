@@ -45,11 +45,17 @@ const api = {
   },
   window: {
     hide: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_HIDE),
+    show: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_SHOW),
     relayout: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_RELAYOUT),
+    setIdle: (idle: boolean) => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_SET_IDLE, idle),
   },
   editor: {
     open: (input: { path?: string[]; slot?: number } = {}) =>
       ipcRenderer.invoke(IPC_CHANNELS.EDITOR_OPEN, input),
+  },
+  hotkey: {
+    validate: (input: { accelerator: string; itemId?: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.HOTKEY_VALIDATE, input),
   },
   update: {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),

@@ -3,7 +3,12 @@ import type { SpawnOptions } from 'node:child_process';
 import type { ActionItem, DeckItem } from '../src/shared/types';
 import { launchDeckItem, type LauncherDependencies } from '../src/main/services/launcher';
 import { createDefaultConfig } from '../src/shared/defaults';
-import { createVisibilityService, shouldAutoHideAfterLaunch } from '../src/main/services/visibility';
+import {
+  createVisibilityService,
+  getPeekBounds,
+  inferPeekEdge,
+  shouldAutoHideAfterLaunch,
+} from '../src/main/services/visibility';
 
 function action(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -191,5 +196,28 @@ describe('automatic panel hiding', () => {
     expect(setTimer).toHaveBeenCalledWith(hidePanel, 180);
     service.afterLaunch(config, { ok: true }, { keepOpen: true, editorOpen: false });
     expect(clearTimer).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('panel edge peek geometry', () => {
+  const workArea = { x: 0, y: 24, width: 1440, height: 876 };
+
+  it('infers the nearest work-area edge from the panel center', () => {
+    expect(inferPeekEdge({ x: 1210, y: 80, width: 200, height: 300 }, workArea)).toBe('right');
+    expect(inferPeekEdge({ x: 20, y: 280, width: 200, height: 300 }, workArea)).toBe('left');
+    expect(inferPeekEdge({ x: 500, y: 30, width: 200, height: 100 }, workArea)).toBe('top');
+    expect(inferPeekEdge({ x: 500, y: 780, width: 200, height: 100 }, workArea)).toBe('bottom');
+  });
+
+  it('places and clamps a 160px strip inside the work area', () => {
+    expect(
+      getPeekBounds({ x: 1320, y: 850, width: 200, height: 300 }, workArea, 'right', 6),
+    ).toEqual({ x: 1434, y: 740, width: 6, height: 160 });
+    expect(
+      getPeekBounds({ x: -50, y: 40, width: 200, height: 300 }, workArea, 'left', 8),
+    ).toEqual({ x: 0, y: 40, width: 8, height: 160 });
+    expect(
+      getPeekBounds({ x: 1370, y: 50, width: 200, height: 300 }, workArea, 'top', 5),
+    ).toEqual({ x: 1280, y: 24, width: 160, height: 5 });
   });
 });

@@ -1,7 +1,8 @@
 import { join } from 'node:path';
-import { app, Menu, nativeImage, Tray } from 'electron';
+import { app, Menu, nativeImage, shell, Tray } from 'electron';
 import { getPanelWindow, togglePanel } from './windows/panelWindow';
 import { openEditorWindow } from './windows/editorWindow';
+import { PLATFORM } from './platform';
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
@@ -17,10 +18,12 @@ function fallbackTrayImage() {
 export function createTray(): Tray {
   if (tray) return tray;
   const assetPath = app.isPackaged
-    ? join(process.resourcesPath, 'resources', 'tray.ico')
-    : join(app.getAppPath(), 'resources', process.platform === 'win32' ? 'tray.ico' : 'tray.png');
+    ? join(process.resourcesPath, 'resources', PLATFORM.trayAsset)
+    : join(app.getAppPath(), 'resources', PLATFORM.trayAsset);
   const asset = nativeImage.createFromPath(assetPath);
-  tray = new Tray(asset.isEmpty() ? fallbackTrayImage() : asset);
+  const trayImage = asset.isEmpty() ? fallbackTrayImage() : asset;
+  if (process.platform === 'darwin') trayImage.setTemplateImage(true);
+  tray = new Tray(trayImage);
   tray.setToolTip(`Stream Panel v${app.getVersion()}`);
 
   const showMenu = () => {
@@ -31,7 +34,16 @@ export function createTray(): Tray {
         { label: visible ? '패널 숨기기' : '패널 표시', click: () => togglePanel() },
         { label: '편집기 열기', click: () => openEditorWindow() },
         { label: '설정...', click: () => openEditorWindow({ settings: true }) },
-        { label: '업데이트 확인', click: () => openEditorWindow() },
+        {
+          label: process.platform === 'darwin' ? '릴리즈 페이지 열기' : '업데이트 확인',
+          click: () => {
+            if (process.platform === 'darwin') {
+              void shell.openExternal('https://github.com/deepsky616/stream-panel/releases');
+            } else {
+              openEditorWindow({ settings: true });
+            }
+          },
+        },
         { type: 'separator' },
         {
           label: '종료',

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { normalizeAccelerator } from '../../../shared/accelerator';
 import type { DeckItem } from '../../../shared/types';
 import { ColorPicker } from '../common/ColorPicker';
 import { IconPicker } from '../common/IconPicker';
@@ -45,6 +46,9 @@ export function PropertiesPanel({
 }: PropertiesPanelProps) {
   const [draft, setDraft] = useState<DeckItem | null>(item ? structuredClone(item) : null);
   const [error, setError] = useState<string | null>(null);
+  const [hotkeyMessage, setHotkeyMessage] = useState<string | null>(
+    item?.kind === 'action' && item.globalHotkey ? '등록됨' : null,
+  );
   const labelRef = useRef<HTMLInputElement>(null);
   const targetRef = useRef<HTMLInputElement>(null);
 
@@ -92,6 +96,29 @@ export function PropertiesPanel({
       const selected = await window.api.picker.executable();
       if (selected) patch({ ...selected, label: draft.label || selected.name });
     }
+  };
+  const captureGlobalHotkey = async (event: React.KeyboardEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return;
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      patch({ globalHotkey: undefined });
+      setHotkeyMessage(null);
+      return;
+    }
+    const modifiers = [
+      event.ctrlKey || event.metaKey ? 'CommandOrControl' : '',
+      event.altKey ? 'Alt' : '',
+      event.shiftKey ? 'Shift' : '',
+    ].filter(Boolean);
+    const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+    const accelerator = normalizeAccelerator([...modifiers, key].join('+'));
+    const result = await window.api.hotkey.validate({ accelerator, itemId: draft.id });
+    if (!result.ok) {
+      setHotkeyMessage(result.reason);
+      return;
+    }
+    patch({ globalHotkey: accelerator });
+    setHotkeyMessage('등록됨');
   };
 
   return (
@@ -170,6 +197,36 @@ export function PropertiesPanel({
               <p className="script-warning">스크립트 파일입니다. 신뢰하는 파일만 등록하세요.</p>
             )}
           </>
+        )}
+        {draft.kind === 'action' && (
+          <label className="property-hotkey">
+            전역 단축키
+            <span className="input-with-button">
+              <input
+                className="hotkey-input"
+                value={draft.globalHotkey ?? ''}
+                placeholder="키 조합을 누르세요"
+                readOnly
+                onKeyDown={(event) => void captureGlobalHotkey(event)}
+                aria-label="키별 전역 단축키 입력"
+              />
+              <button
+                type="button"
+                disabled={!draft.globalHotkey}
+                onClick={() => {
+                  patch({ globalHotkey: undefined });
+                  setHotkeyMessage(null);
+                }}
+              >
+                지우기
+              </button>
+            </span>
+            {hotkeyMessage && (
+              <small className={hotkeyMessage === '등록됨' ? 'hotkey-ok' : 'field-error'}>
+                {hotkeyMessage}
+              </small>
+            )}
+          </label>
         )}
       </div>
       {error && <p className="field-error">{error}</p>}

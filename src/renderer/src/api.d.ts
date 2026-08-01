@@ -46,8 +46,19 @@ interface StreamPanelApi {
     classify(input: { paths: string[]; text?: string }): Promise<Partial<ActionItem>[]>;
     getPathForFile(file: File): string;
   };
-  window: { hide(): Promise<void>; relayout(): Promise<void> };
+  window: {
+    hide(): Promise<void>;
+    show(): Promise<void>;
+    relayout(): Promise<void>;
+    setIdle(idle: boolean): Promise<void>;
+  };
   editor: { open(input?: { path?: string[]; slot?: number }): Promise<void> };
+  hotkey: {
+    validate(input: {
+      accelerator: string;
+      itemId?: string;
+    }): Promise<{ ok: true } | { ok: false; reason: string }>;
+  };
   update: { check(): Promise<{ status: string; version?: string }> };
   app: { info(): Promise<{ version: string; platform: string; isPackaged: boolean }> };
   shell: { reveal(path: string): Promise<void> };
