@@ -10,6 +10,7 @@ import { registerShortcuts } from './shortcuts';
 import { setAutoLaunch } from './services/autoLaunch';
 import { configureUpdater } from './services/updater';
 import { openEditorWindow } from './windows/editorWindow';
+import { PLATFORM } from './platform';
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
@@ -25,6 +26,7 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 app.whenReady().then(() => {
+  if (PLATFORM.hideDock) app.dock?.hide();
   const defaultConfig = createDefaultConfig({
     downloads: app.getPath('downloads'),
     documents: app.getPath('documents'),

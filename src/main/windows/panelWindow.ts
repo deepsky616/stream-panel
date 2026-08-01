@@ -4,12 +4,14 @@ import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type { ConfigStore } from '../store';
 import { getPageCount } from '../../shared/layout';
 import type { AppConfig } from '../../shared/types';
+import { PLATFORM, shouldStartHidden } from '../platform';
 
 export const TITLEBAR_H = 34;
 export const FOOTER_H = 26;
 
 let panelWindow: BrowserWindow | null = null;
 let moveTimer: ReturnType<typeof setTimeout> | undefined;
+let panelAlwaysOnTop = true;
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
@@ -57,7 +59,8 @@ export function applyPanelLayout(config: AppConfig, forceFooter?: boolean): void
       ? { x: saved.x, y: saved.y }
       : fallbackPosition(size.width);
   panelWindow.setPosition(position.x, position.y, false);
-  panelWindow.setAlwaysOnTop(config.window.alwaysOnTop, 'screen-saver');
+  panelAlwaysOnTop = config.window.alwaysOnTop;
+  panelWindow.setAlwaysOnTop(panelAlwaysOnTop, PLATFORM.alwaysOnTopLevel);
   panelWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   panelWindow.setOpacity(config.window.opacity);
 }
@@ -96,7 +99,11 @@ export function createPanelWindow(configStore: ConfigStore): BrowserWindow {
   }
 
   window.once('ready-to-show', () => {
-    if (!config.window.hideOnLaunch && !process.argv.includes('--hidden')) window.show();
+    const hiddenByLogin = shouldStartHidden(process.platform, {
+      argv: process.argv,
+      getWasOpenedAsHidden: () => app.getLoginItemSettings().wasOpenedAsHidden,
+    });
+    if (!config.window.hideOnLaunch && !hiddenByLogin) window.show();
   });
   window.on('moved', () => {
     clearTimeout(moveTimer);
@@ -122,7 +129,10 @@ export function createPanelWindow(configStore: ConfigStore): BrowserWindow {
 
 export function showPanel(): void {
   if (!panelWindow || panelWindow.isDestroyed()) return;
+  if (PLATFORM.focusAppBeforeShow) app.focus({ steal: true });
+  panelWindow.setAlwaysOnTop(panelAlwaysOnTop, PLATFORM.alwaysOnTopLevel);
   panelWindow.show();
+  panelWindow.moveTop();
   panelWindow.focus();
   panelWindow.webContents.send(IPC_CHANNELS.PANEL_VISIBILITY, true);
 }
