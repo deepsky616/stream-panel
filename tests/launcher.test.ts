@@ -240,7 +240,7 @@ describe('tray asset paths', () => {
         resourcesPath: '/installed/Resources',
         appPath: '/installed/Resources/app.asar',
         assetName: 'tray.ico',
-      }),
+      }).map((path) => path.replaceAll('\\', '/')),
     ).toEqual([
       '/installed/Resources/resources/tray.ico',
       '/installed/Resources/app.asar/resources/tray.ico',
