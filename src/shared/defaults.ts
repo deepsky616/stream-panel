@@ -1,3 +1,4 @@
+import { DEFAULT_HINT_KEYS } from './hintMap';
 import type { AppConfig, DeckItem } from './types';
 
 export interface DefaultPaths {
@@ -20,6 +21,34 @@ export const DEFAULT_WINDOW = {
   locked: false,
   hideOnLaunch: false,
 } as const;
+
+export const DEFAULT_BEHAVIOR = {
+  hideAfterLaunch: true,
+  hideAfterLaunchDelayMs: 180,
+  edgePeek: true,
+  peekEdge: 'auto',
+  peekThickness: 6,
+  peekDelayMs: 220,
+  idleFade: false,
+  idleFadeAfterMs: 4_000,
+  idleOpacity: 0.25,
+} as const;
+
+export const DEFAULT_KEYBOARD = {
+  quickHints: 'on-focus',
+  hintKeys: DEFAULT_HINT_KEYS,
+  hideAfterHotkeyLaunch: true,
+  globalNumberHotkeys: false,
+  globalNumberModifier: 'CommandOrControl+Alt',
+} as const;
+
+function getRuntimePlatform(): string {
+  return (globalThis as { process?: { platform?: string } }).process?.platform ?? 'win32';
+}
+
+export function resolveConfigPlatform(platform: string = getRuntimePlatform()): AppConfig['platform'] {
+  return platform === 'darwin' ? 'darwin' : 'win32';
+}
 
 export function createDefaultItems(
   paths: DefaultPaths,
@@ -65,15 +94,20 @@ export function createDefaultItems(
 export function createDefaultConfig(
   paths: DefaultPaths,
   createId: () => string = () => crypto.randomUUID(),
+  platform: string = getRuntimePlatform(),
 ): AppConfig {
+  const configPlatform = resolveConfigPlatform(platform);
   return {
     version: 1,
+    platform: configPlatform,
     root: createDefaultItems(paths, createId),
     grid: { ...DEFAULT_GRID },
     window: { ...DEFAULT_WINDOW },
+    behavior: { ...DEFAULT_BEHAVIOR },
+    keyboard: { ...DEFAULT_KEYBOARD },
     theme: 'system',
-    hotkey: 'Control+Alt+D',
+    hotkey: 'CommandOrControl+Alt+D',
     launchAtLogin: false,
-    autoUpdate: true,
+    autoUpdate: configPlatform === 'win32',
   };
 }

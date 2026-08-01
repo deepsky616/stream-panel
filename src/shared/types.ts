@@ -12,6 +12,7 @@ interface DeckItemBase {
   icon: IconSpec;
   color: string;
   position: number;
+  globalHotkey?: string;
 }
 
 export interface ActionItem extends DeckItemBase {
@@ -45,11 +46,34 @@ export interface WindowConfig {
   hideOnLaunch: boolean;
 }
 
+export interface BehaviorConfig {
+  hideAfterLaunch: boolean;
+  hideAfterLaunchDelayMs: number;
+  edgePeek: boolean;
+  peekEdge: 'auto' | 'right' | 'left' | 'top' | 'bottom';
+  peekThickness: number;
+  peekDelayMs: number;
+  idleFade: boolean;
+  idleFadeAfterMs: number;
+  idleOpacity: number;
+}
+
+export interface KeyboardConfig {
+  quickHints: 'on-focus' | 'always' | 'never';
+  hintKeys: string;
+  hideAfterHotkeyLaunch: boolean;
+  globalNumberHotkeys: boolean;
+  globalNumberModifier: string;
+}
+
 export interface AppConfig {
   version: number;
+  platform: 'win32' | 'darwin';
   root: DeckItem[];
   grid: GridConfig;
   window: WindowConfig;
+  behavior: BehaviorConfig;
+  keyboard: KeyboardConfig;
   theme: 'dark' | 'light' | 'system';
   hotkey: string;
   launchAtLogin: boolean;

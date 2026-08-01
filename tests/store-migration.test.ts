@@ -41,4 +41,60 @@ describe('store migration', () => {
     expect(result.reason).toBeUndefined();
     expect(result.config.root.map(({ position }) => position)).toEqual([0, 1, 2]);
   });
+
+  it('fills fields added to a legacy version-one config without deleting its items', () => {
+    const legacy = structuredClone(defaults) as unknown as Record<string, unknown>;
+    delete legacy.platform;
+    delete legacy.behavior;
+    delete legacy.keyboard;
+    legacy.hotkey = 'Control+Alt+D';
+
+    const result = recoverConfigText(JSON.stringify(legacy), defaults);
+
+    expect(result.config.root).toHaveLength(3);
+    expect(result.config.platform).toBe('darwin');
+    expect(result.config.behavior).toMatchObject({ hideAfterLaunch: true, edgePeek: true });
+    expect(result.config.keyboard.hintKeys).toHaveLength(40);
+    expect(result.config.hotkey).toBe('CommandOrControl+Alt+D');
+  });
+
+  it('preserves a config that was created on the other supported platform', () => {
+    const foreign = { ...defaults, platform: 'win32' as const };
+    const result = recoverConfigText(JSON.stringify(foreign), defaults);
+
+    expect(result.config.platform).toBe('win32');
+    expect(result.config.root).toEqual(foreign.root);
+  });
+});
+
+describe('platform defaults', () => {
+  it('uses portable accelerators and disables automatic updates on macOS', () => {
+    const config = createDefaultConfig(
+      { downloads: '/Users/test/Downloads', documents: '/Users/test/Documents' },
+      () => 'fixed-id',
+      'darwin',
+    );
+
+    expect(config.platform).toBe('darwin');
+    expect(config.hotkey).toBe('CommandOrControl+Alt+D');
+    expect(config.keyboard.globalNumberModifier).toBe('CommandOrControl+Alt');
+    expect(config.behavior).toMatchObject({
+      hideAfterLaunch: true,
+      edgePeek: true,
+      peekEdge: 'auto',
+      idleFade: false,
+    });
+    expect(config.autoUpdate).toBe(false);
+  });
+
+  it('enables automatic updates on Windows', () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:/Users/test/Downloads', documents: 'C:/Users/test/Documents' },
+      () => 'fixed-id',
+      'win32',
+    );
+
+    expect(config.platform).toBe('win32');
+    expect(config.autoUpdate).toBe(true);
+  });
 });

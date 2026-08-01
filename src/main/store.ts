@@ -1,8 +1,17 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ElectronStore from 'electron-store';
+import { normalizeAccelerator } from '../shared/accelerator';
+import { normalizeHintKeys } from '../shared/hintMap';
 import { normalizeDeckPositions } from '../shared/layout';
-import type { AppConfig } from '../shared/types';
+import type {
+  AppConfig,
+  BehaviorConfig,
+  DeckItem,
+  GridConfig,
+  KeyboardConfig,
+  WindowConfig,
+} from '../shared/types';
 
 export const CURRENT_CONFIG_VERSION = 1;
 
@@ -25,6 +34,63 @@ function looksLikeConfig(value: unknown): value is AppConfig {
   return typeof candidate.version === 'number' && Array.isArray(candidate.root);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function partialObject<T extends object>(value: unknown): Partial<T> {
+  return isRecord(value) ? (value as Partial<T>) : {};
+}
+
+function normalizeItemHotkeys(items: readonly DeckItem[]): DeckItem[] {
+  return items.map((item): DeckItem => {
+    const globalHotkey = item.globalHotkey
+      ? normalizeAccelerator(item.globalHotkey)
+      : item.globalHotkey;
+    if (item.kind === 'action') return { ...item, globalHotkey };
+    return {
+      ...item,
+      globalHotkey,
+      children: normalizeItemHotkeys(item.children),
+    };
+  });
+}
+
+function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppConfig {
+  const behavior = partialObject<BehaviorConfig>(parsed.behavior);
+  const keyboard = partialObject<KeyboardConfig>(parsed.keyboard);
+  const grid = partialObject<GridConfig>(parsed.grid);
+  const window = partialObject<WindowConfig>(parsed.window);
+  const normalized = normalizeDeckPositions(parsed.root);
+  const hintKeys = typeof keyboard.hintKeys === 'string' ? keyboard.hintKeys : defaultConfig.keyboard.hintKeys;
+  const globalNumberModifier =
+    typeof keyboard.globalNumberModifier === 'string'
+      ? keyboard.globalNumberModifier
+      : defaultConfig.keyboard.globalNumberModifier;
+
+  return {
+    ...defaultConfig,
+    ...parsed,
+    platform:
+      parsed.platform === 'win32' || parsed.platform === 'darwin'
+        ? parsed.platform
+        : defaultConfig.platform,
+    root: normalizeItemHotkeys(normalized.items),
+    grid: { ...defaultConfig.grid, ...grid },
+    window: { ...defaultConfig.window, ...window },
+    behavior: { ...defaultConfig.behavior, ...behavior },
+    keyboard: {
+      ...defaultConfig.keyboard,
+      ...keyboard,
+      hintKeys: normalizeHintKeys(hintKeys),
+      globalNumberModifier: normalizeAccelerator(globalNumberModifier),
+    },
+    hotkey: normalizeAccelerator(
+      typeof parsed.hotkey === 'string' ? parsed.hotkey : defaultConfig.hotkey,
+    ),
+  } as AppConfig;
+}
+
 export function recoverConfigText(
   text: string | undefined,
   defaultConfig: AppConfig,
@@ -42,7 +108,10 @@ export function recoverConfigText(
       };
     }
     const normalized = normalizeDeckPositions(parsed.root);
-    return { config: { ...parsed, root: normalized.items }, recovered: normalized.repaired };
+    return {
+      config: migrateKnownConfig(parsed, defaultConfig),
+      recovered: normalized.repaired,
+    };
   } catch {
     return {
       config: cloneConfig(defaultConfig),
