@@ -8,6 +8,7 @@ const defaults = createDefaultConfig(
     let index = 0;
     return () => `id-${index++}`;
   })(),
+  'darwin',
 );
 
 describe('store migration', () => {
