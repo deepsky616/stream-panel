@@ -30,6 +30,10 @@ export function PanelApp() {
   const error = useDeckStore((state) => state.error);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [panelFocused, setPanelFocused] = useState(() => document.hasFocus());
+  const [focusUnavailable, setFocusUnavailable] = useState(false);
+  const [showNumberIntro, setShowNumberIntro] = useState(
+    () => localStorage.getItem('global-number-intro-seen') !== '1',
+  );
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleActive = useRef(false);
   const items = useMemo(
@@ -101,13 +105,36 @@ export function PanelApp() {
     if (location.page >= pageCount) setLocation({ ...location, page: pageCount - 1 });
   }, [location, pageCount, setLocation]);
   useEffect(() => {
-    const focus = () => setPanelFocused(true);
-    const blur = () => setPanelFocused(false);
+    const focus = () => {
+      setPanelFocused(true);
+      setFocusUnavailable(false);
+    };
+    const blur = () => {
+      setPanelFocused(false);
+      setFocusUnavailable(false);
+    };
     window.addEventListener('focus', focus);
     window.addEventListener('blur', blur);
     return () => {
       window.removeEventListener('focus', focus);
       window.removeEventListener('blur', blur);
+    };
+  }, []);
+  useEffect(() => {
+    let focusTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = window.api.on('panel:visibility', (payload) => {
+      if (focusTimer) clearTimeout(focusTimer);
+      focusTimer = null;
+      setFocusUnavailable(false);
+      if (payload !== true) return;
+      focusTimer = setTimeout(() => {
+        focusTimer = null;
+        if (!document.hasFocus()) setFocusUnavailable(true);
+      }, 180);
+    });
+    return () => {
+      if (focusTimer) clearTimeout(focusTimer);
+      unsubscribe();
     };
   }, []);
   useEffect(() => {
@@ -173,10 +200,16 @@ export function PanelApp() {
 
   if (!config) return <main className="panel loading">패널을 불러오는 중입니다...</main>;
 
+  const dismissNumberIntro = () => {
+    localStorage.setItem('global-number-intro-seen', '1');
+    setShowNumberIntro(false);
+  };
+
   const changePage = (page: number) => setLocation({ ...location, page });
   const showHints =
     config.keyboard.quickHints === 'always' ||
-    (config.keyboard.quickHints === 'on-focus' && panelFocused);
+    (config.keyboard.quickHints === 'on-focus' && panelFocused) ||
+    focusUnavailable;
   const onWheel = (event: React.WheelEvent) => {
     if (pageCount < 2 || Math.abs(event.deltaY) < 4) return;
     changePage(Math.max(0, Math.min(pageCount - 1, location.page + (event.deltaY > 0 ? 1 : -1))));
@@ -241,7 +274,24 @@ export function PanelApp() {
           if (!config.window.locked) setMenu({ x: event.clientX, y: event.clientY, item: null, position });
         }}
         showHints={showHints}
+        hintMuted={focusUnavailable}
       />
+      {focusUnavailable && (
+        <div className="focus-guidance" role="status">
+          이 창을 클릭하면 키보드로 실행할 수 있습니다
+        </div>
+      )}
+      {config.keyboard.globalNumberHotkeys && showNumberIntro && !focusUnavailable && (
+        <div className="number-intro" role="status">
+          <span>
+            {config.platform === 'darwin' ? 'Ctrl+Option' : 'Alt+Shift'}와 1부터 0을 누르면 어디서든 바로 실행할 수 있습니다
+          </span>
+          <button type="button" onClick={() => { dismissNumberIntro(); void window.api.editor.open(); }}>
+            설정 보기
+          </button>
+          <button type="button" onClick={dismissNumberIntro} aria-label="전역 숫자 안내 닫기">✕</button>
+        </div>
+      )}
       {showFooter && (
         <Footer
           root={config.root}

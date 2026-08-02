@@ -58,7 +58,8 @@ macOS 설치 파일(.dmg, arm64·x64)을 각각 빌드해 릴리즈에 자동 �
 | 전역 단축키 | `Ctrl+Alt+D` 표시/숨김 토글 (설정에서 변경 가능) | 가려졌을 때 즉시 호출 |
 | 패널 크기 | **수동 리사이즈 없음.** 그리드 설정에서 자동 계산 | Windows에서 투명 창 리사이즈는 깜빡임 버그가 잦음 |
 | 화면 가림 방지 | **실행 후 자동 숨김 + 가장자리 피크(peek)** 기본 켜짐 (§6.10) | 항상 최상위 창이 작업 화면을 가리는 문제를 해결. 소프트웨어 패널의 최대 약점 |
-| 키보드 실행 | **숫자 힌트 배지 + 키별 전역 단축키** (§6.11) | 마우스 없이 실행. 패널이 숨어 있어도 되므로 §6.10과 짝을 이룬다 |
+| 키보드 실행 | **전역 숫자 단축키(기본 켬) + 퀵 런처 오버레이** (§6.11, §6.12) | 패널을 띄우거나 클릭하는 단계 없이 어디서든 바로 실행. 이것이 주 사용 경로다 |
+| 패널의 역할 | **마우스로 둘러볼 때의 보조 수단** | 키보드 사용자는 패널을 거의 열지 않는다. 패널은 시각적 브라우징용 |
 | 계층 구조 | 폴더 키로 무한 중첩 (실용상 깊이 5 제한) | 스트림덱 폴더 |
 | 저장소 | `github.com/deepsky616/stream-panel` (**공개**) | 릴리즈 다운로드·자동 업데이트에 인증 불필요 |
 | 설치 방식 (Win) | NSIS, **사용자 단위 설치**(`perMachine: false`) | UAC 관리자 권한 프롬프트 회피 |
@@ -71,7 +72,9 @@ macOS 설치 파일(.dmg, arm64·x64)을 각각 빌드해 릴리즈에 자동 �
 
 - 패널 창: 키 클릭 실행, 폴더 진입/복귀, 페이지 전환, 드래그 이동, 잠금
 - **패널 노출 정책 3종** (§6.10): 실행 후 자동 숨김 · 가장자리 피크 · 유휴 시 반투명+클릭 통과
-- **키보드 실행 3종** (§6.11): 숫자 힌트 배지 · 키별 전역 단축키 · 전역 숫자 단축키(옵션)
+- **키보드 실행 4종**: 숫자 힌트 배지(§6.11-A) · 키별 전역 단축키(§6.11-B) ·
+  **전역 숫자 단축키(§6.11-C, 기본 켬)** · **퀵 런처 오버레이(§6.12)**
+- **한글 초성 검색** — 퀵 런처에서 `ㄱㅂ`으로 "개발"을 찾을 수 있어야 한다 (§6.12)
 - 편집기 창: 키 그리드 + 액션 라이브러리 + 속성 편집 패널
 - 드래그 앤 드롭: 라이브러리→키, 키↔키 이동/교환, 키→폴더 안, 키→삭제, **OS 파일/폴더/URL 드롭**
 - 액션 4종: `url` / `folder` / `file` / `app`(+Windows 전용 `uwp`) + **폴더 키**
@@ -150,6 +153,31 @@ export interface ActionItem extends DeckItemBase {
   target: string;      // url | 절대 경로 | exe 경로 | AppUserModelID
   args: string[];      // type==='app' 일 때만 의미 있음. 기본 []
   workingDir?: string; // type==='app'
+  browser?: BrowserSpec; // type==='url' 일 때만. 미지정이면 OS 기본 브라우저 (§6.13)
+}
+
+/** URL을 특정 브라우저·프로필·전용 창으로 여는 설정 (§6.13) */
+export interface BrowserSpec {
+  path: string;          // 브라우저 실행 파일(Win) / .app 번들(mac) 절대 경로
+  profileDir?: string;   // Chromium 계열 프로필 디렉터리명. 'Default', 'Profile 1' 등
+  appMode: boolean;      // true면 --app= 으로 주소창·탭 없는 전용 창을 연다
+}
+
+/** browsers:list 가 반환하는 감지된 브라우저 (§6.13) */
+export interface DetectedBrowser {
+  id: 'chrome' | 'edge' | 'whale' | 'firefox' | 'safari';
+  name: string;                 // 'Google Chrome'
+  path: string;
+  family: 'chromium' | 'firefox' | 'safari';
+  supportsAppMode: boolean;     // chromium 만 true
+  supportsProfiles: boolean;    // chromium 만 true (v1.0에서 firefox 프로필 미지원)
+  profiles: BrowserProfile[];
+  iconDataUrl?: string;
+}
+
+export interface BrowserProfile {
+  dir: string;    // 'Default', 'Profile 1'
+  name: string;   // '업무용'  — Local State 에서 읽은 표시 이름
 }
 
 export interface FolderItem extends DeckItemBase {
@@ -188,13 +216,19 @@ export interface BehaviorConfig {
   idleOpacity: number;             // 0.1~0.9, 기본 0.25
 }
 
-/** 키보드만으로 실행하기 위한 설정 (§6.11) */
+/** 키보드만으로 실행하기 위한 설정 (§6.11, §6.12) */
 export interface KeyboardConfig {
   quickHints: 'on-focus' | 'always' | 'never';  // 힌트 배지 표시 조건. 기본 'on-focus'
   hintKeys: string;                             // 힌트 문자 순서. 기본 §6.11-A의 40자
   hideAfterHotkeyLaunch: boolean;               // 힌트로 실행 후 패널 숨김. 기본 true
-  globalNumberHotkeys: boolean;                 // 전역 숫자 단축키 사용. 기본 false
-  globalNumberModifier: string;                 // 기본 'Control+Alt' → Control+Alt+1..0
+
+  // 전역 숫자 단축키 (§6.11-C) — 기본으로 켜진다
+  globalNumberHotkeys: boolean;                 // 기본 true
+  globalNumberModifier: string;                 // 기본 'Alt+Shift'(Win) / 'Control+Alt'(mac)
+
+  // 퀵 런처 (§6.12)
+  quickLauncher: boolean;                       // 기본 true
+  quickLauncherHotkey: string;                  // 기본 'CommandOrControl+Alt+Space'
 }
 
 export interface AppConfig {
@@ -237,6 +271,17 @@ export type LibraryEntry =
 export type LaunchResult =
   | { ok: true }
   | { ok: false; code: 'NOT_FOUND' | 'BLOCKED' | 'FAILED'; message: string };
+
+/** 퀵 런처 검색 결과 한 줄 (§6.12) */
+export interface LauncherResult {
+  id: string;             // ActionItem.id
+  label: string;
+  type: ActionType;
+  breadcrumb: string;     // 상위 폴더 경로. 예: '개발도구 › 문서'. root면 빈 문자열
+  iconDataUrl?: string;   // 지연 로딩
+  hint?: string;          // '1'~'9'. 표시 순서대로 배정. 10개 이상이면 앞 9개만 부여
+  matchRanges: [number, number][]; // label 안에서 검색어와 일치한 구간 (강조 표시용)
+}
 ```
 
 ### 4.1 액션 라이브러리 고정 항목
@@ -302,7 +347,19 @@ export type LaunchResult =
 | 필드 | Windows | macOS |
 |---|---|---|
 | `hotkey` | `'Control+Alt+D'` | `'Command+Alt+D'` — 실제 구현은 `'CommandOrControl+Alt+D'` 하나로 통일 |
-| `keyboard.globalNumberModifier` | `'Control+Alt'` | `'Command+Alt'` — 역시 `'CommandOrControl+Alt'` |
+| `keyboard.quickLauncherHotkey` | 동일 — `'CommandOrControl+Alt+Space'` | 동일 |
+| `keyboard.globalNumberModifier` | **`'Alt+Shift'`** | **`'Control+Alt'`** — 두 값이 실제로 다르다. `CommandOrControl`로 합칠 수 없다 |
+
+**`globalNumberModifier` 기본값을 이렇게 정한 이유** (§6.11-C)
+
+| 조합 | 판정 |
+|---|---|
+| `Super+숫자` (Win 키) | **사용 불가** — Windows가 작업표시줄 고정 앱 실행에 예약해 두었다 |
+| `Control+Alt+숫자` (Win) | 위험 — 일부 IDE·그래픽 툴이 이미 쓴다 |
+| `Control+Shift+숫자` | 위험 — 브라우저·IDE가 이미 쓴다 |
+| `Command+숫자` (mac) | **사용 불가** — 브라우저 탭 전환, 앱 대부분이 쓴다 |
+| **`Alt+Shift+숫자`** (Win) | 비교적 한산 → **기본값** |
+| **`Control+Alt+숫자`** (mac) | macOS에서는 비교적 한산 → **기본값** |
 | 예시 키 2번 대상 | `app.getPath('downloads')` | 동일 (`getPath`가 알아서 처리) |
 | `autoUpdate` | `true` | **`false` 고정** — macOS는 자동 업데이트를 지원하지 않는다 (§10.1) |
 
@@ -353,6 +410,7 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `picker:image` | — | `string \| null` | 아이콘 이미지 선택 → 144×144 PNG로 정규화 후 상대경로 반환 |
 | `icon:importPath` | `string` | `string \| null` | OS 드롭으로 받은 이미지 경로를 아이콘으로 등록 |
 | `apps:list` | `{ refresh?: boolean }` | `InstalledApp[]` | 설치된 앱 목록 (§6.1) |
+| `browsers:list` | `{ refresh?: boolean }` | `DetectedBrowser[]` | 설치된 브라우저와 프로필 목록 (§6.13) |
 | `icon:resolve` | `{ type: ActionType; target: string }` | `string \| null` | 아이콘 data URL (캐시 사용) |
 | `drop:classify` | `{ paths: string[]; text?: string }` | `Partial<ActionItem>[]` | OS 드롭 대상을 액션으로 변환 (§9.6) |
 | `window:hide` | — | `void` | 패널 숨기기 (피크 스트립이 켜져 있으면 스트립으로 전환) |
@@ -361,6 +419,10 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `window:set-idle` | `boolean` | `void` | 유휴 반투명/클릭 통과 진입·해제 (§6.10 C) |
 | `editor:open` | `{ path?: string[]; slot?: number }` | `void` | 편집기 창 열기/포커스. 슬롯 선택 상태로 진입 |
 | `hotkey:validate` | `{ accelerator: string; itemId?: string }` | `{ok:true} \| {ok:false; reason:string}` | 전역 단축키 등록 가능 여부 검사 (§6.11-B). 실제 등록은 하지 않고 시험 등록 후 즉시 해제 |
+| `launcher:query` | `{ text: string }` | `LauncherResult[]` | 퀵 런처 검색 (§6.12). `text`가 빈 문자열이면 root 페이지 1의 1~10번을 반환 |
+| `launcher:run` | `{ id: string }` | `LaunchResult` | 퀵 런처에서 실행. 성공하면 런처 창이 닫힌다 |
+| `launcher:close` | — | `void` | 퀵 런처 닫기 (`Esc`) |
+| `launcher:resize` | `{ height: number }` | `void` | 결과 개수에 맞춰 런처 창 높이 조정 |
 | `update:check` | — | `{status, version?}` | 수동 업데이트 확인 |
 | `app:info` | — | `{version, platform, isPackaged}` | 정보 표시용 |
 | `shell:reveal` | `string` | `void` | 탐색기에서 위치 열기 |
@@ -387,10 +449,12 @@ contextBridge.exposeInMainWorld('api', {
   picker: { folder, file, executable, image },
   icon:   { resolve, importPath },
   apps:   { list },
+  browsers: { list },
   drop:   { classify },
   window: { hide, show, relayout, setIdle },
   editor: { open },
   hotkey: { validate },
+  launcher: { query, run, close, resize },
   update: { check },
   app:    { info },
   shell:  { reveal },
@@ -827,17 +891,34 @@ Windows는 포그라운드 락 때문에, macOS는 `LSUIElement` 액세서리 �
 백그라운드에서 창에 포커스를 주는 것이 막힐 수 있다. `showPanel()`은 다음 순서로 수행한다.
 
 ```ts
-if (process.platform === 'darwin') {
-  app.focus({ steal: true });      // LSUIElement 앱이 키보드 포커스를 가져오려면 필수
+async function focusPanel(win: BrowserWindow): Promise<boolean> {
+  if (process.platform === 'darwin') {
+    app.focus({ steal: true });    // LSUIElement 앱이 키보드 포커스를 가져오려면 필수
+  }
+  win.setAlwaysOnTop(true, PLATFORM.alwaysOnTopLevel);
+  win.show();
+  win.moveTop();
+  win.focus();
+  return win.isFocused();
 }
-win.setAlwaysOnTop(true, PLATFORM.alwaysOnTopLevel);
-win.show();
-win.moveTop();
-win.focus();
 ```
 
-포커스를 받지 못하면 힌트 입력이 먹지 않으므로, **`webContents.on('blur')`에서 배지를 숨겨**
-사용자가 "지금 키 입력이 되는 상태인지"를 눈으로 알 수 있게 한다.
+**포커스 확보 실패를 반드시 감지하고 재시도한다.** 이 부분을 대충 만들면
+"패널은 떴는데 숫자가 안 먹혀서 결국 마우스로 클릭"하는 최악의 경험이 된다.
+
+1. `focusPanel()`을 호출하고 `win.isFocused()`를 확인한다.
+2. 실패하면 **100ms 뒤 한 번 더** 시도한다.
+3. 그래도 실패하면 렌더러에 `panel:focus-lost`를 보내
+   **힌트 배지를 회색으로 바꾸고** 상단에 "이 창을 클릭하면 키보드로 실행할 수 있습니다"를
+   한 줄 표시한다. 조용히 안 먹히는 것보다 이유를 밝히는 편이 낫다.
+4. `webContents.on('focus')`가 오면 배지를 원래 색으로 되돌린다.
+
+`webContents.on('blur')`에서도 배지를 숨겨 사용자가 "지금 키 입력이 되는 상태인지"를
+언제나 눈으로 알 수 있게 한다.
+
+> **참고:** 대부분의 경우 전역 단축키로 호출된 직후에는 OS가 해당 프로세스에
+> 포그라운드 권한을 주므로 1회 시도로 성공한다. 재시도와 시각적 폴백은 안전망이다.
+> 근본적으로 이 경로에 의존하지 않으려면 §6.11-C(전역 숫자)와 §6.12(퀵 런처)를 쓴다.
 
 **힌트 문자와 IME:** macOS·Windows 모두 한글 입력 상태에서는 `keydown`의 `key`가
 조합 중 문자로 올 수 있다. 힌트 판정은 `event.key`가 아니라 **`event.code`**
@@ -865,25 +946,247 @@ win.focus();
 - 등록 실패한 항목은 설정을 지우지 않고 **경고 배지**를 붙여 사용자가 고칠 수 있게 한다
   (다른 앱이 나중에 종료되면 다시 유효해질 수 있으므로).
 
-#### C. 전역 숫자 단축키 (`keyboard.globalNumberHotkeys`, 기본 `false`)
+#### C. 전역 숫자 단축키 (`keyboard.globalNumberHotkeys`, **기본 `true`**)
 
-`Control+Alt+1` ~ `Control+Alt+0`을 **현재 보고 있는 페이지의 1~10번 힌트**에 자동 매핑한다.
-패널을 부르지 않고 바로 실행할 수 있다.
+`Alt+Shift+1` ~ `Alt+Shift+0`(macOS는 `Control+Alt+1`~`0`)을
+**최상위(root) 첫 페이지의 1~10번 키**에 매핑한다.
+패널을 부르지도, 클릭하지도 않고 어디서든 바로 실행된다. **이것이 주 사용 경로다.**
 
-- **기본값이 꺼져 있는 이유:** `Ctrl+Alt+숫자`는 이미 쓰는 프로그램이 많아 충돌 가능성이 높다.
-  원하는 사용자만 켠다.
-- 수식키 조합은 `keyboard.globalNumberModifier`로 바꿀 수 있다
-  (`Control+Alt` / `Control+Shift` / `Alt+Shift` / `Super+Alt` 중 선택).
+- 수식키 조합은 `keyboard.globalNumberModifier`로 바꿀 수 있다.
+  기본값 선정 근거는 §4.5의 표를 참조한다.
+- **매핑 대상은 항상 "root 첫 페이지의 1~10번"으로 고정한다.**
+  "현재 보고 있는 페이지"를 따라가게 만들면, 패널을 안 보고 있는 상태에서
+  `Alt+Shift+1`이 무엇을 실행할지 예측할 수 없게 된다. 예측 가능성이 최우선이다.
+  → 이 번호는 §6.12 퀵 런처의 빈 검색어 상태 번호와도 **완전히 일치한다.**
+- 자주 쓰는 키를 root 첫 페이지 앞쪽에 두라는 안내를 설정 화면과 README에 넣는다.
 - 10개 중 일부만 등록에 성공할 수 있다. 실패한 것은 조용히 건너뛰고, 설정 화면에
   **어떤 번호가 등록되지 못했는지 목록으로 표시**한다.
-- 매핑 대상은 "현재 계층·현재 페이지"다. 사용자가 폴더에 들어가 있으면 그 안의 1~10번을 가리킨다.
-  → 혼란을 줄이기 위해 설정 화면에 "현재 보고 있는 페이지 기준으로 동작합니다"를 명시한다.
+- 해당 슬롯이 비어 있거나 폴더 키면 등록은 하되 눌렸을 때 아무 일도 하지 않는다
+  (폴더는 실행 대상이 아니다). 소리나 알림을 내지 않는다.
 - `B`(키별 전역 단축키)와 겹치면 `B`가 우선한다. 겹친 번호는 등록하지 않는다.
+- **첫 실행 시 안내:** 최초 실행 후 패널에 한 번만 나타나는 안내 배너로
+  "`Alt+Shift+1`~`0`으로 어디서든 바로 실행할 수 있습니다"를 알린다.
+  등록에 실패한 번호가 있으면 설정으로 가는 링크를 함께 준다.
 
 #### 편집기 창에서의 동작
 
 **편집기 창에서는 힌트 배지와 숫자 실행을 사용하지 않는다.** 제목·주소 입력 필드가 있어
 숫자 입력과 충돌하기 때문이다. 편집기는 클릭·화살표·`Enter`만 쓴다 (§9.8).
+
+### 6.12 퀵 런처 오버레이 (`windows/launcherWindow.ts`, `shared/search.ts`)
+
+**해결하려는 문제:** §6.11-C의 전역 숫자 단축키는 10개까지만 커버한다.
+그보다 많은 키, 특히 폴더 안쪽 키를 마우스 없이 실행하려면
+패널을 띄우고 → 포커스를 확보하고 → 폴더를 파고들어야 한다. 단계가 너무 많다.
+
+Spotlight·Alfred 방식의 **검색형 런처**로 이 전부를 한 번에 대체한다.
+전역 단축키를 **딱 하나만** 등록하므로 충돌 위험도 거의 없다.
+
+```
+        ┌─────────────────────────────────────┐
+        │ 🔍 개발_                            │
+        ├─────────────────────────────────────┤
+        │ 1  💻 VSCode          개발도구      │
+        │ 2  🗂 개발 폴더                     │
+        │ 3  🌐 개발 문서       북마크 › 참고 │
+        └─────────────────────────────────────┘
+```
+
+#### 창 사양
+
+```ts
+new BrowserWindow({
+  width: 640,
+  height: 64,              // 결과에 따라 launcher:resize 로 늘어난다. 최대 64 + 8*56 = 512
+  frame: false,
+  transparent: true,
+  resizable: false,
+  movable: false,
+  skipTaskbar: true,
+  focusable: true,         // 이 창은 포커스를 받는 것이 존재 목적이다
+  alwaysOnTop: true,
+  show: false,
+  webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
+});
+```
+
+- 위치: **커서가 있는 디스플레이**의 `workArea` 기준 가로 중앙,
+  세로는 `workArea.y + workArea.height * 0.25`. Spotlight와 비슷한 위치감.
+- `alwaysOnTop` 레벨은 패널과 동일 (`'screen-saver'` / macOS `'floating'`).
+- **`blur` 이벤트가 오면 즉시 닫는다.** 다른 곳을 클릭하면 사라지는 것이 런처의 기본 동작이다.
+- 열 때마다 검색어를 비우고 입력에 포커스를 준다. 이전 검색어를 남기지 않는다.
+- 창은 앱 시작 시 미리 생성해 두고 `show()`/`hide()`만 한다. 매번 만들면 첫 표시가 느리다.
+
+#### 동작 흐름
+
+1. `CommandOrControl+Alt+Space` → 런처가 뜨고 검색 입력에 포커스.
+   macOS는 `app.focus({ steal: true })`를 먼저 호출한다 (§6.11-A와 동일).
+2. **검색어가 비어 있는 상태:** root 첫 페이지의 1~10번 키를 그대로 보여준다.
+   번호도 §6.11-C의 전역 숫자 단축키와 **완전히 동일**하다. 두 체계가 어긋나면 안 된다.
+3. **숫자 키:** 검색어가 비어 있을 때만 즉시 실행으로 동작한다.
+   타이핑을 시작하면 숫자는 검색어의 일부가 되고, 실행은 화살표 + `Enter`로 한다.
+   → 이 규칙이 없으면 "1password"를 검색할 수 없다.
+4. **타이핑:** 300ms가 아니라 **즉시**(입력마다) `launcher:query`를 호출한다.
+   검색 대상이 최대 500개라 디바운스가 필요 없고, 지연이 있으면 런처답지 않다.
+5. **↑/↓** 선택 이동, **`Enter`** 실행, **`Esc`** 닫기, **`Tab`** 다음 결과.
+6. 실행 성공 시 런처가 즉시 닫힌다. 실패하면 런처 안에 오류 메시지를 한 줄 표시하고 남는다.
+7. 결과는 최대 **8개**만 보여준다. 스크롤을 만들지 않는다.
+   그보다 많으면 검색어를 더 치라는 뜻이다.
+
+#### 검색 규칙 (`shared/search.ts` — 순수 함수, 단위 테스트 필수)
+
+- **검색 대상은 `ActionItem`만.** `FolderItem`은 결과에 넣지 않는다.
+  런처는 실행 전용이므로 폴더에 "들어갈" 이유가 없다.
+  폴더는 결과 줄의 `breadcrumb`(`개발도구 › 문서`)로만 표시한다.
+- 트리 전체를 평탄화해 검색한다. 깊이에 상관없이 한 번에 잡힌다.
+- 매칭 대상: `label` → 폴더 경로 → `target`(URL 호스트 / 파일명) 순으로 가중치가 낮아진다.
+
+**랭킹 순서 (높은 순)**
+
+1. `label` 접두사 일치 — "vs" → "VSCode"
+2. `label`의 단어 시작 일치 — "코" → "개발 코드"
+3. **한글 초성 일치** — `ㄱㅂ` → "개발", `ㅁㅅ` → "문서"
+4. 영문 이니셜 일치 — `vsc` → "Visual Studio Code"
+5. `label` 부분 일치
+6. 폴더 경로 부분 일치
+7. `target` 부분 일치 (URL 호스트, 파일명)
+
+동점이면 **root에 가까운 순 → `position` 오름차순**으로 정렬한다.
+
+- **한글 초성 검색은 반드시 구현한다.** 한국어 라벨이 대부분일 것이므로
+  이게 없으면 검색이 사실상 쓸모없다.
+  구현: 완성형 한글(`가`~`힣`)의 유니코드에서 초성 인덱스를 계산한다.
+  `초성 = Math.floor((code - 0xAC00) / 588)` → `ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ`
+- 검색은 대소문자를 구분하지 않는다.
+- 일치 구간을 `matchRanges`로 반환해 렌더러가 굵게 강조한다.
+- 검색어에 공백이 있으면 **AND 조건**으로 분리해 모두 만족하는 항목만 남긴다
+  ("개발 문서" → 둘 다 포함).
+
+#### 아이콘
+
+`icon:resolve`를 결과 표시 시점에 개별 호출한다(지연 로딩).
+캐시가 있으면 즉시 뜨고, 없으면 글자 아이콘으로 시작해 나중에 교체된다.
+**아이콘 로딩이 검색 결과 표시를 막아서는 안 된다.**
+
+#### 퀵 런처를 끈 경우
+
+`keyboard.quickLauncher === false`면 창을 만들지 않고 단축키도 등록하지 않는다.
+
+### 6.13 URL 키의 브라우저 지정 (`services/browserService/`)
+
+**해결하려는 문제:** 기본 구현(`shell.openExternal`)은 **OS 기본 브라우저**로만 연다.
+그런데 현실에는 브라우저를 가리는 사이트가 있다.
+
+- 공공기관 시스템(나이스, 정부24 등)은 인증서 보안 프로그램이 설치된 특정 브라우저에서만 동작한다
+- 업무용/개인용 브라우저 프로필을 분리해 쓰는 경우, 로그인 세션이 다른 프로필로 가면 무용지물이다
+- 자주 쓰는 웹앱은 주소창·탭이 없는 **전용 창**으로 띄우는 편이 훨씬 쾌적하다
+
+`ActionItem.browser`가 이 셋을 해결한다. **`browser`가 없으면 기존대로 `shell.openExternal`을 쓴다.**
+
+#### 6.13.1 브라우저 감지
+
+`browsers:list`는 다음을 조사해 `DetectedBrowser[]`를 반환한다. 결과는 24시간 캐시한다.
+
+**Windows** — 아래 경로를 순서대로 확인한다. `%LOCALAPPDATA%` 설치본이 흔하므로 빠뜨리지 않는다.
+
+| 브라우저 | 경로 |
+|---|---|
+| Chrome | `%ProgramFiles%\Google\Chrome\Application\chrome.exe`, `%ProgramFiles(x86)%\...`, `%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe` |
+| Edge | `%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe`, `%ProgramFiles%\...` |
+| Whale | `%ProgramFiles(x86)%\Naver\Naver Whale\Application\whale.exe`, `%LOCALAPPDATA%\Naver\Naver Whale\Application\whale.exe` |
+| Firefox | `%ProgramFiles%\Mozilla Firefox\firefox.exe`, `%ProgramFiles(x86)%\...` |
+
+**macOS** — `/Applications`와 `~/Applications`에서 다음 번들을 찾는다.
+`Google Chrome.app`, `Microsoft Edge.app`, `Naver Whale.app`, `Firefox.app`,
+`Safari.app`(`/Applications` 또는 `/System/Applications`).
+
+- **§6.1의 `appScanner` 결과를 재사용해도 된다.** 이미 설치된 앱을 스캔하고 있으므로,
+  알려진 브라우저 실행 파일명으로 걸러내는 편이 중복 스캔보다 낫다.
+- 하나도 못 찾으면 빈 배열을 반환한다. UI는 `기본 브라우저` 옵션만 보여준다.
+- 아이콘은 `app.getFileIcon`으로 뽑아 드롭다운에 표시한다.
+
+#### 6.13.2 프로필 목록 읽기 (Chromium 계열만)
+
+Chromium 계열은 사용자 데이터 폴더의 **`Local State`** 파일(JSON)에
+`profile.info_cache`가 있고, 여기에 `디렉터리명 → 표시 이름` 매핑이 들어 있다.
+
+```
+{ "profile": { "info_cache": {
+    "Default":   { "name": "업무용" },
+    "Profile 1": { "name": "개인" }
+} } }
+```
+
+| 브라우저 | Windows | macOS |
+|---|---|---|
+| Chrome | `%LOCALAPPDATA%\Google\Chrome\User Data` | `~/Library/Application Support/Google/Chrome` |
+| Edge | `%LOCALAPPDATA%\Microsoft\Edge\User Data` | `~/Library/Application Support/Microsoft Edge` |
+| Whale | `%LOCALAPPDATA%\Naver\Naver Whale\User Data` | `~/Library/Application Support/Naver/Whale` |
+
+- 파일이 없거나 JSON 파싱에 실패하면 **프로필 목록을 비우고 조용히 넘어간다.**
+  프로필 지정 없이도 브라우저 지정은 동작해야 한다.
+- **Firefox는 `profiles.ini`라 형식이 다르다. v1.0에서는 프로필을 지원하지 않는다**
+  (`supportsProfiles: false`). 브라우저 지정만 가능하다.
+- **Safari는 프로필도 앱 모드도 지원하지 않는다.** 둘 다 `false`.
+
+#### 6.13.3 실행 방법
+
+`launcher`의 `url` 분기에서 `item.browser`가 있으면 아래를 수행한다.
+
+**플래그 생성 (앱이 직접 만든다. 사용자 입력을 그대로 넣지 않는다)**
+
+```
+chromium 계열:
+  appMode      → ['--app=' + url]              // URL이 플래그 안에 들어간다
+  appMode 아님 → [url]                          // URL을 위치 인자로 전달
+  profileDir   → ['--profile-directory=' + profileDir]   앞에 붙인다
+
+firefox:
+  ['-P', ...] 미지원. 그냥 [url]
+safari:
+  플래그 없음. [url]
+```
+
+> **`appMode`일 때 URL을 두 번 전달하지 않도록 주의한다.** `--app=<url>`과 위치 인자를
+> 함께 주면 창이 두 개 열린다.
+
+**Windows**
+
+```ts
+spawn(browser.path, flags, { detached: true, stdio: 'ignore' }).unref();
+```
+
+**macOS** — `.app` 번들은 실행 파일이 아니므로 **내부 실행 파일을 직접 spawn한다.**
+
+```ts
+// Info.plist 의 CFBundleExecutable 을 읽는다 (§6.1.2의 plist 읽기 재사용)
+const exe = path.join(browser.path, 'Contents', 'MacOS', cfBundleExecutable);
+spawn(exe, flags, { detached: true, stdio: 'ignore' }).unref();
+```
+
+- `open -a`로는 플래그가 안정적으로 전달되지 않고, `open -n`은 새 인스턴스를 강제해
+  프로필 잠금 충돌을 일으킬 수 있다. **내부 실행 파일 직접 실행이 정답이다.**
+- 실행 파일이 없으면(번들 구조가 예상과 다르면) 기본 브라우저로 폴백한다.
+
+**폴백 규칙**
+
+지정한 브라우저가 사라졌거나(제거됨) 실행에 실패하면:
+1. `shell.openExternal(url)`로 기본 브라우저에서 연다. **링크는 반드시 열려야 한다.**
+2. 토스트로 "지정한 브라우저를 찾을 수 없어 기본 브라우저로 열었습니다"를 알린다.
+3. 편집기에서 해당 키에 경고 배지를 붙인다.
+
+#### 6.13.4 보안
+
+- **사용자가 임의의 브라우저 플래그를 입력할 수 없게 한다.** v1.0에서 앱이 생성하는 플래그는
+  `--app=`과 `--profile-directory=` 두 종류뿐이다.
+  `--disable-web-security`, `--user-data-dir` 같은 플래그를 사용자가 넣을 수 있으면
+  브라우저 샌드박스를 무력화하거나 자격 증명을 다른 폴더로 유출시킬 수 있다.
+- `browser.path`는 §8.2의 `app` 타입 경로 검증을 그대로 통과해야 한다.
+- `profileDir`은 `/^[A-Za-z0-9 _-]{1,64}$/`만 허용한다.
+  경로 구분자(`/`, `\`, `..`)가 들어오면 거부한다.
+- `url`은 §8.1의 프로토콜 화이트리스트를 **먼저** 통과해야 한다.
+  브라우저 지정이 검증을 우회하는 경로가 되어서는 안 된다.
+- `shell: true`를 쓰지 않는다. 플래그는 배열로 전달한다.
 
 ---
 
@@ -899,7 +1202,7 @@ win.focus();
 
 | type | Windows | macOS |
 |---|---|---|
-| `url` | `await shell.openExternal(target)` | 동일 |
+| `url` | `browser`가 없으면 `await shell.openExternal(target)`. 있으면 §6.13.3의 `spawn(browser.path, flags)` | `browser`가 없으면 동일. 있으면 `.app` 내부 실행 파일을 직접 `spawn` (§6.13.3) |
 | `folder` | `await shell.openPath(target)` — 반환 문자열이 비어있지 않으면 실패 | 동일 |
 | `file` | `await shell.openPath(target)` — 동일 | 동일 |
 | `app` | `spawn(target, args, { detached: true, stdio: 'ignore', cwd: workingDir ?? path.dirname(target), windowsHide: false })` 후 `child.unref()` | **`.app` 번들은 실행 파일이 아니므로 spawn 할 수 없다.** `args`가 비었으면 `await shell.openPath(target)`, `args`가 있으면 `spawn('open', ['-a', target, '--args', ...args], { detached: true, stdio: 'ignore' })` 후 `unref()` |
@@ -1082,6 +1385,17 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
   - `url`: 주소 입력. `https://`가 없으면 저장 시 자동으로 붙인다.
     입력 후 300ms 디바운스로 파비콘을 미리 가져와 아이콘 미리보기에 반영하고,
     제목이 비어 있으면 호스트명을 제안한다.
+    아래에 **브라우저 지정 3종**(§6.13)을 둔다:
+    - `열 브라우저` 드롭다운 — `기본 브라우저`(기본값) + `browsers:list` 결과.
+      각 항목에 브라우저 아이콘을 함께 표시한다
+    - `프로필` 드롭다운 — 선택한 브라우저가 Chromium 계열일 때만 활성화.
+      `Local State`에서 읽은 표시 이름(`업무용`, `개인`)을 보여준다.
+      프로필이 하나뿐이면 드롭다운을 숨긴다
+    - `전용 창으로 열기` 체크박스 — Chromium 계열일 때만 활성화.
+      옆에 "주소창과 탭이 없는 창으로 열립니다" 안내
+    - Firefox 선택 시 프로필·전용 창을 비활성화하고 "이 브라우저는 프로필과 전용 창을
+      지원하지 않습니다"를 표시한다. Safari도 동일
+    - 지정한 브라우저가 사라졌으면 드롭다운에 `찾을 수 없음` 경고 배지를 붙인다
   - `folder`/`file`: 경로(읽기 전용) + `찾아보기` 버튼. 제목이 비면 `path.basename`을 제안.
   - `app`: 경로 + `찾아보기`(`.exe`/`.lnk`) + `실행 인자`(공백 구분 문자열 → 배열로 파싱) +
     `작업 폴더`(선택).
@@ -1190,6 +1504,32 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
   키 자체의 `aria-keyshortcuts` 속성에 힌트 문자를 넣는다.
 - `prefers-reduced-motion: reduce`면 모든 트랜지션을 0ms로.
 
+### 9.8.1 퀵 런처 UI (`launcher.html`, §6.12)
+
+```
+┌───────────────────────────────────────────┐
+│  🔍  개발|                                │  ← 64px, 18px 폰트
+├───────────────────────────────────────────┤
+│  1   💻  VS**Code**            개발도구   │  ← 56px each
+│  2   🗂  **개발** 폴더                    │
+│  3   🌐  **개발** 문서       북마크 › 참고│
+└───────────────────────────────────────────┘
+```
+
+- 루트 컨테이너: `border-radius: 14px`, `backdrop-filter: blur(24px)`,
+  `box-shadow: 0 16px 48px rgba(0,0,0,0.35)`, 1px 테두리. 패널보다 그림자를 강하게 준다.
+- 검색 입력: 배경 없음, 테두리 없음, `caret-color: var(--accent)`, placeholder
+  "실행할 항목 이름을 입력하세요".
+- 결과 줄: 왼쪽부터 `번호 배지(20px)` · `아이콘(28px)` · `라벨` · (오른쪽 정렬)`breadcrumb`.
+- 선택된 줄은 `--tile-hover` 배경 + 왼쪽에 3px `--accent` 막대.
+- `matchRanges` 구간을 `<strong>`으로 감싸고 `color: var(--accent)`로 강조한다.
+- `breadcrumb`은 `--text-dim`, 11px. 비어 있으면(root 직속) 아무것도 표시하지 않는다.
+- 결과가 없으면 한 줄로 "일치하는 항목이 없습니다"를 `--text-dim`으로 표시한다.
+- 결과 개수가 바뀔 때마다 `launcher:resize`로 창 높이를 조정한다.
+  높이 전환에 애니메이션을 넣지 않는다 — 창 리사이즈 애니메이션은 깜빡임을 만든다.
+- `prefers-reduced-motion`과 무관하게 런처는 **페이드 인 없이 즉시** 표시한다.
+  런처는 체감 속도가 전부다.
+
 ### 9.9 설정 (편집기 내 모달)
 
 탭 5개: `일반` / `동작` / `모양` / `단축키` / `정보`
@@ -1217,10 +1557,15 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
   - `힌트 문자 순서` 입력 (기본 `1234567890qwertyuiop...`). 중복 문자 입력 시 오류.
   - `힌트로 실행 후 패널 숨기기` 토글 (기본 켬)
     → 안내: "Shift를 함께 누르면 패널이 유지됩니다"
-  - `전역 숫자 단축키` 토글 (기본 끔) + 수식키 조합 선택
-    (`Ctrl+Alt` / `Ctrl+Shift` / `Alt+Shift` / `Win+Alt`)
-    → 안내: "현재 보고 있는 페이지의 1~10번 키에 연결됩니다"
-    → 켠 뒤 등록에 실패한 번호가 있으면 목록으로 표시한다
+  - **`퀵 런처`** 토글 (기본 켬) + 단축키 캡처 위젯 (기본 `Ctrl+Alt+Space` / `⌘⌥Space`)
+    → 안내: "어디서든 눌러 이름으로 검색해 실행합니다. 한글 초성도 됩니다"
+  - **`전역 숫자 단축키`** 토글 (**기본 켬**) + 수식키 조합 선택
+    (`Alt+Shift` / `Ctrl+Alt` / `Ctrl+Shift` / `Win+Alt`)
+    → 안내: "**맨 앞 페이지의 1~10번 키**를 어디서든 바로 실행합니다.
+      자주 쓰는 항목을 앞쪽에 배치하세요"
+    → 그 아래에 현재 1~10번에 무엇이 연결돼 있는지 **미리보기 목록**을 보여준다.
+      무엇이 실행될지 모르는 상태를 만들지 않는다
+    → 등록에 실패한 번호가 있으면 빨간 글씨로 목록 표시
   - **`등록된 전역 단축키` 목록**: 키별로 지정된 `globalHotkey`를 한 표에 모아 보여준다.
     각 행에 키 이름 · 단축키 · 상태(`등록됨`/`충돌`) · `해제` 버튼.
     어디에 무엇이 걸려 있는지 한눈에 보이지 않으면 관리가 불가능해진다.
@@ -1286,7 +1631,7 @@ stream-panel/
 ├─ src/
 │  ├─ main/
 │  │  ├─ index.ts                    # 라이프사이클, 단일 인스턴스, --hidden 처리
-│  │  ├─ windows/{panelWindow.ts, editorWindow.ts, peekWindow.ts}
+│  │  ├─ windows/{panelWindow.ts, editorWindow.ts, peekWindow.ts, launcherWindow.ts}
 │  │  ├─ tray.ts
 │  │  ├─ shortcuts.ts               # 전역 단축키 레지스트리 (§6.8, §6.11-B/C)
 │  │  ├─ store.ts                    # electron-store + 마이그레이션 + 정규화
@@ -1295,6 +1640,7 @@ stream-panel/
 │  │  ├─ platform/index.ts          # 플랫폼별 상수·판별 (§6.0). 창 레벨, 트레이 에셋 등
 │  │  ├─ services/
 │  │  │  ├─ appScanner/{index.ts, types.ts, windows.ts, macos.ts}
+│  │  │  ├─ browserService/{index.ts, detect.ts, profiles.ts, flags.ts}  # §6.13
 │  │  │  ├─ launcher/{index.ts, common.ts, windows.ts, macos.ts}
 │  │  │  ├─ updater/{index.ts, windows.ts, macos.ts}
 │  │  │  └─ {visibility.ts, iconService.ts, faviconService.ts, autoLaunch.ts}
@@ -1304,8 +1650,10 @@ stream-panel/
 │  │  ├─ index.html                  # 패널
 │  │  ├─ editor.html                 # 편집기
 │  │  ├─ peek.html                   # 가장자리 트리거 스트립 (§6.10-B)
+│  │  ├─ launcher.html               # 퀵 런처 오버레이 (§6.12)
 │  │  └─ src/
-│  │     ├─ {main.tsx, editor.tsx, peek.tsx}
+│  │     ├─ {main.tsx, editor.tsx, peek.tsx, launcher.tsx}
+│  │     ├─ launcher/{LauncherApp.tsx, SearchInput.tsx, ResultRow.tsx}
 │  │     ├─ panel/{PanelApp.tsx, TitleBar.tsx, PanelGrid.tsx, Footer.tsx}
 │  │     ├─ editor/{EditorApp.tsx, KeyGrid.tsx, ActionLibrary.tsx, PropertiesPanel.tsx,
 │  │     │          TrashZone.tsx, SettingsModal.tsx}
@@ -1321,10 +1669,12 @@ stream-panel/
 │     ├─ tree.ts           # 계층 탐색·이동·복제 순수 함수
 │     ├─ hintMap.ts        # §6.11-A 힌트 문자 배정 순수 함수
 │     ├─ accelerator.ts    # CommandOrControl ↔ 화면 표기 변환 (§6.8)
+│     ├─ search.ts         # §6.12 퀵 런처 검색·랭킹·한글 초성 순수 함수
 │     └─ defaults.ts
 ├─ tests/{layout.test.ts, tree.test.ts, hintMap.test.ts, accelerator.test.ts,
-│         validate.test.ts, store-migration.test.ts, appScanner.test.ts,
-│         launcher.test.ts, dropClassify.test.ts}
+│         search.test.ts, validate.test.ts, store-migration.test.ts,
+│         appScanner.test.ts, browserFlags.test.ts, launcher.test.ts,
+│         dropClassify.test.ts}
 ├─ electron.vite.config.ts
 ├─ electron-builder.yml
 ├─ package.json
@@ -1540,11 +1890,14 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
    - Dock에 아이콘이 나타나지 않고 **메뉴 막대에만 상주**한다는 점을 안내한다
 3. 사용법 — 스트림덱 흐름 그대로:
    오른쪽 액션 목록에서 키로 끌어다 놓기 → 이름·아이콘 지정 → 폴더로 묶기 → 패널에서 클릭
-4. **"마우스 없이 쓰기"** 절 (§6.11) — 단축키 표 포함
-   - `Ctrl+Alt+D` → 번호 배지 → 숫자 입력의 3단계를 GIF로 보여준다
-   - 폴더 연쇄 입력(`3` → `2`), `Shift`+숫자로 연달아 실행
+4. **"마우스 없이 쓰기"** 절 (§6.11, §6.12) — **README에서 가장 앞에 오는 사용법**
+   - **`Alt+Shift+1`~`0`으로 어디서든 바로 실행** (기본 켜져 있음). 자주 쓰는 항목을
+     맨 앞 페이지 앞쪽에 두라는 안내
+   - **`Ctrl+Alt+Space` 퀵 런처** — 이름 검색, **한글 초성(`ㄱㅂ` → 개발)** 지원.
+     GIF로 보여준다
+   - 패널을 띄웠을 때의 번호 배지, 폴더 연쇄 입력(`3` → `2`), `Shift`+숫자로 연달아 실행
    - 자주 쓰는 키에 전역 단축키를 지정하는 법, 수식키가 왜 필수인지
-   - 전역 숫자 단축키를 켜는 법과 충돌 시 대처
+   - 단축키 전체 표 (Windows / macOS 병기)
    - 트레이 메뉴 설명
 5. **"패널이 화면을 가리지 않게 하는 방법"** 절 (§6.10)
    - 기본 동작: 키를 누르면 패널이 자동으로 사라지고, 화면 오른쪽 끝에 마우스를 대면 다시 나온다
@@ -1582,11 +1935,33 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
     바이너리 plist 파싱 실패 시 파일명 폴백
 - `accelerator.test.ts` — `CommandOrControl+Alt+D`가 Windows에서 `Ctrl+Alt+D`,
   macOS에서 `⌘⌥D`로 표시되는지. 저장 형식은 항상 `CommandOrControl`임을 검증
+- `search.test.ts` — §6.12 퀵 런처 검색. **이 앱에서 가장 촘촘히 테스트해야 할 파일이다.**
+  - `FolderItem`이 결과에 포함되지 않음
+  - 트리 전체 평탄화 — 깊이 3의 항목도 한 번에 검색됨
+  - 랭킹 순서 7단계가 명세대로인지 (접두사 > 단어시작 > 초성 > 이니셜 > 부분 > 경로 > target)
+  - **한글 초성**: `ㄱㅂ` → "개발", `ㅁㅅ` → "문서", `ㅋㄷ` → "코드"
+  - 초성 계산이 겹받침·쌍자음에서도 정확한지 (`ㄲ`, `ㅆ`, `ㅃ` 등)
+  - 한글이 아닌 문자가 섞여도 크래시하지 않음
+  - 영문 이니셜: `vsc` → "Visual Studio Code"
+  - 공백 AND 조건: "개발 문서" → 둘 다 포함하는 항목만
+  - 대소문자 무시
+  - 동점 시 root 근접 순 → `position` 오름차순
+  - `matchRanges`가 실제 일치 구간을 정확히 가리키는지
+  - 빈 검색어면 root 첫 페이지 1~10번을 그 순서대로 반환 (§6.11-C와 번호 일치)
+  - 결과 8개 상한
 - `launcher.test.ts` — 타입별로 올바른 함수가 호출되는지 (`shell`/`child_process` 모킹),
   **`shell: true`가 절대 쓰이지 않음을 검증**, 존재하지 않는 경로에서 `NOT_FOUND` 반환,
   `FolderItem`은 실행되지 않음,
   **macOS `app` 분기**: `args`가 비면 `openPath`, 있으면 `open -a … --args`,
   **macOS에서 `uwp` 타입은 `BLOCKED` 반환**
+- `browserFlags.test.ts` — §6.13.3 플래그 생성 (`browserService/flags.ts`).
+  - `appMode: true` → `['--app=<url>']` 이고 **URL이 위치 인자로 중복되지 않음**
+  - `appMode: false` → `[<url>]`
+  - `profileDir` 지정 시 `--profile-directory=` 가 앞에 붙음
+  - firefox / safari 는 플래그 없이 `[<url>]`만
+  - `profileDir`에 `../`, `/`, `\` 가 들어오면 거부
+  - `Local State` JSON 파싱: `profile.info_cache` → `BrowserProfile[]`,
+    파일이 없거나 손상됐을 때 빈 배열 반환 (throw 금지)
 - `dropClassify.test.ts` — 디렉터리/파일/exe/lnk/URL/이미지 분류, 라벨 자동 생성
 
 **수동 QA 체크리스트 (Windows 실기, §15).** E2E 자동화는 v1.0 범위 밖.
@@ -1654,8 +2029,38 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
 - [ ] 흐려진 패널 위로 마우스를 옮기면 즉시 선명해지고 다시 클릭할 수 있다
 - [ ] 설정에서 `실행 후 패널 숨기기`를 끄면 이전처럼 패널이 계속 떠 있는다
 
-### 15.3 키보드 실행 (§6.11)
+### 15.3 키보드 실행 (§6.11, §6.12)
+
+**전역 실행 — 이게 주 사용 경로다. 마우스를 한 번도 쓰지 않고 통과해야 한다**
+- [ ] 앱을 켜둔 채 **바탕화면에서** `Alt+Shift+1`(mac `⌃⌥1`)을 누르면 1번 키가 실행된다
+- [ ] **다른 앱 창(브라우저·메모장)에서** 눌러도 똑같이 실행된다
+- [ ] **탐색기/Finder 창에서** 눌러도 똑같이 실행된다
+- [ ] 패널이 숨겨져 있어도 실행된다. 패널이 뜨지 않는다
+- [ ] 설정의 미리보기 목록에 1~10번이 무엇인지 표시되고 실제 실행 결과와 일치한다
+- [ ] 빈 슬롯이나 폴더 키에 해당하는 번호를 눌러도 아무 일도 일어나지 않는다 (오류·소리 없음)
+- [ ] 등록에 실패한 번호가 설정 화면에 빨간 글씨로 표시된다
+
+**퀵 런처 (§6.12)**
+- [ ] 어느 앱에서든 `Ctrl+Alt+Space`(mac `⌘⌥Space`)를 누르면 화면 중앙에 런처가 뜬다
+- [ ] **런처가 즉시 키보드 포커스를 받아 바로 타이핑할 수 있다** (클릭 불필요)
+- [ ] 검색어가 빈 상태에서 1~10번이 보이고, 그 번호가 전역 숫자 단축키와 **동일하다**
+- [ ] 검색어가 빈 상태에서 숫자를 누르면 즉시 실행된다
+- [ ] 타이핑을 시작하면 숫자가 검색어로 들어간다 ("1password"를 검색할 수 있다)
+- [ ] **한글 초성 검색이 된다** — `ㄱㅂ`으로 "개발"이 찾아진다
+- [ ] 폴더 안쪽 깊은 곳의 키도 한 번의 검색으로 찾아진다
+- [ ] 결과에 폴더는 나오지 않고, 대신 상위 경로가 오른쪽에 회색으로 표시된다
+- [ ] 일치 구간이 굵게 강조된다
+- [ ] ↑/↓로 선택하고 `Enter`로 실행하면 런처가 즉시 닫힌다
+- [ ] `Esc`로 닫힌다
+- [ ] 다른 곳을 클릭하면(포커스 상실) 자동으로 닫힌다
+- [ ] 다시 열면 이전 검색어가 남아 있지 않다
+- [ ] 결과가 없으면 "일치하는 항목이 없습니다"가 표시된다
+- [ ] 타이핑에 체감 지연이 없다
+
+**패널에서의 힌트 (§6.11-A)**
 - [ ] 패널 토글 단축키로 패널을 부르면 패널이 **포커스를 받고** 각 키에 번호 배지가 나타난다
+- [ ] 포커스 확보에 실패하면 배지가 회색으로 바뀌고 안내 문구가 표시된다
+      (조용히 안 먹히는 상태가 없어야 한다)
 - [ ] 다른 앱에서 작업하다가 불러도 포커스를 정상적으로 가져온다 (포그라운드 락 미발생)
 - [ ] `1`을 누르면 1번 키가 실행되고 패널이 사라진다
 - [ ] 중간 슬롯이 비어 있어도 **눈에 보이는 순서대로** 1, 2, 3 번호가 매겨진다
@@ -1676,9 +2081,8 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
 - [ ] 다른 프로그램이 쓰는 단축키를 지정하면 "이미 사용 중" 오류가 뜬다
 - [ ] 설정 `단축키` 탭에 등록된 전역 단축키 목록이 표로 보이고 개별 해제가 된다
 - [ ] 전역 단축키가 지정된 키를 삭제하면 단축키도 함께 해제된다
-- [ ] `전역 숫자 단축키`를 켜면 `수식키+1`이 1번 키를 실행한다
-- [ ] 등록에 실패한 번호가 설정 화면에 목록으로 표시된다
 - [ ] 앱을 완전히 종료하면 모든 전역 단축키가 해제되어 다른 앱에서 그 조합을 쓸 수 있다
+      (패널 토글 · 퀵 런처 · 숫자 10개 · 키별 단축키 전부)
 
 ### 15.4 편집기 · 드래그 앤 드롭 (스트림덱 흐름)
 - [ ] `⚙` 또는 트레이에서 편집기가 열린다
@@ -1699,6 +2103,17 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
 
 ### 15.5 실행
 - [ ] URL 키 → 기본 브라우저에서 열리고 파비콘이 표시된다
+
+**브라우저 지정 (§6.13)**
+- [ ] `열 브라우저` 드롭다운에 설치된 브라우저가 아이콘과 함께 나온다
+- [ ] Chrome을 지정하면 기본 브라우저가 아니어도 **Chrome에서 열린다**
+- [ ] `프로필`에서 업무용을 고르면 그 프로필 창에서 열린다 (로그인 세션이 유지된다)
+- [ ] `전용 창으로 열기`를 켜면 **주소창과 탭이 없는 창**이 뜬다
+- [ ] 전용 창 모드에서 창이 **하나만** 열린다 (URL 중복 전달 없음)
+- [ ] Firefox·Safari를 고르면 프로필·전용 창 옵션이 비활성화되고 안내가 뜬다
+- [ ] 지정한 브라우저를 제거한 뒤 키를 눌러도 **기본 브라우저로 열리고** 토스트가 뜬다
+      (링크가 안 열리는 일은 없어야 한다)
+- [ ] 브라우저를 지정하지 않은 기존 키는 그대로 기본 브라우저로 열린다
 - [ ] 폴더 키(액션) → 탐색기(Win) / Finder(mac)에서 열린다
 - [ ] 앱 키 → 해당 앱이 뜨고 아이콘이 추출된다
       (Win: exe 아이콘 / mac: `.app` 번들 아이콘)
@@ -1760,12 +2175,13 @@ Vitest, `ci.yml`(**windows-latest + macos-latest 매트릭스**), MIT LICENSE, `
 
 ### M1 — 데이터 모델 + 슬롯 레이아웃 + 힌트 배정 (순수 로직 먼저)
 `shared/types.ts`, `shared/layout.ts`, `shared/tree.ts`, `shared/hintMap.ts`,
-`shared/accelerator.ts`, `shared/defaults.ts`(플랫폼별 기본값 §4.5),
+`shared/accelerator.ts`, `shared/search.ts`(§6.12 검색·랭킹·한글 초성),
+`shared/defaults.ts`(플랫폼별 기본값 §4.5),
 `store.ts`(마이그레이션 + position 정규화 + `config.platform` 처리 §4.6).
 **수용 기준:** `layout.test.ts`, `tree.test.ts`, `hintMap.test.ts`,
-`accelerator.test.ts`, `store-migration.test.ts` 전부 통과.
+`accelerator.test.ts`, `search.test.ts`, `store-migration.test.ts` 전부 통과.
 UI 없이 순수 함수만으로 폴더 중첩·페이지네이션·이동·교환·순환 거부·힌트 배정·
-단축키 표기 변환이 검증된다.
+단축키 표기 변환·**한글 초성 검색과 7단계 랭킹**이 검증된다.
 
 ### M2 — 패널 창 + 플랫폼 상수
 `main/platform/index.ts` 완성(창 레벨·트레이 에셋·숨김 시작 판별 §6.0),
@@ -1801,21 +2217,43 @@ preload, `config:get`/`config:set`, 창 크기 자동 계산,
 **수용 기준:** §15의 "편집기 · 드래그 앤 드롭" 항목 중 설치된 앱 관련을 제외한 전부가 통과한다.
 `dropClassify.test.ts` 통과.
 
-### M6 — 설치된 앱 + 아이콘 (양쪽 플랫폼)
+### M6 — 설치된 앱 + 브라우저 + 아이콘 (양쪽 플랫폼)
 `appScanner/{index,types,windows,macos}.ts`(§6.0 구조),
+**`browserService/{index,detect,profiles,flags}.ts`(§6.13)** + `browsers:list` +
+편집기 속성 패널의 브라우저·프로필·전용 창 컨트롤,
 `iconService.ts`, `faviconService.ts`, 아이콘 144×144 정규화,
 라이브러리의 설치된 앱 섹션(검색 + 가상 스크롤 + 지연 로딩), `IconPicker`.
 **수용 기준:** 앱 목록에서 앱을 끌어다 놓으면 바로 완성된 키가 만들어진다.
 Windows는 exe 아이콘, macOS는 `.app` 번들 아이콘이 표시된다.
 **양쪽 모두 한글 앱 이름이 깨지지 않는다.** 오프라인에서도 크래시하지 않는다.
-`appScanner.test.ts`가 두 플랫폼 구현을 모두 검증하며 통과한다.
+URL 키에 Chrome + 업무용 프로필 + 전용 창을 지정하면 **기본 브라우저가 아니어도**
+그 조합으로 열리고, 창이 하나만 뜬다.
+`appScanner.test.ts`와 `browserFlags.test.ts`가 통과한다.
 
-### M7 — 트레이 · 단축키 · 가장자리 피크 · 설정 · 자동 시작 · 마감
+### M6.5 — 전역 실행 경로 (퀵 런처 + 전역 숫자 단축키)
+
+**이 마일스톤이 이 앱의 주 사용 경로를 완성한다. UI 마감(M7)보다 먼저 끝낸다.**
+
+`shortcuts.ts`의 전역 단축키 레지스트리, **전역 숫자 단축키(§6.11-C, 기본 켬)**,
+`windows/launcherWindow.ts` + `launcher.html` + `launcher/*` 컴포넌트(§6.12, §9.8.1),
+`launcher:query`/`run`/`close`/`resize` IPC,
+§6.11-A의 포커스 확보 검증·재시도·시각적 폴백.
+
+**수용 기준:**
+- 바탕화면·다른 앱 창·탐색기 어디서든 `Alt+Shift+1`로 1번 키가 실행된다.
+  **패널이 뜨지 않고, 마우스를 전혀 쓰지 않는다.**
+- `Ctrl+Alt+Space`로 런처가 뜨고 **즉시 타이핑할 수 있다** (클릭 불필요).
+- `ㄱㅂ`으로 "개발"이 검색되고, 폴더 3단계 안쪽 키도 한 번에 찾아진다.
+- 검색어가 비면 숫자 즉시 실행, 타이핑 중이면 숫자가 검색어로 들어간다.
+- §15.3의 "전역 실행"과 "퀵 런처" 항목 전체 통과.
+
+### M7 — 트레이 · 키별 단축키 · 가장자리 피크 · 설정 · 자동 시작 · 마감
 `tray.ts`, `shortcuts.ts`, `autoLaunch.ts`,
 `services/visibility.ts`의 **정책 B(가장자리 피크 트리거 스트립, §6.10-B)** 와
 **정책 C(유휴 반투명 + 클릭 통과, §6.10-C)**,
-**키별 전역 단축키(§6.11-B)와 전역 숫자 단축키(§6.11-C)** — 레지스트리, `hotkey:validate`,
+**키별 전역 단축키(§6.11-B)** — `hotkey:validate`,
 편집기 속성 패널의 `전역 단축키` 위젯, 설정의 등록 목록 표,
+전역 숫자 단축키 1~10번 미리보기 목록,
 `SettingsModal`의 `동작` 탭 포함 5개 탭(§9.9),
 컨텍스트 메뉴 + 클립보드(§9.7), 키보드 내비게이션(§9.8), 테마 전환,
 `prefers-reduced-motion`, 전체 문구 한국어 검수.
@@ -1881,7 +2319,16 @@ git push origin main --tags        # release.yml 트리거
 | **수식키 없는 전역 단축키 등록** | 모든 앱에서 그 키 입력이 막혀 시스템이 망가짐 | `validate.ts`에서 무조건 거부 + 단위 테스트 (§6.11-B) |
 | 전역 단축키가 다른 앱과 충돌 | 조용히 동작 안 함 | 시험 등록 후 즉시 해제로 사전 검사, 실패 시 사유 표시, 설정에 `충돌` 배지 |
 | 종료 후 전역 단축키가 남음 | 다른 앱이 그 조합을 못 씀 | `will-quit`에서 `unregisterAll()` + 레지스트리 단일화 (§6.8) |
-| 백그라운드에서 패널에 포커스를 못 줌 | 힌트 입력이 먹지 않음 | `show`→`moveTop`→`focus` 순서 + 포커스 상실 시 배지 숨김으로 상태를 시각화 |
+| 백그라운드에서 패널에 포커스를 못 줌 | 힌트 입력이 먹지 않아 **결국 마우스로 클릭하게 됨** | `focusPanel()` 결과 검증 + 100ms 후 재시도 + 실패 시 배지 회색화·안내 문구 (§6.11-A). 근본적으로는 §6.11-C·§6.12가 이 경로를 우회한다 |
+| 전역 숫자 단축키가 "현재 페이지"를 따라감 | 무엇이 실행될지 예측 불가 | **root 첫 페이지로 고정** + 설정에 1~10번 미리보기 목록 (§6.11-C) |
+| 퀵 런처에서 숫자가 검색어로 안 들어감 | "1password" 검색 불가 | 검색어가 **빈 상태일 때만** 숫자를 실행으로 해석 (§6.12) |
+| 한글 초성 검색 미구현 | 한국어 라벨 검색이 사실상 불가능 | `search.ts`에 초성 인덱스 계산 + `search.test.ts`로 검증 (§6.12) |
+| 퀵 런처가 포커스를 못 받음 | 런처의 존재 이유가 사라짐 | `focusable: true` + macOS `app.focus({steal:true})` + `blur` 시 자동 닫힘 |
+| 전역 단축키를 너무 많이 등록 | 다른 앱과 광범위한 충돌 | 기본 등록은 12개(토글 1 + 런처 1 + 숫자 10). 키별 단축키는 옵트인 20개 상한 |
+| 사용자가 임의의 브라우저 플래그를 입력 | `--disable-web-security`·`--user-data-dir`로 샌드박스 무력화·자격 증명 유출 | 앱이 생성하는 플래그는 `--app=`·`--profile-directory=` 둘뿐. 자유 입력 없음 (§6.13.4) |
+| 전용 창 모드에서 URL 중복 전달 | 창이 두 개 열림 | `--app=<url>`을 쓸 때는 위치 인자를 넣지 않는다 + `browserFlags.test.ts` |
+| macOS에서 `open -a`로 플래그 전달 | 플래그가 무시되거나 프로필 잠금 충돌 | `.app/Contents/MacOS/<CFBundleExecutable>`을 직접 spawn (§6.13.3) |
+| 지정한 브라우저가 제거됨 | 링크가 아예 안 열림 | `shell.openExternal` 폴백 + 토스트 + 편집기 경고 배지. **링크는 반드시 열려야 한다** |
 | 힌트 번호와 슬롯 인덱스 불일치로 혼동 | 엉뚱한 키 실행 | 빈 슬롯을 건너뛰어 **눈에 보이는 순서**로 배정 + `hintMap.test.ts` |
 | 편집기 입력 중 숫자키가 실행으로 새어나감 | 의도치 않은 실행 | 편집기 창에서는 힌트 입력을 아예 비활성화 (§6.11) |
 | 폴더 중첩으로 인한 순환 참조 | 무한 루프·데이터 손상 | `tree.ts`에서 이동 전 조상 검사 + 단위 테스트 (§14) |
@@ -1916,11 +2363,12 @@ Windows·macOS 바탕화면용 Elgato Stream Deck 클론. 물리 장치 없이 �
 두 OS 모두 1급 지원 대상이다. Linux는 만들지 않는다.
 
 # 작업 방식
-- §16의 마일스톤 M0 → M8을 순서대로 진행한다. 건너뛰지 않는다.
+- §16의 마일스톤 M0 → M6.5 → M7 → M8을 순서대로 진행한다. 건너뛰지 않는다.
 - 각 마일스톤이 끝날 때마다 수용 기준을 실제로 확인하고 별도 커밋을 만든다.
 - M1(순수 로직 + 테스트)을 UI보다 먼저 완성한다.
-  shared/layout.ts, shared/tree.ts, shared/hintMap.ts 세 파일이 이 앱의 심장이고,
+  shared/layout.ts, tree.ts, hintMap.ts, search.ts 네 파일이 이 앱의 심장이고,
   여기가 틀리면 나머지가 전부 무너진다. 테스트를 먼저 통과시킨 뒤 UI로 넘어간다.
+- M6.5(전역 실행 경로)는 UI 마감보다 먼저 끝낸다. 이게 이 앱의 주 사용 경로다.
 - §4의 타입 정의, §4.3의 슬롯 배치 규칙, §5의 IPC 채널은 이름과 형태를 그대로 쓴다.
   더 좋은 설계가 떠올라도 바꾸지 말고 먼저 물어봐라.
 
@@ -1931,6 +2379,9 @@ Windows·macOS 바탕화면용 Elgato Stream Deck 클론. 물리 장치 없이 �
 - 모든 창에 contextIsolation:true, nodeIntegration:false, sandbox:true.
 - 모든 IPC 핸들러는 첫 줄에서 입력을 검증한다. 렌더러는 신뢰하지 않는다.
 - URL은 http/https/mailto 화이트리스트. javascript:, file:, data: 는 차단.
+  브라우저를 지정한 경우에도 이 검증을 먼저 통과해야 한다. 우회 경로를 만들지 마라.
+- 브라우저 플래그를 사용자가 자유 입력하게 만들지 마라. 앱이 생성하는 플래그는
+  --app= 과 --profile-directory= 둘뿐이다(§6.13.4).
 - 드롭 핸들러에서 preventDefault() 누락 금지. 빠뜨리면 앱 화면이 파일로 대체된다.
 - 폴더를 자기 자신의 하위로 옮기는 순환 참조를 거부한다.
 
@@ -1959,9 +2410,18 @@ Windows·macOS 바탕화면용 Elgato Stream Deck 클론. 물리 장치 없이 �
    이 앱의 가장 큰 실사용 문제다.
    정책 A(실행 후 자동 숨김)와 B(가장자리 피크)가 기본으로 켜져 있어야 한다.
 
-3. 키보드만으로 실행 (§6.11)
-   패널 토글 단축키 → 숫자 한 번이 주 사용 경로다.
-   힌트 번호는 슬롯 인덱스가 아니라 눈에 보이는 순서로 배정한다.
+3. 마우스를 한 번도 쓰지 않고 실행하기 (§6.11-C, §6.12) — 주 사용 경로
+   패널을 띄우고 클릭한 뒤 숫자를 누르는 것은 너무 번거롭다. 두 경로가 그걸 대체한다.
+   (a) 전역 숫자 단축키: Alt+Shift+1~0 (mac Ctrl+Option+1~0). 기본으로 켜져 있다.
+       바탕화면·다른 앱 창·탐색기 어디서든 눌리면 패널을 띄우지 않고 바로 실행한다.
+       매핑은 root 첫 페이지 1~10번으로 고정한다. "현재 페이지"를 따라가게 만들지 마라.
+       무엇이 실행될지 예측할 수 없게 된다.
+   (b) 퀵 런처: Ctrl+Alt+Space (mac Cmd+Option+Space). Spotlight 방식.
+       창이 뜨는 즉시 타이핑할 수 있어야 한다. 클릭이 필요하면 실패한 것이다.
+       한글 초성 검색(ㄱㅂ → 개발)은 반드시 구현한다. 없으면 검색이 쓸모없다.
+       검색어가 빈 상태에서만 숫자가 즉시 실행이다. 타이핑 중에는 검색어로 들어간다.
+
+   패널 안의 힌트 번호는 슬롯 인덱스가 아니라 눈에 보이는 순서로 배정한다.
    빈 슬롯은 건너뛴다. 이걸 틀리면 엉뚱한 키가 실행된다.
    힌트 판정은 event.key 가 아니라 event.code 로 한다.
    한글 입력기가 켜져 있으면 event.key 가 조합 중 문자로 와서 먹지 않는다.
@@ -1993,10 +2453,11 @@ Windows·macOS 바탕화면용 Elgato Stream Deck 클론. 물리 장치 없이 �
 - 파비콘 조회를 제외하고 런타임에 외부 네트워크를 쓰지 않는다.
 
 # 완료 조건
-1. §14의 단위 테스트 9개 파일을 실제로 작성하고 전부 통과시킨다.
-   (layout / tree / hintMap / accelerator / validate / store-migration /
-    appScanner / launcher / dropClassify)
+1. §14의 단위 테스트 11개 파일을 실제로 작성하고 전부 통과시킨다.
+   (layout / tree / hintMap / accelerator / search / validate / store-migration /
+    appScanner / browserFlags / launcher / dropClassify)
    appScanner 와 launcher 는 Windows·macOS 구현을 한 머신에서 모두 검증해야 한다.
+   search.test.ts 는 한글 초성과 7단계 랭킹을 촘촘히 검증해야 한다.
 2. gh repo create 로 deepsky616/stream-panel 을 public 으로 만들고 푸시한다.
 3. package.json 을 1.0.0 으로 맞추고 v1.0.0 태그를 푸시한다.
 4. GitHub Actions 의 두 잡(windows-latest / macos-latest)이 모두 통과하고,

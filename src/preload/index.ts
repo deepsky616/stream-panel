@@ -38,6 +38,10 @@ const api = {
   apps: {
     list: (input: { refresh?: boolean } = {}) => ipcRenderer.invoke(IPC_CHANNELS.APPS_LIST, input),
   },
+  browsers: {
+    list: (input: { refresh?: boolean } = {}) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BROWSERS_LIST, input),
+  },
   drop: {
     classify: (input: { paths: string[]; text?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.DROP_CLASSIFY, input),
@@ -56,6 +60,13 @@ const api = {
   hotkey: {
     validate: (input: { accelerator: string; itemId?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.HOTKEY_VALIDATE, input),
+  },
+  launcher: {
+    query: (input: { text: string }) => ipcRenderer.invoke(IPC_CHANNELS.LAUNCHER_QUERY, input),
+    run: (input: { id: string }) => ipcRenderer.invoke(IPC_CHANNELS.LAUNCHER_RUN, input),
+    close: () => ipcRenderer.invoke(IPC_CHANNELS.LAUNCHER_CLOSE),
+    resize: (input: { height: number }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.LAUNCHER_RESIZE, input),
   },
   update: {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),

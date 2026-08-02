@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { normalizeAccelerator } from '../../../shared/accelerator';
-import type { DeckItem } from '../../../shared/types';
+import type { DeckItem, DetectedBrowser } from '../../../shared/types';
 import { ColorPicker } from '../common/ColorPicker';
 import { IconPicker } from '../common/IconPicker';
 
@@ -49,6 +49,8 @@ export function PropertiesPanel({
   const [hotkeyMessage, setHotkeyMessage] = useState<string | null>(
     item?.kind === 'action' && item.globalHotkey ? '등록됨' : null,
   );
+  const [browsers, setBrowsers] = useState<DetectedBrowser[]>([]);
+  const [browsersLoaded, setBrowsersLoaded] = useState(false);
   const labelRef = useRef<HTMLInputElement>(null);
   const targetRef = useRef<HTMLInputElement>(null);
 
@@ -56,6 +58,19 @@ export function PropertiesPanel({
     if (focusField === 'label') labelRef.current?.select();
     if (focusField === 'target') targetRef.current?.focus();
   }, [focusField, item?.id]);
+  useEffect(() => {
+    let active = true;
+    void window.api.browsers.list().then((detected) => {
+      if (!active) return;
+      setBrowsers(detected);
+      setBrowsersLoaded(true);
+    }).catch(() => {
+      if (active) setBrowsersLoaded(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   useEffect(() => {
     if (!draft || !item || JSON.stringify(draft) === JSON.stringify(item)) return;
     const timer = setTimeout(() => {
@@ -84,6 +99,10 @@ export function PropertiesPanel({
   }
 
   const patch = (changes: Partial<DeckItem>) => setDraft({ ...draft, ...changes } as DeckItem);
+  const selectedBrowser =
+    draft.kind === 'action' && draft.type === 'url' && draft.browser
+      ? browsers.find((browser) => browser.path === draft.browser?.path)
+      : undefined;
   const chooseTarget = async () => {
     if (draft.kind !== 'action') return;
     if (draft.type === 'folder') {
@@ -197,6 +216,73 @@ export function PropertiesPanel({
               <p className="script-warning">스크립트 파일입니다. 신뢰하는 파일만 등록하세요.</p>
             )}
           </>
+        )}
+        {draft.kind === 'action' && draft.type === 'url' && (
+          <div className="browser-settings">
+            <label>
+              열 브라우저
+              <select
+                value={draft.browser?.path ?? ''}
+                onChange={(event) => {
+                  const browser = browsers.find((candidate) => candidate.path === event.target.value);
+                  patch({
+                    browser: browser
+                      ? { path: browser.path, appMode: false }
+                      : undefined,
+                  } as Partial<DeckItem>);
+                }}
+              >
+                <option value="">기본 브라우저</option>
+                {browsers.map((browser) => (
+                  <option key={browser.path} value={browser.path}>{browser.name}</option>
+                ))}
+                {draft.browser && browsersLoaded && !selectedBrowser && (
+                  <option value={draft.browser.path}>찾을 수 없음 — {draft.browser.path}</option>
+                )}
+              </select>
+            </label>
+            {draft.browser && browsersLoaded && !selectedBrowser && (
+              <p className="browser-warning">지정한 브라우저를 찾을 수 없습니다. 실행할 때 기본 브라우저로 엽니다.</p>
+            )}
+            {selectedBrowser?.supportsProfiles && selectedBrowser.profiles.length > 1 && (
+              <label>
+                프로필
+                <select
+                  value={draft.browser?.profileDir ?? ''}
+                  onChange={(event) => patch({
+                    browser: draft.browser
+                      ? {
+                          ...draft.browser,
+                          profileDir: event.target.value || undefined,
+                        }
+                      : undefined,
+                  } as Partial<DeckItem>)}
+                >
+                  <option value="">브라우저 기본 프로필</option>
+                  {selectedBrowser.profiles.map((profile) => (
+                    <option key={profile.dir} value={profile.dir}>{profile.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className={!selectedBrowser?.supportsAppMode ? 'disabled-option' : ''}>
+              <input
+                type="checkbox"
+                checked={draft.browser?.appMode ?? false}
+                disabled={!selectedBrowser?.supportsAppMode}
+                onChange={(event) => patch({
+                  browser: draft.browser
+                    ? { ...draft.browser, appMode: event.target.checked }
+                    : undefined,
+                } as Partial<DeckItem>)}
+              />
+              전용 창으로 열기
+              <small>주소창과 탭이 없는 창으로 열립니다</small>
+            </label>
+            {selectedBrowser && !selectedBrowser.supportsAppMode && (
+              <p className="browser-note">이 브라우저는 프로필과 전용 창을 지원하지 않습니다.</p>
+            )}
+          </div>
         )}
         {draft.kind === 'action' && (
           <label className="property-hotkey">

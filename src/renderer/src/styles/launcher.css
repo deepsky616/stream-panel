@@ -1,0 +1,157 @@
+:root,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.launcher {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 35%);
+  backdrop-filter: blur(24px);
+}
+
+.launcher-search {
+  display: flex;
+  align-items: center;
+  height: 64px;
+  padding: 0 18px;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 24px;
+}
+
+.launcher-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  color: var(--text);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  caret-color: var(--accent);
+  font: inherit;
+  font-size: 18px;
+}
+
+.launcher-search input::placeholder {
+  color: var(--text-dim);
+}
+
+.launcher-results {
+  display: flex;
+  flex-direction: column;
+}
+
+.launcher-result {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px 28px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  height: 56px;
+  padding: 0 16px;
+  gap: 12px;
+  color: var(--text);
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.launcher-result.selected {
+  background: var(--tile-hover);
+}
+
+.launcher-result.selected::before {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  content: '';
+}
+
+.launcher-hint {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.launcher-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  font-size: 21px;
+}
+
+.launcher-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.launcher-label {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launcher-label strong {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.launcher-breadcrumb {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launcher-message {
+  display: grid;
+  height: 56px;
+  padding: 0 18px;
+  place-items: center start;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.launcher-message.error {
+  color: #ff8b8b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+  }
+}

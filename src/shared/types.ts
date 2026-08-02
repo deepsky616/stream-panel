@@ -21,6 +21,29 @@ export interface ActionItem extends DeckItemBase {
   target: string;
   args: string[];
   workingDir?: string;
+  browser?: BrowserSpec;
+}
+
+export interface BrowserSpec {
+  path: string;
+  profileDir?: string;
+  appMode: boolean;
+}
+
+export interface BrowserProfile {
+  dir: string;
+  name: string;
+}
+
+export interface DetectedBrowser {
+  id: 'chrome' | 'edge' | 'whale' | 'firefox' | 'safari';
+  name: string;
+  path: string;
+  family: 'chromium' | 'firefox' | 'safari';
+  supportsAppMode: boolean;
+  supportsProfiles: boolean;
+  profiles: BrowserProfile[];
+  iconDataUrl?: string;
 }
 
 export interface FolderItem extends DeckItemBase {
@@ -64,6 +87,8 @@ export interface KeyboardConfig {
   hideAfterHotkeyLaunch: boolean;
   globalNumberHotkeys: boolean;
   globalNumberModifier: string;
+  quickLauncher: boolean;
+  quickLauncherHotkey: string;
 }
 
 export interface AppConfig {
@@ -103,3 +128,13 @@ export type LibraryEntry =
 export type LaunchResult =
   | { ok: true }
   | { ok: false; code: 'NOT_FOUND' | 'BLOCKED' | 'FAILED'; message: string };
+
+export interface LauncherResult {
+  id: string;
+  label: string;
+  type: ActionType;
+  breadcrumb: string;
+  iconDataUrl?: string;
+  hint?: string;
+  matchRanges: [number, number][];
+}

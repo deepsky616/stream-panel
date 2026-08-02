@@ -38,8 +38,10 @@ export const DEFAULT_KEYBOARD = {
   quickHints: 'on-focus',
   hintKeys: DEFAULT_HINT_KEYS,
   hideAfterHotkeyLaunch: true,
-  globalNumberHotkeys: false,
-  globalNumberModifier: 'CommandOrControl+Alt',
+  globalNumberHotkeys: true,
+  globalNumberModifier: 'Alt+Shift',
+  quickLauncher: true,
+  quickLauncherHotkey: 'CommandOrControl+Alt+Space',
 } as const;
 
 function getRuntimePlatform(): string {
@@ -104,7 +106,10 @@ export function createDefaultConfig(
     grid: { ...DEFAULT_GRID },
     window: { ...DEFAULT_WINDOW },
     behavior: { ...DEFAULT_BEHAVIOR },
-    keyboard: { ...DEFAULT_KEYBOARD },
+    keyboard: {
+      ...DEFAULT_KEYBOARD,
+      globalNumberModifier: configPlatform === 'darwin' ? 'Control+Alt' : 'Alt+Shift',
+    },
     theme: 'system',
     hotkey: 'CommandOrControl+Alt+D',
     launchAtLogin: false,

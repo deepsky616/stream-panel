@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { formatAccelerator, normalizeAccelerator } from '../../../shared/accelerator';
+import {
+  formatAccelerator,
+  formatNumberModifier,
+  normalizeAccelerator,
+} from '../../../shared/accelerator';
+import { searchDeckItems } from '../../../shared/search';
 import type { AppConfig, DeckItem } from '../../../shared/types';
 
 type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'about';
@@ -33,6 +38,26 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
   const [hotkeyStatuses, setHotkeyStatuses] = useState<Record<string, string>>({});
   const dialogRef = useRef<HTMLDivElement>(null);
   const hotkeys = useMemo(() => collectHotkeys(config.root), [config.root]);
+  const numberPreview = useMemo(() => {
+    const mapped = new Map(
+      searchDeckItems(config.root, '', config.grid).map((result) => [result.hint, result]),
+    );
+    return Array.from({ length: 10 }, (_, index) => {
+      const key = index === 9 ? '0' : String(index + 1);
+      const rootItem = config.root.find((item) => item.position === index);
+      return {
+        key,
+        ordinal: index + 1,
+        label: mapped.get(key)?.label ??
+          (rootItem?.kind === 'folder'
+            ? `${rootItem.label} — 실행용 폴더가 아님`
+            : rootItem
+              ? `${rootItem.label} — 현재 맨 앞 화면 밖`
+              : '연결된 항목 없음'),
+        active: mapped.has(key),
+      };
+    });
+  }, [config.grid, config.root]);
 
   useEffect(() => {
     if (!open) return;
@@ -146,9 +171,9 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
     setConfig({ grid: next });
     void window.api.window.relayout();
   };
-  const captureHotkey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const readCapturedHotkey = (event: React.KeyboardEvent<HTMLInputElement>): string | null => {
     event.preventDefault();
-    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return;
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return null;
     const modifiers = [
       event.ctrlKey || event.metaKey ? 'CommandOrControl' : '',
       event.altKey ? 'Alt' : '',
@@ -156,11 +181,22 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
     ].filter(Boolean);
     if (!modifiers.length) {
       setMessage('수식키와 일반 키를 함께 눌러 주세요.');
-      return;
+      return null;
     }
     const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
-    setConfig({ hotkey: normalizeAccelerator([...modifiers, key].join('+')) });
+    return normalizeAccelerator([...modifiers, key].join('+'));
+  };
+  const captureHotkey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const accelerator = readCapturedHotkey(event);
+    if (!accelerator) return;
+    setConfig({ hotkey: accelerator });
     setMessage('단축키 등록 결과를 확인하는 중입니다. 충돌하면 이전 값으로 돌아갑니다.');
+  };
+  const captureLauncherHotkey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const accelerator = readCapturedHotkey(event);
+    if (!accelerator) return;
+    setKeyboard({ quickLauncherHotkey: accelerator });
+    setMessage('퀵 런처 단축키 등록 결과를 확인하는 중입니다. 충돌하면 이전 값으로 돌아갑니다.');
   };
   const toggleNumberHotkeys = async (enabled: boolean) => {
     if (!enabled) {
@@ -251,10 +287,28 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                 <label>힌트 배지<select value={config.keyboard.quickHints} onChange={(event) => setKeyboard({ quickHints: event.target.value as AppConfig['keyboard']['quickHints'] })}><option value="on-focus">패널에 초점이 있을 때</option><option value="always">항상 표시</option><option value="never">숨김</option></select></label>
                 <label><input type="checkbox" checked={config.keyboard.hideAfterHotkeyLaunch} onChange={(event) => setKeyboard({ hideAfterHotkeyLaunch: event.target.checked })} />힌트 키 실행 후 패널 숨기기</label>
                 <label>힌트 문자<input value={config.keyboard.hintKeys} onChange={(event) => setKeyboard({ hintKeys: event.target.value })} /></label>
+                <label className="settings-field-column">퀵 런처
+                  <span><input type="checkbox" checked={config.keyboard.quickLauncher} onChange={(event) => setKeyboard({ quickLauncher: event.target.checked })} />어디서든 이름을 검색해 실행</span>
+                  <input className="hotkey-input" value={formatAccelerator(config.keyboard.quickLauncherHotkey, config.platform)} readOnly disabled={!config.keyboard.quickLauncher} onKeyDown={captureLauncherHotkey} aria-label="퀵 런처 단축키 입력" />
+                  <small>한글 초성으로도 검색할 수 있습니다. 예: ㄱㅂ으로 개발 찾기</small>
+                </label>
                 <label><input type="checkbox" checked={config.keyboard.globalNumberHotkeys} onChange={(event) => void toggleNumberHotkeys(event.target.checked)} />전역 숫자 단축키</label>
-                <label>숫자 수식키<select value={config.keyboard.globalNumberModifier} onChange={(event) => setKeyboard({ globalNumberModifier: event.target.value })}><option value="CommandOrControl+Alt">기본 수식키와 Alt</option><option value="CommandOrControl+Shift">기본 수식키와 Shift</option><option value="Alt+Shift">Alt와 Shift</option><option value="Super+Alt">운영체제 키와 Alt</option></select></label>
-                <small>전역 숫자는 현재 패널에서 보고 있는 페이지의 앞쪽 열 개 키에 연결됩니다.</small>
+                <label>숫자 수식키<select value={config.keyboard.globalNumberModifier} onChange={(event) => setKeyboard({ globalNumberModifier: event.target.value })}>
+                  {config.platform === 'darwin' && <option value="Control+Alt">Ctrl+Option — 기본</option>}
+                  <option value="Alt+Shift">Alt+Shift{config.platform === 'win32' ? ' — 기본' : ''}</option>
+                  <option value="CommandOrControl+Alt">{config.platform === 'darwin' ? 'Command+Option' : 'Ctrl+Alt'}</option>
+                  <option value="CommandOrControl+Shift">{config.platform === 'darwin' ? 'Command+Shift' : 'Ctrl+Shift'}</option>
+                  {config.platform === 'win32' && <option value="Super+Alt">Win+Alt</option>}
+                </select></label>
+                <small>{formatNumberModifier(config.keyboard.globalNumberModifier, config.platform)}와 숫자를 누르면 맨 앞 페이지의 첫 열 개 위치를 실행합니다. 자주 쓰는 항목을 앞쪽에 배치하세요.</small>
                 {failedNumbers.length > 0 && <p className="field-error">등록하지 못한 번호: {failedNumbers.join(', ')}</p>}
+                <ol className="number-preview" aria-label="전역 숫자 단축키 미리보기">
+                  {numberPreview.map(({ key, ordinal, label, active }) => (
+                    <li key={key} className={active ? '' : 'inactive'}>
+                      <kbd>{key}</kbd><span>{ordinal}번</span><strong>{label}</strong>
+                    </li>
+                  ))}
+                </ol>
                 <h3>키별 전역 단축키</h3>
                 {hotkeys.length === 0 ? <p className="empty-hotkeys">등록된 키별 단축키가 없습니다.</p> : (
                   <table className="hotkey-table"><thead><tr><th>키</th><th>단축키</th><th>상태</th><th></th></tr></thead><tbody>{hotkeys.map(({ path, item }) => { const status = hotkeyStatuses[item.id] ?? '확인 중'; const ok = status === '등록됨'; return <tr key={item.id}><td>{item.label}</td><td>{formatAccelerator(item.globalHotkey!, config.platform)}</td><td><span className={ok ? 'hotkey-ok' : 'field-error'}>{status}</span></td><td><button type="button" onClick={() => void window.api.deck.upsert({ path, item: { ...item, globalHotkey: undefined } })}>해제</button></td></tr>; })}</tbody></table>

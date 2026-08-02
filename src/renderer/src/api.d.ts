@@ -3,7 +3,9 @@ import type {
   ActionType,
   AppConfig,
   DeckItem,
+  DetectedBrowser,
   InstalledApp,
+  LauncherResult,
   LaunchResult,
 } from '../../shared/types';
 import type { RendererEvent } from '../../shared/ipcChannels';
@@ -42,6 +44,7 @@ interface StreamPanelApi {
     importPath(path: string): Promise<string | null>;
   };
   apps: { list(input?: { refresh?: boolean }): Promise<InstalledApp[]> };
+  browsers: { list(input?: { refresh?: boolean }): Promise<DetectedBrowser[]> };
   drop: {
     classify(input: { paths: string[]; text?: string }): Promise<Partial<ActionItem>[]>;
     getPathForFile(file: File): string;
@@ -58,6 +61,12 @@ interface StreamPanelApi {
       accelerator: string;
       itemId?: string;
     }): Promise<{ ok: true } | { ok: false; reason: string }>;
+  };
+  launcher: {
+    query(input: { text: string }): Promise<LauncherResult[]>;
+    run(input: { id: string }): Promise<LaunchResult>;
+    close(): Promise<void>;
+    resize(input: { height: number }): Promise<void>;
   };
   update: { check(): Promise<{ status: string; version?: string }> };
   app: { info(): Promise<{ version: string; platform: string; isPackaged: boolean }> };

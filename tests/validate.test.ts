@@ -1,13 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionItem, DeckItem } from '../src/shared/types';
+import { createDefaultConfig } from '../src/shared/defaults';
 import {
   validateActionTarget,
+  validateAppConfig,
   validateDeck,
   validateDeckItemShallow,
   validateGlobalHotkey,
   validatePathTarget,
   validateUrl,
 } from '../src/main/security/validate';
+import {
+  assertLauncherQueryInput,
+  assertLauncherResizeInput,
+  assertLauncherRunInput,
+  assertNoInput,
+  assertBrowsersListInput,
+} from '../src/main/security/inputValidation';
 import {
   getExecutableDialogOptions,
   resolveExecutableSelection,
@@ -104,6 +113,34 @@ describe('security validation', () => {
     expect(() => validateDeckItemShallow(action({ color: 'red' }))).toThrow(/색상/);
   });
 
+  it('accepts only safe browser paths and generated-profile settings on URL actions', () => {
+    const selectedBrowser = {
+      path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      profileDir: 'Profile 1',
+      appMode: true,
+    };
+    expect(() =>
+      validateActionTarget(action({ browser: selectedBrowser }), 'win32'),
+    ).not.toThrow();
+    expect(() =>
+      validateActionTarget(
+        action({ browser: { ...selectedBrowser, path: 'chrome.exe' } }),
+        'win32',
+      ),
+    ).toThrow(/브라우저/);
+    expect(() =>
+      validateActionTarget(
+        action({ browser: { ...selectedBrowser, profileDir: '../Default' } }),
+        'win32',
+      ),
+    ).toThrow(/프로필/);
+    expect(() =>
+      validateDeckItemShallow(
+        action({ type: 'file', target: '/tmp/page.html', browser: selectedBrowser }),
+      ),
+    ).toThrow(/웹사이트/);
+  });
+
   it('enforces layer, depth, and total item limits', () => {
     const layer = Array.from({ length: 121 }, (_, index) => action({ id: `id-${index}`, position: index }));
     expect(() => validateDeck(layer)).toThrow(/120/);
@@ -155,6 +192,49 @@ describe('security validation', () => {
       ok: true,
       accelerator: 'CommandOrControl+Alt+G',
     });
+  });
+
+  it('accepts platform number defaults and rejects unsafe quick-launcher settings', () => {
+    const paths = { downloads: '/tmp/Downloads', documents: '/tmp/Documents' };
+    const mac = createDefaultConfig(paths, () => crypto.randomUUID(), 'darwin');
+    const windows = createDefaultConfig(paths, () => crypto.randomUUID(), 'win32');
+
+    expect(() => validateAppConfig(mac)).not.toThrow();
+    expect(() => validateAppConfig(windows)).not.toThrow();
+    expect(() =>
+      validateAppConfig({
+        ...mac,
+        keyboard: {
+          ...mac.keyboard,
+          quickLauncherHotkey: 'CommandOrControl+Alt+1',
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateAppConfig({
+        ...mac,
+        keyboard: { ...mac.keyboard, quickLauncherHotkey: 'Space' },
+      }),
+    ).toThrow(/퀵 런처/);
+    expect(() =>
+      validateAppConfig({
+        ...mac,
+        keyboard: { ...mac.keyboard, quickLauncher: 'yes' as unknown as boolean },
+      }),
+    ).toThrow(/키보드/);
+  });
+
+  it('validates every quick-launcher IPC payload and rejects extra fields', () => {
+    expect(() => assertLauncherQueryInput({ text: '개발' })).not.toThrow();
+    expect(() => assertLauncherQueryInput({ text: '가'.repeat(121) })).toThrow(/검색어/);
+    expect(() => assertLauncherRunInput({ id: 'action-id' })).not.toThrow();
+    expect(() => assertLauncherRunInput({ id: 'action-id', path: [] })).toThrow(/항목/);
+    expect(() => assertLauncherResizeInput({ height: 512 })).not.toThrow();
+    expect(() => assertLauncherResizeInput({ height: 513 })).toThrow(/높이/);
+    expect(() => assertNoInput(undefined)).not.toThrow();
+    expect(() => assertNoInput({})).toThrow(/입력/);
+    expect(() => assertBrowsersListInput({ refresh: true })).not.toThrow();
+    expect(() => assertBrowsersListInput({ refresh: 'yes' })).toThrow(/브라우저/);
   });
 });
 

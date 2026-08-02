@@ -11,6 +11,7 @@ import { setAutoLaunch } from './services/autoLaunch';
 import { configureUpdater } from './services/updater';
 import { openEditorWindow } from './windows/editorWindow';
 import { PLATFORM } from './platform';
+import { setLauncherEnabled } from './windows/launcherWindow';
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
@@ -47,12 +48,14 @@ app.whenReady().then(() => {
   registerIpcHandlers(configStore);
   void cleanupOrphanIcons(configStore.get().root, app.getPath('userData'));
   createPanelWindow(configStore);
+  setLauncherEnabled(configStore.get().keyboard.quickLauncher);
   if (process.argv.includes('--editor')) openEditorWindow();
   createTray();
   registerShortcuts(configStore);
   const updater = configureUpdater(configStore);
   ipcMain.handle(IPC_CHANNELS.UPDATE_CHECK, () => updater.check());
   let launchAtLogin = configStore.get().launchAtLogin;
+  let quickLauncherEnabled = configStore.get().keyboard.quickLauncher;
   setAutoLaunch(launchAtLogin);
   configStore.onDidChange((config) => {
     applyPanelLayout(config);
@@ -62,6 +65,10 @@ app.whenReady().then(() => {
     if (config.launchAtLogin !== launchAtLogin) {
       launchAtLogin = config.launchAtLogin;
       setAutoLaunch(launchAtLogin);
+    }
+    if (config.keyboard.quickLauncher !== quickLauncherEnabled) {
+      quickLauncherEnabled = config.keyboard.quickLauncher;
+      setLauncherEnabled(quickLauncherEnabled);
     }
   });
   app.on('second-instance', () => showPanel());

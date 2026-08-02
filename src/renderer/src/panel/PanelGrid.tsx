@@ -27,6 +27,7 @@ interface PanelGridProps {
   onContextItem: (event: React.MouseEvent, item: DeckItem) => void;
   onContextEmpty: (event: React.MouseEvent, position: number) => void;
   showHints: boolean;
+  hintMuted?: boolean;
 }
 
 function PanelItem({
@@ -35,6 +36,7 @@ function PanelItem({
   locked,
   failed,
   hint,
+  hintMuted,
   onClick,
   onContextMenu,
 }: {
@@ -45,6 +47,7 @@ function PanelItem({
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onContextMenu: (event: React.MouseEvent) => void;
   hint?: string;
+  hintMuted?: boolean;
 }) {
   const drag = useDraggable({ id: `panel-item:${item.id}`, data: { id: item.id }, disabled: locked });
   const drop = useDroppable({ id: `panel-target:${item.id}`, data: { position: item.position }, disabled: locked });
@@ -62,7 +65,7 @@ function PanelItem({
       {...drag.attributes}
       {...drag.listeners}
     >
-      <KeyTile item={item} buttonSize={size} onClick={onClick} failed={failed} hint={hint} />
+      <KeyTile item={item} buttonSize={size} onClick={onClick} failed={failed} hint={hint} hintMuted={hintMuted} />
     </div>
   );
 }
@@ -107,6 +110,7 @@ export function PanelGrid({
   onContextItem,
   onContextEmpty,
   showHints,
+  hintMuted = false,
 }: PanelGridProps) {
   const slots = getPageSlots(items, config.grid, page, path.length > 0);
   const hints = new Map(
@@ -180,6 +184,7 @@ export function PanelGrid({
               locked={config.window.locked}
               failed={failedId === slot.item.id}
               hint={showHints ? hints.get(slot.item.id) : undefined}
+              hintMuted={hintMuted}
               onClick={(event) => void onClick(event.shiftKey)}
               onContextMenu={(event) => onContextItem(event, slot.item)}
             />

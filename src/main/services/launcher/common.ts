@@ -10,6 +10,8 @@ export interface LauncherDependencies {
     args: readonly string[],
     options: SpawnOptions,
   ) => Pick<ChildProcess, 'unref'>;
+  resolveMacBundleExecutable: (bundlePath: string) => Promise<string | null>;
+  notifyWarning: (message: string) => void;
 }
 
 export function launchFailure(

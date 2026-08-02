@@ -118,7 +118,11 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
       typeof keyboard.globalNumberHotkeys !== 'boolean' ||
       typeof keyboard.globalNumberModifier !== 'string' ||
       keyboard.globalNumberModifier.length < 1 ||
-      keyboard.globalNumberModifier.length > 80
+      keyboard.globalNumberModifier.length > 80 ||
+      typeof keyboard.quickLauncher !== 'boolean' ||
+      typeof keyboard.quickLauncherHotkey !== 'string' ||
+      keyboard.quickLauncherHotkey.length < 1 ||
+      keyboard.quickLauncherHotkey.length > 80
     ) {
       throw new TypeError('키보드 설정이 올바르지 않습니다. 힌트 문자는 중복 없이 입력해 주세요.');
     }
@@ -235,6 +239,16 @@ export function assertAppsListInput(value: unknown): asserts value is { refresh?
   }
 }
 
+export function assertBrowsersListInput(value: unknown): asserts value is { refresh?: boolean } {
+  assertRecord(value, '브라우저 목록');
+  if (
+    Object.keys(value).some((key) => key !== 'refresh') ||
+    ('refresh' in value && typeof value.refresh !== 'boolean')
+  ) {
+    throw new TypeError('브라우저 목록 새로고침 값이 올바르지 않습니다. 다시 시도해 주세요.');
+  }
+}
+
 export function assertIconResolveInput(
   value: unknown,
 ): asserts value is { type: 'url' | 'folder' | 'file' | 'app' | 'uwp'; target: string } {
@@ -287,4 +301,49 @@ export function assertHotkeyValidateInput(
   ) {
     throw new TypeError('전역 단축키 입력이 올바르지 않습니다. 키 조합을 다시 입력해 주세요.');
   }
+}
+
+export function assertLauncherQueryInput(
+  value: unknown,
+): asserts value is { text: string } {
+  assertRecord(value, '퀵 런처 검색');
+  if (
+    Object.keys(value).some((key) => key !== 'text') ||
+    typeof value.text !== 'string' ||
+    value.text.length > 120
+  ) {
+    throw new TypeError('퀵 런처 검색어가 올바르지 않습니다. 120자 이내로 입력해 주세요.');
+  }
+}
+
+export function assertLauncherRunInput(
+  value: unknown,
+): asserts value is { id: string } {
+  assertRecord(value, '퀵 런처 항목');
+  if (
+    Object.keys(value).some((key) => key !== 'id') ||
+    typeof value.id !== 'string' ||
+    value.id.length < 1 ||
+    value.id.length > 100
+  ) {
+    throw new TypeError('퀵 런처 실행 항목이 올바르지 않습니다. 목록을 다시 열어 주세요.');
+  }
+}
+
+export function assertLauncherResizeInput(
+  value: unknown,
+): asserts value is { height: number } {
+  assertRecord(value, '퀵 런처 높이');
+  if (
+    Object.keys(value).some((key) => key !== 'height') ||
+    !Number.isInteger(value.height) ||
+    Number(value.height) < 64 ||
+    Number(value.height) > 512
+  ) {
+    throw new TypeError('퀵 런처 높이가 올바르지 않습니다. 창을 다시 열어 주세요.');
+  }
+}
+
+export function assertNoInput(value: unknown): asserts value is undefined {
+  if (value !== undefined) throw new TypeError('이 동작에는 입력값을 보낼 수 없습니다.');
 }

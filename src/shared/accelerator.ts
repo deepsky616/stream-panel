@@ -24,6 +24,35 @@ export function normalizeAccelerator(accelerator: string): string {
     .join('+');
 }
 
+export function buildNumberAccelerators(modifier: string): string[] {
+  const normalizedModifier = modifier
+    .split('+')
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .join('+');
+  return Array.from(
+    { length: 10 },
+    (_, index) => `${normalizedModifier}+${index === 9 ? 0 : index + 1}`,
+  );
+}
+
+export function formatNumberModifier(
+  modifier: string,
+  platform: AppConfig['platform'],
+): string {
+  const tokens = modifier.split('+').map((token) => token.trim()).filter(Boolean);
+  return tokens
+    .map((token) => {
+      if (token === 'Control') return 'Ctrl';
+      if (token === 'CommandOrControl') return platform === 'darwin' ? '⌘' : 'Ctrl';
+      if (token === 'Super') return platform === 'darwin' ? '⌘' : 'Win';
+      if (token === 'Alt') return platform === 'darwin' ? '⌥' : 'Alt';
+      if (token === 'Shift') return platform === 'darwin' ? '⇧' : 'Shift';
+      return token;
+    })
+    .join('+');
+}
+
 export function formatAccelerator(
   accelerator: string,
   platform: AppConfig['platform'],

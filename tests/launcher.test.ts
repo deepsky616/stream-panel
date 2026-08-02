@@ -33,6 +33,10 @@ function dependencies(): LauncherDependencies {
     openExternal: vi.fn(async () => undefined),
     openPath: vi.fn(async () => ''),
     spawnProcess: vi.fn(() => ({ unref: vi.fn() })),
+    resolveMacBundleExecutable: vi.fn(async (bundlePath: string) =>
+      `${bundlePath}/Contents/MacOS/Browser`,
+    ),
+    notifyWarning: vi.fn(),
   };
 }
 
@@ -149,6 +153,79 @@ describe('launcher', () => {
       ok: false,
       code: 'BLOCKED',
     });
+  });
+
+  it('opens a URL in a selected Windows Chromium profile without duplicate app-mode URLs', async () => {
+    const deps = dependencies();
+    const item = action({
+      browser: {
+        path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        profileDir: 'Profile 1',
+        appMode: true,
+      },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'win32')).toEqual({ ok: true });
+    expect(deps.openExternal).not.toHaveBeenCalled();
+    expect(deps.spawnProcess).toHaveBeenCalledWith(
+      item.browser?.path,
+      ['--profile-directory=Profile 1', '--app=https://example.com'],
+      { detached: true, stdio: 'ignore' },
+    );
+    const options = vi.mocked(deps.spawnProcess).mock.calls[0]?.[2];
+    expect(options?.shell).not.toBe(true);
+  });
+
+  it('launches a selected macOS browser through its internal executable', async () => {
+    const deps = dependencies();
+    const item = action({
+      browser: {
+        path: '/Applications/Google Chrome.app',
+        profileDir: 'Default',
+        appMode: false,
+      },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'darwin')).toEqual({ ok: true });
+    expect(deps.resolveMacBundleExecutable).toHaveBeenCalledWith(item.browser?.path);
+    expect(deps.spawnProcess).toHaveBeenCalledWith(
+      '/Applications/Google Chrome.app/Contents/MacOS/Browser',
+      ['--profile-directory=Default', 'https://example.com'],
+      { detached: true, stdio: 'ignore' },
+    );
+    expect(deps.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the default browser and warns when the selected browser is missing', async () => {
+    const deps = dependencies();
+    deps.exists = vi.fn(() => false);
+    const item = action({
+      browser: { path: '/Applications/Missing.app', appMode: false },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'darwin')).toEqual({ ok: true });
+    expect(deps.openExternal).toHaveBeenCalledWith('https://example.com');
+    expect(deps.spawnProcess).not.toHaveBeenCalled();
+    expect(deps.notifyWarning).toHaveBeenCalledWith(
+      '지정한 브라우저를 찾을 수 없어 기본 브라우저로 열었습니다.',
+    );
+  });
+
+  it('falls back safely when starting the selected browser throws', async () => {
+    const deps = dependencies();
+    deps.spawnProcess = vi.fn(() => {
+      throw new Error('spawn failed');
+    });
+    const item = action({
+      browser: {
+        path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        appMode: false,
+      },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'win32')).toEqual({ ok: true });
+    expect(deps.openExternal).toHaveBeenCalledWith('https://example.com');
+    expect(deps.notifyWarning).toHaveBeenCalledOnce();
   });
 });
 

@@ -8,6 +8,7 @@ interface KeyTileProps {
   onDoubleClick?: () => void;
   failed?: boolean;
   hint?: string;
+  hintMuted?: boolean;
 }
 
 function iconText(item: DeckItem): string {
@@ -26,6 +27,7 @@ export function KeyTile({
   onDoubleClick,
   failed = false,
   hint,
+  hintMuted = false,
 }: KeyTileProps) {
   const requestType =
     item.icon.kind === 'file'
@@ -67,7 +69,7 @@ export function KeyTile({
       onDoubleClick={onDoubleClick}
       aria-label={item.kind === 'folder' ? `${item.label} 폴더 열기` : `${item.label} 실행`}
     >
-      {hint && <span className="key-hint">{hint}</span>}
+      {hint && <span className={`key-hint ${hintMuted ? 'muted' : ''}`}>{hint}</span>}
       <span className="key-icon" aria-hidden="true">
         {resolvedIcon ? <img src={resolvedIcon} alt="" /> : iconText(item)}
       </span>
