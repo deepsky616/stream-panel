@@ -13,6 +13,7 @@ export const IPC_CHANNELS = {
   PICKER_IMAGE: 'picker:image',
   ICON_IMPORT_PATH: 'icon:importPath',
   APPS_LIST: 'apps:list',
+  BROWSERS_LIST: 'browsers:list',
   ICON_RESOLVE: 'icon:resolve',
   DROP_CLASSIFY: 'drop:classify',
   WINDOW_HIDE: 'window:hide',

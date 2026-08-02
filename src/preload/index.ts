@@ -38,6 +38,10 @@ const api = {
   apps: {
     list: (input: { refresh?: boolean } = {}) => ipcRenderer.invoke(IPC_CHANNELS.APPS_LIST, input),
   },
+  browsers: {
+    list: (input: { refresh?: boolean } = {}) =>
+      ipcRenderer.invoke(IPC_CHANNELS.BROWSERS_LIST, input),
+  },
   drop: {
     classify: (input: { paths: string[]; text?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.DROP_CLASSIFY, input),

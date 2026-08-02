@@ -104,6 +104,34 @@ describe('security validation', () => {
     expect(() => validateDeckItemShallow(action({ color: 'red' }))).toThrow(/색상/);
   });
 
+  it('accepts only safe browser paths and generated-profile settings on URL actions', () => {
+    const selectedBrowser = {
+      path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      profileDir: 'Profile 1',
+      appMode: true,
+    };
+    expect(() =>
+      validateActionTarget(action({ browser: selectedBrowser }), 'win32'),
+    ).not.toThrow();
+    expect(() =>
+      validateActionTarget(
+        action({ browser: { ...selectedBrowser, path: 'chrome.exe' } }),
+        'win32',
+      ),
+    ).toThrow(/브라우저/);
+    expect(() =>
+      validateActionTarget(
+        action({ browser: { ...selectedBrowser, profileDir: '../Default' } }),
+        'win32',
+      ),
+    ).toThrow(/프로필/);
+    expect(() =>
+      validateDeckItemShallow(
+        action({ type: 'file', target: '/tmp/page.html', browser: selectedBrowser }),
+      ),
+    ).toThrow(/웹사이트/);
+  });
+
   it('enforces layer, depth, and total item limits', () => {
     const layer = Array.from({ length: 121 }, (_, index) => action({ id: `id-${index}`, position: index }));
     expect(() => validateDeck(layer)).toThrow(/120/);

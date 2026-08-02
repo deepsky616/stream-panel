@@ -21,6 +21,29 @@ export interface ActionItem extends DeckItemBase {
   target: string;
   args: string[];
   workingDir?: string;
+  browser?: BrowserSpec;
+}
+
+export interface BrowserSpec {
+  path: string;
+  profileDir?: string;
+  appMode: boolean;
+}
+
+export interface BrowserProfile {
+  dir: string;
+  name: string;
+}
+
+export interface DetectedBrowser {
+  id: 'chrome' | 'edge' | 'whale' | 'firefox' | 'safari';
+  name: string;
+  path: string;
+  family: 'chromium' | 'firefox' | 'safari';
+  supportsAppMode: boolean;
+  supportsProfiles: boolean;
+  profiles: BrowserProfile[];
+  iconDataUrl?: string;
 }
 
 export interface FolderItem extends DeckItemBase {

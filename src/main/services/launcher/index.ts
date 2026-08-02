@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { shell } from 'electron';
+import { BrowserWindow, shell } from 'electron';
+import { IPC_CHANNELS } from '../../../shared/ipcChannels';
 import type { DeckItem, LaunchResult } from '../../../shared/types';
 import { findItemAtPath, TreeError } from '../../../shared/tree';
 import { validateActionTarget, ValidationError } from '../../security/validate';
@@ -11,6 +12,8 @@ import {
 } from './common';
 import { launchMacosAction } from './macos';
 import { launchWindowsAction } from './windows';
+import { launchWindowsBrowser } from '../browserService/windows';
+import { launchMacosBrowser, resolveMacBrowserExecutable } from '../browserService/macos';
 
 export type { LauncherDependencies } from './common';
 
@@ -19,6 +22,12 @@ const defaultDependencies: LauncherDependencies = {
   openExternal: (target) => shell.openExternal(target),
   openPath: (target) => shell.openPath(target),
   spawnProcess: (command, args, options) => spawn(command, [...args], options),
+  resolveMacBundleExecutable: resolveMacBrowserExecutable,
+  notifyWarning: (message) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(IPC_CHANNELS.TOAST, { level: 'info', message });
+    }
+  },
 };
 
 export async function launchDeckItem(
@@ -62,6 +71,11 @@ export async function launchDeckItem(
   }
 
   try {
+    if (item.type === 'url' && item.browser) {
+      return platform === 'win32'
+        ? await launchWindowsBrowser(item as typeof item & { browser: NonNullable<typeof item.browser> }, dependencies)
+        : await launchMacosBrowser(item as typeof item & { browser: NonNullable<typeof item.browser> }, dependencies);
+    }
     const commonResult = await launchCommonAction(item, dependencies);
     if (commonResult) return commonResult;
     return platform === 'win32'

@@ -3,6 +3,7 @@ import type {
   ActionType,
   AppConfig,
   DeckItem,
+  DetectedBrowser,
   InstalledApp,
   LaunchResult,
 } from '../../shared/types';
@@ -42,6 +43,7 @@ interface StreamPanelApi {
     importPath(path: string): Promise<string | null>;
   };
   apps: { list(input?: { refresh?: boolean }): Promise<InstalledApp[]> };
+  browsers: { list(input?: { refresh?: boolean }): Promise<DetectedBrowser[]> };
   drop: {
     classify(input: { paths: string[]; text?: string }): Promise<Partial<ActionItem>[]>;
     getPathForFile(file: File): string;

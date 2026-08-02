@@ -7,6 +7,7 @@ import { registerDropHandlers } from './dropHandlers';
 import { registerAppHandlers } from './appHandlers';
 import { registerIconHandlers } from './iconHandlers';
 import { registerWindowHandlers } from './windowHandlers';
+import { registerBrowserHandlers } from './browserHandlers';
 
 export function registerIpcHandlers(configStore: ConfigStore): void {
   registerConfigHandlers(configStore);
@@ -15,6 +16,7 @@ export function registerIpcHandlers(configStore: ConfigStore): void {
   registerPickerHandlers();
   registerDropHandlers();
   registerAppHandlers();
+  registerBrowserHandlers();
   registerIconHandlers();
   registerWindowHandlers(configStore);
 }

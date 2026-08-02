@@ -650,6 +650,52 @@
   flex-direction: column;
 }
 
+.browser-settings {
+  display: grid;
+  padding: 10px;
+  gap: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tile) 55%, transparent);
+}
+
+.browser-settings label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.browser-settings select {
+  min-width: 220px;
+  margin-left: auto;
+  padding: 6px 8px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--tile);
+}
+
+.browser-settings small {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.browser-settings .disabled-option {
+  color: var(--text-dim);
+}
+
+.browser-warning,
+.browser-note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.browser-warning {
+  color: #ef7777;
+}
+
 .hotkey-ok {
   color: #65c88b;
   font-weight: 600;

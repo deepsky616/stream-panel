@@ -4,6 +4,7 @@ import type { Stats } from 'node:fs';
 import { normalizeAccelerator } from '../../shared/accelerator';
 import { validateHintKeys } from '../../shared/hintMap';
 import type { ActionItem, AppConfig, DeckItem, IconSpec } from '../../shared/types';
+import { isValidProfileDirectory } from '../services/browserService/flags';
 
 export interface GlobalHotkeyConflict {
   accelerator: string;
@@ -228,6 +229,40 @@ export function validateDeckItemShallow(item: DeckItem): void {
   if (item.workingDir !== undefined && typeof item.workingDir !== 'string') {
     throw new ValidationError('작업 폴더가 올바르지 않습니다.');
   }
+  if (item.browser !== undefined && item.type !== 'url') {
+    throw new ValidationError('브라우저 지정은 웹사이트 키에만 사용할 수 있습니다.');
+  }
+}
+
+function validateBrowserSpecification(
+  item: ActionItem & { browser: NonNullable<ActionItem['browser']> },
+  platform: NodeJS.Platform,
+): void {
+  const browser = item.browser;
+  if (
+    !browser ||
+    typeof browser !== 'object' ||
+    Array.isArray(browser) ||
+    Object.keys(browser).some((key) => !['path', 'profileDir', 'appMode'].includes(key)) ||
+    typeof browser.path !== 'string' ||
+    browser.path.length < 1 ||
+    browser.path.length > 2048 ||
+    typeof browser.appMode !== 'boolean' ||
+    (browser.profileDir !== undefined &&
+      (typeof browser.profileDir !== 'string' || !isValidProfileDirectory(browser.profileDir)))
+  ) {
+    throw new ValidationError('브라우저 또는 프로필 설정이 올바르지 않습니다. 목록에서 다시 선택해 주세요.');
+  }
+  try {
+    validatePathTarget(
+      { ...item, type: 'app', target: browser.path, browser: undefined },
+      { exists: () => false, stat: () => ({ isDirectory: () => false }) },
+      platform,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : '경로 형식이 올바르지 않습니다.';
+    throw new ValidationError(`브라우저 경로가 안전하지 않습니다. 목록에서 다시 선택해 주세요: ${detail}`);
+  }
 }
 
 export function validateActionTarget(
@@ -237,6 +272,12 @@ export function validateActionTarget(
   validateDeckItemShallow(item);
   if (item.type === 'url') {
     validateUrl(item.target);
+    if (item.browser) {
+      validateBrowserSpecification(
+        item as ActionItem & { browser: NonNullable<ActionItem['browser']> },
+        platform,
+      );
+    }
   } else if (item.type === 'uwp') {
     if (platform !== 'win32') {
       throw new ValidationError('이 항목은 Windows에서만 실행할 수 있습니다.');

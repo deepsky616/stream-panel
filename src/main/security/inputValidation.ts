@@ -235,6 +235,16 @@ export function assertAppsListInput(value: unknown): asserts value is { refresh?
   }
 }
 
+export function assertBrowsersListInput(value: unknown): asserts value is { refresh?: boolean } {
+  assertRecord(value, '브라우저 목록');
+  if (
+    Object.keys(value).some((key) => key !== 'refresh') ||
+    ('refresh' in value && typeof value.refresh !== 'boolean')
+  ) {
+    throw new TypeError('브라우저 목록 새로고침 값이 올바르지 않습니다. 다시 시도해 주세요.');
+  }
+}
+
 export function assertIconResolveInput(
   value: unknown,
 ): asserts value is { type: 'url' | 'folder' | 'file' | 'app' | 'uwp'; target: string } {
