@@ -10,6 +10,7 @@ import {
   hidePeekWindow,
   showPeekWindow,
 } from './peekWindow';
+import { focusWithRetry } from '../services/windowFocus';
 
 export const TITLEBAR_H = 34;
 export const FOOTER_H = 26;
@@ -189,12 +190,22 @@ export function showPanel(fromPeek = false): void {
   if (!panelWindow || panelWindow.isDestroyed()) return;
   hidePeekWindow();
   setPanelIdle(false);
-  if (PLATFORM.focusAppBeforeShow) app.focus({ steal: true });
-  panelWindow.setAlwaysOnTop(panelAlwaysOnTop, PLATFORM.alwaysOnTopLevel);
   if (fromPeek) animatePanelFromEdge(panelWindow);
-  panelWindow.show();
-  panelWindow.moveTop();
-  panelWindow.focus();
+  const window = panelWindow;
+  void focusWithRetry({
+    attempt: () => {
+      if (window.isDestroyed()) return false;
+      if (PLATFORM.focusAppBeforeShow) app.focus({ steal: true });
+      window.setAlwaysOnTop(panelAlwaysOnTop, PLATFORM.alwaysOnTopLevel);
+      window.show();
+      window.moveTop();
+      window.focus();
+      return window.isFocused();
+    },
+    onFailure: () => {
+      console.warn('패널이 키보드 포커스를 받지 못했습니다. 패널을 클릭하면 힌트 키를 사용할 수 있습니다.');
+    },
+  });
   panelWindow.webContents.send(IPC_CHANNELS.PANEL_VISIBILITY, true);
 }
 

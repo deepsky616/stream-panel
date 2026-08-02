@@ -61,6 +61,13 @@ const api = {
     validate: (input: { accelerator: string; itemId?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.HOTKEY_VALIDATE, input),
   },
+  launcher: {
+    query: (input: { text: string }) => ipcRenderer.invoke(IPC_CHANNELS.LAUNCHER_QUERY, input),
+    run: (input: { id: string }) => ipcRenderer.invoke(IPC_CHANNELS.LAUNCHER_RUN, input),
+    close: () => ipcRenderer.invoke(IPC_CHANNELS.LAUNCHER_CLOSE),
+    resize: (input: { height: number }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.LAUNCHER_RESIZE, input),
+  },
   update: {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
   },

@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { extname, isAbsolute, normalize, win32 } from 'node:path';
 import type { Stats } from 'node:fs';
-import { normalizeAccelerator } from '../../shared/accelerator';
+import { buildNumberAccelerators, normalizeAccelerator } from '../../shared/accelerator';
 import { validateHintKeys } from '../../shared/hintMap';
 import type { ActionItem, AppConfig, DeckItem, IconSpec } from '../../shared/types';
 import { isValidProfileDirectory } from '../services/browserService/flags';
@@ -413,13 +413,18 @@ export function validateAppConfig(config: AppConfig): void {
     typeof config.keyboard.globalNumberHotkeys !== 'boolean' ||
     typeof config.keyboard.globalNumberModifier !== 'string' ||
     config.keyboard.globalNumberModifier.length < 1 ||
-    config.keyboard.globalNumberModifier.length > 80
+    config.keyboard.globalNumberModifier.length > 80 ||
+    typeof config.keyboard.quickLauncher !== 'boolean' ||
+    typeof config.keyboard.quickLauncherHotkey !== 'string' ||
+    config.keyboard.quickLauncherHotkey.length < 1 ||
+    config.keyboard.quickLauncherHotkey.length > 80
   ) {
     throw new ValidationError('키보드 설정이 올바르지 않습니다. 힌트 문자는 중복 없이 입력해 주세요.');
   }
-  const numberModifier = normalizeAccelerator(config.keyboard.globalNumberModifier);
+  const numberModifier = config.keyboard.globalNumberModifier;
   if (
     ![
+      'Control+Alt',
       'CommandOrControl+Alt',
       'CommandOrControl+Shift',
       'Alt+Shift',
@@ -427,6 +432,19 @@ export function validateAppConfig(config: AppConfig): void {
     ].includes(numberModifier)
   ) {
     throw new ValidationError('전역 숫자 단축키의 수식키 조합을 다시 선택해 주세요.');
+  }
+  const quickLauncherValidation = validateGlobalHotkey(config.keyboard.quickLauncherHotkey, {
+    reserved: [
+      config.hotkey,
+      ...(config.keyboard.globalNumberHotkeys
+        ? config.platform === 'darwin' && numberModifier === 'Control+Alt'
+          ? []
+          : buildNumberAccelerators(numberModifier)
+        : []),
+    ],
+  });
+  if (!quickLauncherValidation.ok) {
+    throw new ValidationError(`퀵 런처 단축키가 올바르지 않습니다. ${quickLauncherValidation.reason}`);
   }
   validateDeck(config.root, config.platform);
   const itemHotkeys: GlobalHotkeyConflict[] = [];
@@ -438,11 +456,11 @@ export function validateAppConfig(config: AppConfig): void {
           conflicts: itemHotkeys,
           reserved: [
             config.hotkey,
+            config.keyboard.quickLauncherHotkey,
             ...(config.keyboard.globalNumberHotkeys
-              ? Array.from(
-                  { length: 10 },
-                  (_, index) => `${numberModifier}+${index === 9 ? 0 : index + 1}`,
-                )
+              ? config.platform === 'darwin' && numberModifier === 'Control+Alt'
+                ? []
+                : buildNumberAccelerators(numberModifier)
               : []),
           ],
           assignedCount: itemHotkeys.length,

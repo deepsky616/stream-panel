@@ -83,7 +83,7 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
       ...defaultConfig.keyboard,
       ...keyboard,
       hintKeys: normalizeHintKeys(hintKeys),
-      globalNumberModifier: normalizeAccelerator(globalNumberModifier),
+      globalNumberModifier,
     },
     hotkey: normalizeAccelerator(
       typeof parsed.hotkey === 'string' ? parsed.hotkey : defaultConfig.hotkey,

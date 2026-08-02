@@ -87,6 +87,8 @@ export interface KeyboardConfig {
   hideAfterHotkeyLaunch: boolean;
   globalNumberHotkeys: boolean;
   globalNumberModifier: string;
+  quickLauncher: boolean;
+  quickLauncherHotkey: string;
 }
 
 export interface AppConfig {

@@ -23,6 +23,7 @@ export default defineConfig({
           index: resolve('src/renderer/index.html'),
           editor: resolve('src/renderer/editor.html'),
           peek: resolve('src/renderer/peek.html'),
+          launcher: resolve('src/renderer/launcher.html'),
         },
       },
     },

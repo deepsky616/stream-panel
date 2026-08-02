@@ -55,6 +55,13 @@ describe('store migration', () => {
     expect(result.config.root).toHaveLength(3);
     expect(result.config.platform).toBe('darwin');
     expect(result.config.behavior).toMatchObject({ hideAfterLaunch: true, edgePeek: true });
+    expect(result.config.keyboard).toMatchObject({
+      hintKeys: expect.any(String),
+      globalNumberHotkeys: true,
+      globalNumberModifier: 'Control+Alt',
+      quickLauncher: true,
+      quickLauncherHotkey: 'CommandOrControl+Alt+Space',
+    });
     expect(result.config.keyboard.hintKeys).toHaveLength(40);
     expect(result.config.hotkey).toBe('CommandOrControl+Alt+D');
   });
@@ -78,7 +85,12 @@ describe('platform defaults', () => {
 
     expect(config.platform).toBe('darwin');
     expect(config.hotkey).toBe('CommandOrControl+Alt+D');
-    expect(config.keyboard.globalNumberModifier).toBe('CommandOrControl+Alt');
+    expect(config.keyboard).toMatchObject({
+      globalNumberHotkeys: true,
+      globalNumberModifier: 'Control+Alt',
+      quickLauncher: true,
+      quickLauncherHotkey: 'CommandOrControl+Alt+Space',
+    });
     expect(config.behavior).toMatchObject({
       hideAfterLaunch: true,
       edgePeek: true,
@@ -96,6 +108,12 @@ describe('platform defaults', () => {
     );
 
     expect(config.platform).toBe('win32');
+    expect(config.keyboard).toMatchObject({
+      globalNumberHotkeys: true,
+      globalNumberModifier: 'Alt+Shift',
+      quickLauncher: true,
+      quickLauncherHotkey: 'CommandOrControl+Alt+Space',
+    });
     expect(config.autoUpdate).toBe(true);
   });
 });
