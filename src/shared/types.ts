@@ -103,3 +103,13 @@ export type LibraryEntry =
 export type LaunchResult =
   | { ok: true }
   | { ok: false; code: 'NOT_FOUND' | 'BLOCKED' | 'FAILED'; message: string };
+
+export interface LauncherResult {
+  id: string;
+  label: string;
+  type: ActionType;
+  breadcrumb: string;
+  iconDataUrl?: string;
+  hint?: string;
+  matchRanges: [number, number][];
+}
