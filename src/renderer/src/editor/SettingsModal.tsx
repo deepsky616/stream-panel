@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   formatAccelerator,
   formatNumberModifier,
   normalizeAccelerator,
 } from '../../../shared/accelerator';
 import { searchDeckItems } from '../../../shared/search';
-import type { AppConfig, DeckItem } from '../../../shared/types';
+import type { AppConfig, DeckItem, WebConnectorStatus } from '../../../shared/types';
 
-type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'about';
+type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'web-work' | 'about';
 
 interface SettingsModalProps {
   open: boolean;
@@ -36,6 +36,8 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
   const [updateReady, setUpdateReady] = useState<string | null>(null);
   const [failedNumbers, setFailedNumbers] = useState<string[]>([]);
   const [hotkeyStatuses, setHotkeyStatuses] = useState<Record<string, string>>({});
+  const [connectorStatuses, setConnectorStatuses] = useState<WebConnectorStatus[]>([]);
+  const [connectorBusy, setConnectorBusy] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const hotkeys = useMemo(() => collectHotkeys(config.root), [config.root]);
   const numberPreview = useMemo(() => {
@@ -95,6 +97,17 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
       active = false;
     };
   }, [config.keyboard.globalNumberHotkeys, config.keyboard.globalNumberModifier, hotkeys, open]);
+
+  const refreshConnectorStatuses = useCallback(() =>
+    window.api.webConnector.status().then(setConnectorStatuses).catch(() => {
+      setConnectorStatuses([]);
+      setMessage('웹 업무 연결 상태를 읽지 못했습니다. 스트림 패널을 다시 시작해 주세요.');
+    }), []);
+
+  useEffect(() => {
+    if (!open || tab !== 'web-work') return;
+    void refreshConnectorStatuses();
+  }, [open, refreshConnectorStatuses, tab]);
 
   useEffect(() => {
     if (!open) return;
@@ -214,6 +227,43 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
     setFailedNumbers(failures);
     setKeyboard({ globalNumberHotkeys: true });
   };
+  const openConnectorSetup = async (
+    browserId: 'chrome' | 'edge',
+    target: 'pair' | 'folder' | 'extensions',
+  ) => {
+    const busyKey = `${browserId}:${target}`;
+    setConnectorBusy(busyKey);
+    setMessage(null);
+    try {
+      const result = await window.api.webConnector.openSetup({ browserId, target });
+      setMessage(
+        result.ok
+          ? target === 'folder'
+            ? '확장 기능 폴더를 열었습니다. 브라우저의 확장 관리 화면에서 이 폴더를 불러오세요.'
+            : target === 'extensions'
+              ? '브라우저 확장 관리 화면을 열었습니다.'
+              : '브라우저 연결 페이지를 열었습니다.'
+          : result.message,
+      );
+    } finally {
+      setConnectorBusy(null);
+    }
+  };
+  const testConnector = async (browserId: 'chrome' | 'edge') => {
+    setConnectorBusy(`${browserId}:test`);
+    setMessage('브라우저 연결 페이지를 열었습니다. 연결 결과를 확인하고 있습니다.');
+    try {
+      const result = await window.api.webConnector.test({ browserId });
+      setMessage(
+        result.ok
+          ? `${browserId === 'edge' ? '엣지' : '크롬'} 연결을 확인했습니다.`
+          : result.message,
+      );
+      await refreshConnectorStatuses();
+    } finally {
+      setConnectorBusy(null);
+    }
+  };
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -229,6 +279,7 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
               ['appearance', '모양'],
               ['behavior', '동작'],
               ['shortcut', '단축키'],
+              ['web-work', '웹 업무 연결'],
               ['about', '정보'],
             ] as Array<[SettingsTab, string]>).map(([value, label]) => (
               <button
@@ -313,6 +364,70 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                 {hotkeys.length === 0 ? <p className="empty-hotkeys">등록된 키별 단축키가 없습니다.</p> : (
                   <table className="hotkey-table"><thead><tr><th>키</th><th>단축키</th><th>상태</th><th></th></tr></thead><tbody>{hotkeys.map(({ path, item }) => { const status = hotkeyStatuses[item.id] ?? '확인 중'; const ok = status === '등록됨'; return <tr key={item.id}><td>{item.label}</td><td>{formatAccelerator(item.globalHotkey!, config.platform)}</td><td><span className={ok ? 'hotkey-ok' : 'field-error'}>{status}</span></td><td><button type="button" onClick={() => void window.api.deck.upsert({ path, item: { ...item, globalHotkey: undefined } })}>해제</button></td></tr>; })}</tbody></table>
                 )}
+              </>
+            )}
+            {tab === 'web-work' && (
+              <>
+                <div className="web-work-heading">
+                  <div>
+                    <h3>엣지·크롬 확장 기능</h3>
+                    <p>파워 오토메이트 없이 나이스와 에듀파인의 정해진 작성 화면까지 이동합니다.</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={connectorBusy !== null}
+                    onClick={() => void openConnectorSetup('edge', 'folder')}
+                  >
+                    확장 기능 폴더 열기
+                  </button>
+                </div>
+                <div className="connector-browser-list">
+                  {(['edge', 'chrome'] as const).map((browserId) => {
+                    const status = connectorStatuses.find((item) => item.browserId === browserId);
+                    const browserName = browserId === 'edge' ? '엣지' : '크롬';
+                    const stateLabel = status?.connected
+                      ? '지금 연결됨'
+                      : status?.paired
+                        ? '설치됨 · 응답 대기'
+                        : '연결 필요';
+                    return (
+                      <article className="connector-browser-card" key={browserId}>
+                        <div>
+                          <strong>{browserName}</strong>
+                          <span className={status?.connected ? 'connector-ok' : status?.paired ? 'connector-waiting' : 'connector-missing'}>
+                            {stateLabel}
+                          </span>
+                          {status?.extensionVersion && <small>확장 기능 {status.extensionVersion}</small>}
+                        </div>
+                        <div className="connector-actions">
+                          <button
+                            type="button"
+                            disabled={connectorBusy !== null}
+                            onClick={() => void openConnectorSetup(browserId, 'extensions')}
+                          >확장 관리 열기</button>
+                          <button
+                            className="primary-action"
+                            type="button"
+                            disabled={connectorBusy !== null}
+                            onClick={() => void testConnector(browserId)}
+                          >{connectorBusy === `${browserId}:test` ? '확인 중…' : '연결 시험'}</button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="connector-guide">
+                  <h3>처음 연결하는 순서</h3>
+                  <ol>
+                    <li>확장 관리 화면에서 개발자 모드를 켭니다.</li>
+                    <li>압축 해제된 확장 기능을 불러오고 위에서 연 폴더를 선택합니다.</li>
+                    <li>사용할 브라우저의 연결 시험을 누릅니다.</li>
+                    <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓습니다.</li>
+                  </ol>
+                </div>
+                <p className="workflow-safety-note">
+                  로그인과 인증서 암호는 사용자가 직접 입력합니다. 저장·제출·결재는 자동으로 실행하지 않습니다.
+                </p>
               </>
             )}
             {tab === 'about' && (

@@ -37,6 +37,7 @@ function dependencies(): LauncherDependencies {
       `${bundlePath}/Contents/MacOS/Browser`,
     ),
     notifyWarning: vi.fn(),
+    queueWebWorkflow: vi.fn(() => ({ queued: true })),
   };
 }
 
@@ -174,6 +175,45 @@ describe('launcher', () => {
     );
     const options = vi.mocked(deps.spawnProcess).mock.calls[0]?.[2];
     expect(options?.shell).not.toBe(true);
+  });
+
+  it('queues a fixed web workflow before opening its selected browser', async () => {
+    const events: string[] = [];
+    const deps = dependencies();
+    deps.queueWebWorkflow = vi.fn(() => {
+      events.push('queue');
+      return { queued: true };
+    });
+    deps.spawnProcess = vi.fn(() => {
+      events.push('open');
+      return { unref: vi.fn() };
+    });
+    const item = action({
+      target: 'https://goe.neis.go.kr',
+      browser: {
+        path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        profileDir: 'Default',
+        appMode: false,
+      },
+      webWorkflow: { id: 'neis-leave', browserId: 'edge' },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'win32')).toEqual({ ok: true });
+    expect(deps.queueWebWorkflow).toHaveBeenCalledWith(item);
+    expect(events).toEqual(['queue', 'open']);
+  });
+
+  it('opens the site without queuing automation when a workflow browser is not selected', async () => {
+    const deps = dependencies();
+    const item = action({
+      target: 'https://goe.neis.go.kr',
+      webWorkflow: { id: 'neis-trip', browserId: 'edge' },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'win32')).toEqual({ ok: true });
+    expect(deps.queueWebWorkflow).not.toHaveBeenCalled();
+    expect(deps.openExternal).toHaveBeenCalledWith('https://goe.neis.go.kr');
+    expect(deps.notifyWarning).toHaveBeenCalledWith(expect.stringMatching(/엣지나 크롬/));
   });
 
   it('launches a selected macOS browser through its internal executable', async () => {

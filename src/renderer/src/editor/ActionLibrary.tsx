@@ -1,6 +1,7 @@
 import { useDraggable } from '@dnd-kit/core';
 import { useEffect, useState } from 'react';
 import type { InstalledApp, LibraryEntry } from '../../../shared/types';
+import { createWebWorkflowTemplate } from '../../../shared/webWorkflows';
 import type { DragData } from './dndTypes';
 
 type TemplateEntry = Exclude<LibraryEntry, { kind: 'installed-app' }>;
@@ -108,7 +109,17 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
   const [loading, setLoading] = useState(true);
   const [platform, setPlatform] = useState<string>('');
   const normalizedQuery = query.trim().toLocaleLowerCase('ko-KR');
+  const workflowBrowser = platform === 'darwin' ? 'chrome' : 'edge';
+  const workflowTemplates: TemplateEntry[] = [
+    createWebWorkflowTemplate('neis-leave', workflowBrowser),
+    createWebWorkflowTemplate('neis-trip', workflowBrowser),
+    createWebWorkflowTemplate('edufine-draft', workflowBrowser),
+    createWebWorkflowTemplate('edufine-purchase', workflowBrowser),
+  ];
   const templates = ACTION_TEMPLATES.filter((entry) =>
+    entry.label.toLocaleLowerCase('ko-KR').includes(normalizedQuery),
+  );
+  const filteredWorkflows = workflowTemplates.filter((entry) =>
     entry.label.toLocaleLowerCase('ko-KR').includes(normalizedQuery),
   );
   const filteredApps = apps.filter((app) =>
@@ -158,6 +169,21 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
           />
         ))}
       </div>
+      {filteredWorkflows.length > 0 && (
+        <>
+          <div className="library-divider"><span>웹 업무</span></div>
+          <div className="template-list workflow-template-list">
+            {filteredWorkflows.map((entry) => (
+              <DraggableTemplate
+                key={entry.label}
+                entry={entry}
+                onAdd={() => onAdd(entry)}
+              />
+            ))}
+          </div>
+          <p className="library-note workflow-note">작성 화면까지만 열고 저장·제출·결재 전에는 멈춥니다.</p>
+        </>
+      )}
       <div className="library-divider">
         <span>설치된 앱</span>
       </div>

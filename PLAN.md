@@ -154,6 +154,28 @@ export interface ActionItem extends DeckItemBase {
   args: string[];      // type==='app' 일 때만 의미 있음. 기본 []
   workingDir?: string; // type==='app'
   browser?: BrowserSpec; // type==='url' 일 때만. 미지정이면 OS 기본 브라우저 (§6.13)
+  webWorkflow?: WebWorkflowSpec; // type==='url' 일 때만. 브라우저 확장 기능이 정해진 업무 화면까지 이동 (§6.14)
+}
+
+export type WebWorkflowId =
+  | 'neis-leave'
+  | 'neis-trip'
+  | 'edufine-draft'
+  | 'edufine-purchase';
+
+export type WebConnectorBrowserId = 'chrome' | 'edge';
+
+export interface WebWorkflowSpec {
+  id: WebWorkflowId;
+  browserId: WebConnectorBrowserId;
+}
+
+export interface WebConnectorStatus {
+  browserId: WebConnectorBrowserId;
+  paired: boolean;
+  connected: boolean;
+  extensionVersion?: string;
+  lastSeenAt?: number;
 }
 
 /** URL을 특정 브라우저·프로필·전용 창으로 여는 설정 (§6.13) */
@@ -264,7 +286,7 @@ export interface InstalledApp {
 
 /** 편집기 오른쪽 라이브러리의 드래그 소스 */
 export type LibraryEntry =
-  | { kind: 'action-template'; type: ActionType; label: string; emoji: string }
+  | { kind: 'action-template'; type: ActionType; label: string; emoji: string; target?: string; webWorkflow?: WebWorkflowSpec }
   | { kind: 'folder-template'; label: string; emoji: string }
   | { kind: 'installed-app'; app: InstalledApp };
 
@@ -411,6 +433,9 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `icon:importPath` | `string` | `string \| null` | OS 드롭으로 받은 이미지 경로를 아이콘으로 등록 |
 | `apps:list` | `{ refresh?: boolean }` | `InstalledApp[]` | 설치된 앱 목록 (§6.1) |
 | `browsers:list` | `{ refresh?: boolean }` | `DetectedBrowser[]` | 설치된 브라우저와 프로필 목록 (§6.13) |
+| `web-connector:status` | `{}` | `WebConnectorStatus[]` | 엣지·크롬 확장 기능 연결 상태 (§6.14) |
+| `web-connector:test` | `{ browserId: 'chrome'\|'edge' }` | `{ok:true} \| {ok:false; message:string}` | 로컬 연결 시험 페이지를 열고 확장 기능 응답을 확인 |
+| `web-connector:open-setup` | `{ browserId: 'chrome'\|'edge'; target:'pair'\|'folder'\|'extensions' }` | `{ok:true} \| {ok:false; message:string}` | 연결 페이지·포함된 확장 기능 폴더·브라우저 확장 관리 화면 열기 |
 | `icon:resolve` | `{ type: ActionType; target: string }` | `string \| null` | 아이콘 data URL (캐시 사용) |
 | `drop:classify` | `{ paths: string[]; text?: string }` | `Partial<ActionItem>[]` | OS 드롭 대상을 액션으로 변환 (§9.6) |
 | `window:hide` | — | `void` | 패널 숨기기 (피크 스트립이 켜져 있으면 스트립으로 전환) |
@@ -450,6 +475,7 @@ contextBridge.exposeInMainWorld('api', {
   icon:   { resolve, importPath },
   apps:   { list },
   browsers: { list },
+  webConnector: { status, test, openSetup },
   drop:   { classify },
   window: { hide, show, relayout, setIdle },
   editor: { open },
@@ -1188,6 +1214,36 @@ spawn(exe, flags, { detached: true, stdio: 'ignore' }).unref();
   브라우저 지정이 검증을 우회하는 경로가 되어서는 안 된다.
 - `shell: true`를 쓰지 않는다. 플래그는 배열로 전달한다.
 
+### 6.14 엣지·크롬 웹 업무 연결 (`services/webConnector/`, `browser-extension/`)
+
+파워 오토메이트나 별도 자동화 앱을 설치하지 않는다. 스트림 패널이 `127.0.0.1`에만
+로컬 연결부를 열고, 사용자가 엣지·크롬에 한 번 추가한 `스트림 패널 웹 업무 도우미`
+확장 기능이 정해진 명령을 가져간다. 외부 주소에서는 연결부에 접근할 수 없고,
+인증용 임의 값은 권한을 제한한 `userData/web-connector/state.json`에 별도로 저장한다.
+
+지원하는 명령은 `neis-leave`, `neis-trip`, `edufine-draft`, `edufine-purchase` 네 개뿐이다.
+임의 선택자, 임의 자바스크립트, 사용자 입력 명령은 전달하지 않는다. 확장 기능은
+경기 나이스(`goe.neis.go.kr`)와 경기 에듀파인(`klef.goe.go.kr`)에서만 업무 화면을 찾는다.
+로그인·인증서·암호 입력은 항상 사용자가 직접 하며, 저장·제출·결재 단추는 누르지 않는다.
+
+`ActionItem.webWorkflow`가 있으면 실행 엔진은 다음 순서를 지킨다.
+
+1. 일반 URL 검증과 브라우저 경로 검증을 먼저 수행한다.
+2. 업무 종류와 주소의 짝을 검증한다. 나이스 명령은 나이스 주소, 에듀파인 명령은
+   에듀파인 주소에서만 허용한다.
+3. 연결부에 60초짜리 고정 명령을 넣는다.
+4. 기존 §6.13 경로로 선택한 엣지 또는 크롬과 프로필을 연다.
+5. 확장 기능이 화면 요소가 나타날 때까지 기다리고 정해진 메뉴만 누른다.
+6. 목표 작성 창이 열리면 멈추고 결과를 스트림 패널 알림으로 보낸다.
+
+연결되지 않았거나 명령 시간이 끝나면 사이트 자체는 그대로 열고, 자동 이동이 되지 않은
+원인과 `설정 > 웹 업무 연결`에서 다시 연결하는 방법을 알린다. 연결부가 포트 충돌이나
+파일 권한 문제로 시작되지 않아도 앱 전체는 계속 실행되어야 한다.
+
+확장 기능은 브라우저 보안 정책상 사용자 동의 없이 몰래 설치하지 않는다. 배포 전에는
+포함된 폴더를 개발자 모드에서 불러올 수 있고, 정식 배포 뒤에는 크롬 웹 스토어와 엣지
+추가 기능 페이지로 `open-setup`의 설치 주소만 교체한다.
+
 ---
 
 ## 7. 액션 실행 엔진 (`launcher.ts`)
@@ -1532,7 +1588,7 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
 
 ### 9.9 설정 (편집기 내 모달)
 
-탭 5개: `일반` / `동작` / `모양` / `단축키` / `정보`
+탭 6개: `일반` / `동작` / `모양` / `단축키` / `웹 업무 연결` / `정보`
 
 - **일반**: 로그인 시 자동 시작 · 시작 시 숨김 · 자동 업데이트 확인 · 설정 초기화(2단계 확인)
 - **동작** (§6.10 — 화면 가림 방지):
@@ -1570,6 +1626,10 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
     각 행에 키 이름 · 단축키 · 상태(`등록됨`/`충돌`) · `해제` 버튼.
     어디에 무엇이 걸려 있는지 한눈에 보이지 않으면 관리가 불가능해진다.
 - **정보**: 버전 · 저장소 링크 · 라이선스 · `업데이트 확인` 버튼 + 진행 상태
+- **웹 업무 연결** (§6.14):
+  - 엣지·크롬별 `연결됨` / `연결 필요` 상태
+  - `확장 기능 폴더 열기` · `확장 관리 열기` · `연결 시험` 단추
+  - 인증 정보는 저장하지 않고 저장·제출·결재 전에 멈춘다는 안내
 
 ### 9.10 문구 언어
 
@@ -1963,6 +2023,11 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
   - `Local State` JSON 파싱: `profile.info_cache` → `BrowserProfile[]`,
     파일이 없거나 손상됐을 때 빈 배열 반환 (throw 금지)
 - `dropClassify.test.ts` — 디렉터리/파일/exe/lnk/URL/이미지 분류, 라벨 자동 생성
+- `webWorkflows.test.ts` — 업무 종류별 허용 주소, 브라우저 제한, 잘못된 업무 종류 거부
+- `webConnector.test.ts` — 로컬 연결 인증, 브라우저별 명령 분리, 제한 시간 만료,
+  결과 중복 처리 거부, 연결 상태 계산
+- `webWorkflowEngine.test.ts` — 확장 기능의 메뉴 후보 우선순위, 숨김·비활성 요소 제외,
+  저장·제출·결재 단추를 절대 선택하지 않음
 
 **수동 QA 체크리스트 (Windows 실기, §15).** E2E 자동화는 v1.0 범위 밖.
 
@@ -2246,6 +2311,17 @@ URL 키에 Chrome + 업무용 프로필 + 전용 창을 지정하면 **기본 �
 - `ㄱㅂ`으로 "개발"이 검색되고, 폴더 3단계 안쪽 키도 한 번에 찾아진다.
 - 검색어가 비면 숫자 즉시 실행, 타이핑 중이면 숫자가 검색어로 들어간다.
 - §15.3의 "전역 실행"과 "퀵 런처" 항목 전체 통과.
+
+### M6.6 — 엣지·크롬 웹 업무 연결
+
+`services/webConnector/`의 로컬 연결부, `browser-extension/` 확장 기능,
+`web-connector:status`/`test`/`open-setup` 연결 채널, 액션 라이브러리의 나이스 복무·출장과
+에듀파인 기안·품의 틀, 속성 패널의 브라우저 선택, 설정의 `웹 업무 연결` 탭을 구현한다.
+
+**수용 기준:** 연결 시험에서 엣지와 크롬을 따로 식별한다. 네 업무 키는 선택한 브라우저와
+프로필로 사이트를 열고 목표 화면까지 이동한 뒤 멈춘다. 로그인 정보는 읽거나 저장하지 않고,
+저장·제출·결재 단추를 누르지 않는다. 확장 기능이 없거나 로컬 연결부가 실패해도 웹사이트는
+열리며 해결 방법이 한국어로 표시된다. 관련 단위 테스트와 전체 기존 테스트가 통과한다.
 
 ### M7 — 트레이 · 키별 단축키 · 가장자리 피크 · 설정 · 자동 시작 · 마감
 `tray.ts`, `shortcuts.ts`, `autoLaunch.ts`,

@@ -14,6 +14,7 @@ import { launchMacosAction } from './macos';
 import { launchWindowsAction } from './windows';
 import { launchWindowsBrowser } from '../browserService/windows';
 import { launchMacosBrowser, resolveMacBrowserExecutable } from '../browserService/macos';
+import { queueActiveWebWorkflow } from '../webConnector';
 
 export type { LauncherDependencies } from './common';
 
@@ -28,6 +29,7 @@ const defaultDependencies: LauncherDependencies = {
       window.webContents.send(IPC_CHANNELS.TOAST, { level: 'info', message });
     }
   },
+  queueWebWorkflow: queueActiveWebWorkflow,
 };
 
 export async function launchDeckItem(
@@ -71,6 +73,21 @@ export async function launchDeckItem(
   }
 
   try {
+    if (item.webWorkflow) {
+      if (!item.browser) {
+        dependencies.notifyWarning(
+          '웹 업무 자동 이동에는 엣지나 크롬 선택이 필요합니다. 사이트만 열었습니다.',
+        );
+      } else {
+        const queued = dependencies.queueWebWorkflow(item);
+        if (!queued.queued) {
+          dependencies.notifyWarning(
+            queued.message ??
+              '웹 업무 연결을 시작하지 못했습니다. 설정의 웹 업무 연결에서 다시 연결해 주세요.',
+          );
+        }
+      }
+    }
     if (item.type === 'url' && item.browser) {
       return platform === 'win32'
         ? await launchWindowsBrowser(item as typeof item & { browser: NonNullable<typeof item.browser> }, dependencies)

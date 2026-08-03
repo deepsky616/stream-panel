@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
+import { join } from 'node:path';
 import { createDefaultConfig } from '../shared/defaults';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc';
@@ -12,11 +13,17 @@ import { configureUpdater } from './services/updater';
 import { openEditorWindow } from './windows/editorWindow';
 import { PLATFORM } from './platform';
 import { setLauncherEnabled } from './windows/launcherWindow';
+import {
+  createWebConnectorService,
+  setActiveWebConnectorService,
+  type WebConnectorService,
+} from './services/webConnector';
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
 app.setName('stream-panel');
 const gotLock = app.requestSingleInstanceLock();
+let webConnectorService: WebConnectorService | null = null;
 if (!gotLock) {
   console.error('다른 Stream Panel 실행 과정이 이미 단일 실행 잠금을 사용하고 있습니다.');
   app.quit();
@@ -29,7 +36,7 @@ app.on('web-contents-created', (_event, contents) => {
   if (app.isPackaged) contents.on('devtools-opened', () => contents.closeDevTools());
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (PLATFORM.hideDock) app.dock?.hide();
   const defaultConfig = createDefaultConfig({
     downloads: app.getPath('downloads'),
@@ -45,7 +52,21 @@ app.whenReady().then(() => {
       }
     },
   });
-  registerIpcHandlers(configStore);
+  webConnectorService = createWebConnectorService({
+    userDataPath: app.getPath('userData'),
+    extensionDirectory: app.isPackaged
+      ? join(process.resourcesPath, 'browser-extension')
+      : join(app.getAppPath(), 'browser-extension'),
+    notify: (message, level) => {
+      for (const window of createSafeWindowList()) {
+        window.webContents.send(IPC_CHANNELS.TOAST, { level, message });
+      }
+    },
+  });
+  const connectorStart = await webConnectorService.start();
+  if (!connectorStart.ok) console.warn(connectorStart.message);
+  setActiveWebConnectorService(webConnectorService);
+  registerIpcHandlers(configStore, webConnectorService);
   void cleanupOrphanIcons(configStore.get().root, app.getPath('userData'));
   createPanelWindow(configStore);
   setLauncherEnabled(configStore.get().keyboard.quickLauncher);
@@ -83,6 +104,8 @@ function createSafeWindowList(): BrowserWindow[] {
 
 app.on('before-quit', () => {
   (app as QuitAwareApp).isQuitting = true;
+  setActiveWebConnectorService(null);
+  void webConnectorService?.stop();
 });
 
 app.on('window-all-closed', () => {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { normalizeAccelerator } from '../../../shared/accelerator';
 import type { DeckItem, DetectedBrowser } from '../../../shared/types';
+import { getWebWorkflowDefinition } from '../../../shared/webWorkflows';
 import { ColorPicker } from '../common/ColorPicker';
 import { IconPicker } from '../common/IconPicker';
 
@@ -103,6 +104,14 @@ export function PropertiesPanel({
     draft.kind === 'action' && draft.type === 'url' && draft.browser
       ? browsers.find((browser) => browser.path === draft.browser?.path)
       : undefined;
+  const availableBrowsers =
+    draft.kind === 'action' && draft.webWorkflow
+      ? browsers.filter((browser) => browser.id === 'edge' || browser.id === 'chrome')
+      : browsers;
+  const workflowDefinition =
+    draft.kind === 'action' && draft.webWorkflow
+      ? getWebWorkflowDefinition(draft.webWorkflow.id)
+      : null;
   const chooseTarget = async () => {
     if (draft.kind !== 'action') return;
     if (draft.type === 'folder') {
@@ -171,7 +180,7 @@ export function PropertiesPanel({
           <IconPicker icon={draft.icon} onChange={(icon) => patch({ icon })} />
         </label>
         <div className="property-kind">
-          종류 <strong>{draft.kind === 'folder' ? '폴더 키' : ACTION_TYPE_LABELS[draft.type]}</strong>
+          종류 <strong>{draft.kind === 'folder' ? '폴더 키' : workflowDefinition ? '웹 업무' : ACTION_TYPE_LABELS[draft.type]}</strong>
         </div>
         {draft.kind === 'action' && (
           <label className="property-target">
@@ -180,7 +189,7 @@ export function PropertiesPanel({
               <input
                 ref={targetRef}
                 value={draft.target}
-                readOnly={draft.type === 'uwp' || ['folder', 'file', 'app'].includes(draft.type)}
+                readOnly={Boolean(draft.webWorkflow) || draft.type === 'uwp' || ['folder', 'file', 'app'].includes(draft.type)}
                 onChange={(event) => patch({ target: event.target.value })}
               />
               {['folder', 'file', 'app'].includes(draft.type) && (
@@ -219,6 +228,12 @@ export function PropertiesPanel({
         )}
         {draft.kind === 'action' && draft.type === 'url' && (
           <div className="browser-settings">
+            {workflowDefinition && (
+              <div className="workflow-summary">
+                <strong>{workflowDefinition.label}</strong>
+                <span>로그인 뒤 정해진 작성 화면까지만 이동합니다.</span>
+              </div>
+            )}
             <label>
               열 브라우저
               <select
@@ -229,11 +244,14 @@ export function PropertiesPanel({
                     browser: browser
                       ? { path: browser.path, appMode: false }
                       : undefined,
+                    ...(draft.webWorkflow && browser && (browser.id === 'edge' || browser.id === 'chrome')
+                      ? { webWorkflow: { ...draft.webWorkflow, browserId: browser.id } }
+                      : {}),
                   } as Partial<DeckItem>);
                 }}
               >
                 <option value="">기본 브라우저</option>
-                {browsers.map((browser) => (
+                {availableBrowsers.map((browser) => (
                   <option key={browser.path} value={browser.path}>{browser.name}</option>
                 ))}
                 {draft.browser && browsersLoaded && !selectedBrowser && (
@@ -281,6 +299,14 @@ export function PropertiesPanel({
             </label>
             {selectedBrowser && !selectedBrowser.supportsAppMode && (
               <p className="browser-note">이 브라우저는 프로필과 전용 창을 지원하지 않습니다.</p>
+            )}
+            {draft.webWorkflow && !draft.browser && (
+              <p className="browser-warning">웹 업무 자동 이동에는 엣지나 크롬 선택이 필요합니다.</p>
+            )}
+            {draft.webWorkflow && (
+              <p className="workflow-safety-note">
+                암호와 인증서 정보는 저장하지 않습니다. 저장·제출·결재 단추도 자동으로 누르지 않습니다.
+              </p>
             )}
           </div>
         )}

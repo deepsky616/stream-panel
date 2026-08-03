@@ -22,6 +22,28 @@ export interface ActionItem extends DeckItemBase {
   args: string[];
   workingDir?: string;
   browser?: BrowserSpec;
+  webWorkflow?: WebWorkflowSpec;
+}
+
+export type WebWorkflowId =
+  | 'neis-leave'
+  | 'neis-trip'
+  | 'edufine-draft'
+  | 'edufine-purchase';
+
+export type WebConnectorBrowserId = 'chrome' | 'edge';
+
+export interface WebWorkflowSpec {
+  id: WebWorkflowId;
+  browserId: WebConnectorBrowserId;
+}
+
+export interface WebConnectorStatus {
+  browserId: WebConnectorBrowserId;
+  paired: boolean;
+  connected: boolean;
+  extensionVersion?: string;
+  lastSeenAt?: number;
 }
 
 export interface BrowserSpec {
@@ -121,7 +143,14 @@ export interface InstalledApp {
 }
 
 export type LibraryEntry =
-  | { kind: 'action-template'; type: ActionType; label: string; emoji: string }
+  | {
+      kind: 'action-template';
+      type: ActionType;
+      label: string;
+      emoji: string;
+      target?: string;
+      webWorkflow?: WebWorkflowSpec;
+    }
   | { kind: 'folder-template'; label: string; emoji: string }
   | { kind: 'installed-app'; app: InstalledApp };
 

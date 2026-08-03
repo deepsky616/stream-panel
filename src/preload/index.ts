@@ -42,6 +42,15 @@ const api = {
     list: (input: { refresh?: boolean } = {}) =>
       ipcRenderer.invoke(IPC_CHANNELS.BROWSERS_LIST, input),
   },
+  webConnector: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_STATUS, {}),
+    test: (input: { browserId: 'chrome' | 'edge' }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_TEST, input),
+    openSetup: (input: {
+      browserId: 'chrome' | 'edge';
+      target: 'pair' | 'folder' | 'extensions';
+    }) => ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_OPEN_SETUP, input),
+  },
   drop: {
     classify: (input: { paths: string[]; text?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.DROP_CLASSIFY, input),

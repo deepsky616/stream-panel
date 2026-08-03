@@ -4,6 +4,12 @@ import type { Stats } from 'node:fs';
 import { buildNumberAccelerators, normalizeAccelerator } from '../../shared/accelerator';
 import { validateHintKeys } from '../../shared/hintMap';
 import type { ActionItem, AppConfig, DeckItem, IconSpec } from '../../shared/types';
+import {
+  browserIdFromPath,
+  getWebWorkflowDefinition,
+  isAllowedWebWorkflowTarget,
+  isWebWorkflowSpec,
+} from '../../shared/webWorkflows';
 import { isValidProfileDirectory } from '../services/browserService/flags';
 
 export interface GlobalHotkeyConflict {
@@ -232,6 +238,20 @@ export function validateDeckItemShallow(item: DeckItem): void {
   if (item.browser !== undefined && item.type !== 'url') {
     throw new ValidationError('브라우저 지정은 웹사이트 키에만 사용할 수 있습니다.');
   }
+  if (item.webWorkflow !== undefined) {
+    if (item.type !== 'url') {
+      throw new ValidationError('웹 업무 연결은 웹사이트 키에만 사용할 수 있습니다.');
+    }
+    if (!isWebWorkflowSpec(item.webWorkflow)) {
+      throw new ValidationError('웹 업무 연결 설정이 올바르지 않습니다. 목록에서 다시 선택해 주세요.');
+    }
+    if (item.browser) {
+      const browserId = browserIdFromPath(item.browser.path);
+      if (browserId !== item.webWorkflow.browserId) {
+        throw new ValidationError('웹 업무 연결 브라우저가 선택한 브라우저와 다릅니다. 다시 선택해 주세요.');
+      }
+    }
+  }
 }
 
 function validateBrowserSpecification(
@@ -277,6 +297,11 @@ export function validateActionTarget(
         item as ActionItem & { browser: NonNullable<ActionItem['browser']> },
         platform,
       );
+    }
+    if (item.webWorkflow && !isAllowedWebWorkflowTarget(item.webWorkflow.id, item.target)) {
+      const definition = getWebWorkflowDefinition(item.webWorkflow.id);
+      const systemName = definition.system === 'neis' ? '나이스' : '에듀파인';
+      throw new ValidationError(`${systemName} 웹 업무는 허용된 ${systemName} 주소에서만 실행할 수 있습니다.`);
     }
   } else if (item.type === 'uwp') {
     if (platform !== 'win32') {

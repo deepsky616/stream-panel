@@ -1,0 +1,31 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  width: 280px;
+  margin: 0;
+}
+
+main {
+  padding: 16px;
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+#status {
+  margin: 0 0 8px;
+  font-weight: 700;
+}
+
+.connected {
+  color: #32b36b;
+}
+
+.disconnected {
+  color: #d94a4a;
+}

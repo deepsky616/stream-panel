@@ -7,6 +7,7 @@ import type {
   InstalledApp,
   LauncherResult,
   LaunchResult,
+  WebConnectorStatus,
 } from '../../shared/types';
 import type { RendererEvent } from '../../shared/ipcChannels';
 
@@ -45,6 +46,16 @@ interface StreamPanelApi {
   };
   apps: { list(input?: { refresh?: boolean }): Promise<InstalledApp[]> };
   browsers: { list(input?: { refresh?: boolean }): Promise<DetectedBrowser[]> };
+  webConnector: {
+    status(): Promise<WebConnectorStatus[]>;
+    test(input: {
+      browserId: 'chrome' | 'edge';
+    }): Promise<{ ok: true } | { ok: false; message: string }>;
+    openSetup(input: {
+      browserId: 'chrome' | 'edge';
+      target: 'pair' | 'folder' | 'extensions';
+    }): Promise<{ ok: true } | { ok: false; message: string }>;
+  };
   drop: {
     classify(input: { paths: string[]; text?: string }): Promise<Partial<ActionItem>[]>;
     getPathForFile(file: File): string;
