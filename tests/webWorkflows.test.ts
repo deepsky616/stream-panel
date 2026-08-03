@@ -14,8 +14,26 @@ const getBrowserExtensionManagementUrl = (
     getBrowserExtensionManagementUrl(browserId: 'chrome' | 'edge'): string;
   }
 ).getBrowserExtensionManagementUrl;
+const isWebConnectorSupportedPlatform = (
+  webWorkflows as unknown as {
+    isWebConnectorSupportedPlatform(platform: NodeJS.Platform | null): boolean;
+  }
+).isWebConnectorSupportedPlatform;
+const createWebWorkflowTemplatesForPlatform = (
+  webWorkflows as unknown as {
+    createWebWorkflowTemplatesForPlatform(platform: NodeJS.Platform | null): unknown[];
+  }
+).createWebWorkflowTemplatesForPlatform;
 
 describe('web workflow templates', () => {
+  it('exposes the connector and workflow templates only on Windows', () => {
+    expect(isWebConnectorSupportedPlatform('win32')).toBe(true);
+    expect(isWebConnectorSupportedPlatform('darwin')).toBe(false);
+    expect(isWebConnectorSupportedPlatform('linux')).toBe(false);
+    expect(createWebWorkflowTemplatesForPlatform('darwin')).toEqual([]);
+    expect(createWebWorkflowTemplatesForPlatform('win32')).toHaveLength(4);
+  });
+
   it('creates a complete fixed template without arbitrary commands', () => {
     expect(createWebWorkflowTemplate('neis-leave', 'edge')).toEqual({
       kind: 'action-template',

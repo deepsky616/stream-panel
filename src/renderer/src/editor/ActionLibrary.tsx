@@ -1,7 +1,7 @@
 import { useDraggable } from '@dnd-kit/core';
 import { useEffect, useState } from 'react';
-import type { InstalledApp, LibraryEntry } from '../../../shared/types';
-import { createWebWorkflowTemplate } from '../../../shared/webWorkflows';
+import type { AppConfig, InstalledApp, LibraryEntry } from '../../../shared/types';
+import { createWebWorkflowTemplatesForPlatform } from '../../../shared/webWorkflows';
 import type { DragData } from './dndTypes';
 
 type TemplateEntry = Exclude<LibraryEntry, { kind: 'installed-app' }>;
@@ -15,6 +15,7 @@ const ACTION_TEMPLATES: TemplateEntry[] = [
 ];
 
 interface ActionLibraryProps {
+  platform: AppConfig['platform'];
   onAdd: (entry: LibraryEntry) => void;
 }
 
@@ -103,19 +104,12 @@ function InstalledAppList({ apps, onAdd }: { apps: InstalledApp[]; onAdd: (app: 
   );
 }
 
-export function ActionLibrary({ onAdd }: ActionLibraryProps) {
+export function ActionLibrary({ platform, onAdd }: ActionLibraryProps) {
   const [query, setQuery] = useState('');
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [loading, setLoading] = useState(true);
-  const [platform, setPlatform] = useState<string>('');
   const normalizedQuery = query.trim().toLocaleLowerCase('ko-KR');
-  const workflowBrowser = platform === 'darwin' ? 'chrome' : 'edge';
-  const workflowTemplates: TemplateEntry[] = [
-    createWebWorkflowTemplate('neis-leave', workflowBrowser),
-    createWebWorkflowTemplate('neis-trip', workflowBrowser),
-    createWebWorkflowTemplate('edufine-draft', workflowBrowser),
-    createWebWorkflowTemplate('edufine-purchase', workflowBrowser),
-  ];
+  const workflowTemplates: TemplateEntry[] = createWebWorkflowTemplatesForPlatform(platform);
   const templates = ACTION_TEMPLATES.filter((entry) =>
     entry.label.toLocaleLowerCase('ko-KR').includes(normalizedQuery),
   );
@@ -137,7 +131,6 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
 
   useEffect(() => {
     let active = true;
-    void window.api.app.info().then((info) => active && setPlatform(info.platform));
     void window.api.apps
       .list()
       .then((items) => active && setApps(items))
@@ -191,8 +184,6 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
         <div className="app-skeleton" aria-label="설치된 앱을 불러오는 중">
           <span /><span /><span /><span />
         </div>
-      ) : platform && !['win32', 'darwin'].includes(platform) ? (
-        <p className="library-note">이 운영체제에서는 설치된 앱 목록을 지원하지 않습니다.</p>
       ) : filteredApps.length ? (
         <InstalledAppList apps={filteredApps} onAdd={(app) => onAdd({ kind: 'installed-app', app })} />
       ) : (

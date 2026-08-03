@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { createDefaultConfig } from '../shared/defaults';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
+import { isWebConnectorSupportedPlatform } from '../shared/webWorkflows';
 import { registerIpcHandlers } from './ipc';
 import { ConfigStore } from './store';
 import { applyPanelLayout, createPanelWindow, showPanel } from './windows/panelWindow';
@@ -52,20 +53,22 @@ app.whenReady().then(async () => {
       }
     },
   });
-  webConnectorService = createWebConnectorService({
-    userDataPath: app.getPath('userData'),
-    extensionDirectory: app.isPackaged
-      ? join(process.resourcesPath, 'browser-extension')
-      : join(app.getAppPath(), 'browser-extension'),
-    notify: (message, level) => {
-      for (const window of createSafeWindowList()) {
-        window.webContents.send(IPC_CHANNELS.TOAST, { level, message });
-      }
-    },
-  });
-  const connectorStart = await webConnectorService.start();
-  if (!connectorStart.ok) console.warn(connectorStart.message);
-  setActiveWebConnectorService(webConnectorService);
+  if (isWebConnectorSupportedPlatform(PLATFORM.platform)) {
+    webConnectorService = createWebConnectorService({
+      userDataPath: app.getPath('userData'),
+      extensionDirectory: app.isPackaged
+        ? join(process.resourcesPath, 'browser-extension')
+        : join(app.getAppPath(), 'browser-extension'),
+      notify: (message, level) => {
+        for (const window of createSafeWindowList()) {
+          window.webContents.send(IPC_CHANNELS.TOAST, { level, message });
+        }
+      },
+    });
+    const connectorStart = await webConnectorService.start();
+    if (!connectorStart.ok) console.warn(connectorStart.message);
+    setActiveWebConnectorService(webConnectorService);
+  }
   registerIpcHandlers(configStore, webConnectorService);
   void cleanupOrphanIcons(configStore.get().root, app.getPath('userData'));
   createPanelWindow(configStore);

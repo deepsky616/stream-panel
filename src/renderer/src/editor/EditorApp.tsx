@@ -602,11 +602,12 @@ export function EditorApp() {
             <TrashZone visible={activeDrag?.source === 'grid'} />
             <p className="editor-hint">빈 키를 선택하거나 오른쪽 액션을 끌어다 놓으세요.</p>
           </div>
-          <ActionLibrary onAdd={(entry) => void addEntry(entry)} />
+          <ActionLibrary platform={config.platform} onAdd={(entry) => void addEntry(entry)} />
         </section>
         <PropertiesPanel
           key={selectedItem?.id ?? 'no-selection'}
           item={selectedItem}
+          platform={config.platform}
           path={location.path}
           focusField={focusField}
           onSaved={saved}

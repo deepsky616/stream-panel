@@ -44,6 +44,12 @@ const WORKFLOW_IDS = new Set<WebWorkflowId>(
 );
 const BROWSER_IDS = new Set<WebConnectorBrowserId>(['chrome', 'edge']);
 
+export function isWebConnectorSupportedPlatform(
+  platform: string | null,
+): platform is 'win32' {
+  return platform === 'win32';
+}
+
 export function isWebWorkflowId(value: unknown): value is WebWorkflowId {
   return typeof value === 'string' && WORKFLOW_IDS.has(value as WebWorkflowId);
 }
@@ -111,6 +117,15 @@ export function createWebWorkflowTemplate(
     target: definition.defaultTarget,
     webWorkflow: { id, browserId },
   };
+}
+
+export function createWebWorkflowTemplatesForPlatform(
+  platform: string | null,
+): Extract<LibraryEntry, { kind: 'action-template' }>[] {
+  if (!isWebConnectorSupportedPlatform(platform)) return [];
+  return WEB_WORKFLOW_DEFINITIONS.map((definition) =>
+    createWebWorkflowTemplate(definition.id, 'edge'),
+  );
 }
 
 export function getBrowserExtensionManagementUrl(

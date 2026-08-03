@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { normalizeAccelerator } from '../../../shared/accelerator';
-import type { DeckItem, DetectedBrowser } from '../../../shared/types';
+import type { AppConfig, DeckItem, DetectedBrowser } from '../../../shared/types';
 import { getWebWorkflowDefinition } from '../../../shared/webWorkflows';
 import { ColorPicker } from '../common/ColorPicker';
 import { IconPicker } from '../common/IconPicker';
 
 interface PropertiesPanelProps {
   item: DeckItem | null;
+  platform: AppConfig['platform'];
   path: string[];
   focusField: 'label' | 'target' | null;
   onSaved: (item: DeckItem) => void;
@@ -39,6 +40,7 @@ const ACTION_TYPE_LABELS = {
 
 export function PropertiesPanel({
   item,
+  platform,
   path,
   focusField,
   onSaved,
@@ -300,12 +302,14 @@ export function PropertiesPanel({
             {selectedBrowser && !selectedBrowser.supportsAppMode && (
               <p className="browser-note">이 브라우저는 프로필과 전용 창을 지원하지 않습니다.</p>
             )}
-            {draft.webWorkflow && !draft.browser && (
+            {platform === 'win32' && draft.webWorkflow && !draft.browser && (
               <p className="browser-warning">웹 업무 자동 이동에는 엣지나 크롬 선택이 필요합니다.</p>
             )}
             {draft.webWorkflow && (
               <p className="workflow-safety-note">
-                암호와 인증서 정보는 저장하지 않습니다. 저장·제출·결재 단추도 자동으로 누르지 않습니다.
+                {platform === 'win32'
+                  ? '암호와 인증서 정보는 저장하지 않습니다. 저장·제출·결재 단추도 자동으로 누르지 않습니다.'
+                  : '나이스·에듀파인 자동 이동은 윈도우에서만 지원합니다. 맥에서는 사이트만 엽니다.'}
               </p>
             )}
           </div>

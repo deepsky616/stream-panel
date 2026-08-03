@@ -216,6 +216,28 @@ describe('launcher', () => {
     expect(deps.notifyWarning).toHaveBeenCalledWith(expect.stringMatching(/엣지나 크롬/));
   });
 
+  it('opens an existing workflow site on macOS without queuing browser automation', async () => {
+    const deps = dependencies();
+    const item = action({
+      target: 'https://goe.neis.go.kr',
+      browser: {
+        path: '/Applications/Google Chrome.app',
+        profileDir: 'Default',
+        appMode: false,
+      },
+      webWorkflow: { id: 'neis-leave', browserId: 'chrome' },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'darwin')).toEqual({ ok: true });
+    expect(deps.queueWebWorkflow).not.toHaveBeenCalled();
+    expect(deps.spawnProcess).toHaveBeenCalledWith(
+      '/Applications/Google Chrome.app/Contents/MacOS/Browser',
+      ['--profile-directory=Default', 'https://goe.neis.go.kr'],
+      { detached: true, stdio: 'ignore' },
+    );
+    expect(deps.notifyWarning).toHaveBeenCalledWith(expect.stringMatching(/윈도우에서만/));
+  });
+
   it('launches a selected macOS browser through its internal executable', async () => {
     const deps = dependencies();
     const item = action({

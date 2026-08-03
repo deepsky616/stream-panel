@@ -105,9 +105,9 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
     }), []);
 
   useEffect(() => {
-    if (!open || tab !== 'web-work') return;
+    if (!open || config.platform !== 'win32' || tab !== 'web-work') return;
     void refreshConnectorStatuses();
-  }, [open, refreshConnectorStatuses, tab]);
+  }, [config.platform, open, refreshConnectorStatuses, tab]);
 
   useEffect(() => {
     if (!open) return;
@@ -279,7 +279,9 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
               ['appearance', '모양'],
               ['behavior', '동작'],
               ['shortcut', '단축키'],
-              ['web-work', '웹 업무 연결'],
+              ...(config.platform === 'win32'
+                ? [['web-work', '웹 업무 연결'] as [SettingsTab, string]]
+                : []),
               ['about', '정보'],
             ] as Array<[SettingsTab, string]>).map(([value, label]) => (
               <button
@@ -366,7 +368,7 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                 )}
               </>
             )}
-            {tab === 'web-work' && (
+            {config.platform === 'win32' && tab === 'web-work' && (
               <>
                 <div className="web-work-heading">
                   <div>

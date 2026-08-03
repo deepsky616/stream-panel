@@ -15,6 +15,7 @@ import { launchWindowsAction } from './windows';
 import { launchWindowsBrowser } from '../browserService/windows';
 import { launchMacosBrowser, resolveMacBrowserExecutable } from '../browserService/macos';
 import { queueActiveWebWorkflow } from '../webConnector';
+import { isWebConnectorSupportedPlatform } from '../../../shared/webWorkflows';
 
 export type { LauncherDependencies } from './common';
 
@@ -73,7 +74,11 @@ export async function launchDeckItem(
   }
 
   try {
-    if (item.webWorkflow) {
+    if (item.webWorkflow && !isWebConnectorSupportedPlatform(platform)) {
+      dependencies.notifyWarning(
+        '나이스·에듀파인 자동 이동은 윈도우에서만 사용할 수 있습니다. 맥에서는 사이트만 엽니다.',
+      );
+    } else if (item.webWorkflow) {
       if (!item.browser) {
         dependencies.notifyWarning(
           '웹 업무 자동 이동에는 엣지나 크롬 선택이 필요합니다. 사이트만 열었습니다.',

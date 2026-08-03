@@ -433,9 +433,9 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `icon:importPath` | `string` | `string \| null` | OS 드롭으로 받은 이미지 경로를 아이콘으로 등록 |
 | `apps:list` | `{ refresh?: boolean }` | `InstalledApp[]` | 설치된 앱 목록 (§6.1) |
 | `browsers:list` | `{ refresh?: boolean }` | `DetectedBrowser[]` | 설치된 브라우저와 프로필 목록 (§6.13) |
-| `web-connector:status` | `{}` | `WebConnectorStatus[]` | 엣지·크롬 확장 기능 연결 상태 (§6.14) |
-| `web-connector:test` | `{ browserId: 'chrome'\|'edge' }` | `{ok:true} \| {ok:false; message:string}` | 로컬 연결 시험 페이지를 열고 확장 기능 응답을 확인 |
-| `web-connector:open-setup` | `{ browserId: 'chrome'\|'edge'; target:'pair'\|'folder'\|'extensions' }` | `{ok:true} \| {ok:false; message:string}` | 연결 페이지·포함된 확장 기능 폴더·브라우저 확장 관리 화면 열기 |
+| `web-connector:status` | `{}` | `WebConnectorStatus[]` | Windows 전용. 엣지·크롬 확장 기능 연결 상태 (§6.14) |
+| `web-connector:test` | `{ browserId: 'chrome'\|'edge' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 로컬 연결 시험 페이지를 열고 확장 기능 응답을 확인 |
+| `web-connector:open-setup` | `{ browserId: 'chrome'\|'edge'; target:'pair'\|'folder'\|'extensions' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 연결 페이지·포함된 확장 기능 폴더·브라우저 확장 관리 화면 열기 |
 | `icon:resolve` | `{ type: ActionType; target: string }` | `string \| null` | 아이콘 data URL (캐시 사용) |
 | `drop:classify` | `{ paths: string[]; text?: string }` | `Partial<ActionItem>[]` | OS 드롭 대상을 액션으로 변환 (§9.6) |
 | `window:hide` | — | `void` | 패널 숨기기 (피크 스트립이 켜져 있으면 스트립으로 전환) |
@@ -1214,7 +1214,12 @@ spawn(exe, flags, { detached: true, stdio: 'ignore' }).unref();
   브라우저 지정이 검증을 우회하는 경로가 되어서는 안 된다.
 - `shell: true`를 쓰지 않는다. 플래그는 배열로 전달한다.
 
-### 6.14 엣지·크롬 웹 업무 연결 (`services/webConnector/`, `browser-extension/`)
+### 6.14 엣지·크롬 웹 업무 연결 · Windows 전용 (`services/webConnector/`, `browser-extension/`)
+
+이 기능은 Windows에서만 제공한다. macOS에서는 액션 라이브러리와 설정 탭을 표시하지 않고,
+로컬 연결부를 시작하지 않으며, 앱 묶음에도 브라우저 확장 기능을 넣지 않는다. Windows에서
+만든 기존 웹 업무 키를 macOS에서 실행하면 확장 명령을 넣지 않고 사이트만 연 뒤 Windows
+전용 기능임을 알린다.
 
 파워 오토메이트나 별도 자동화 앱을 설치하지 않는다. 스트림 패널이 `127.0.0.1`에만
 로컬 연결부를 열고, 사용자가 엣지·크롬에 한 번 추가한 `스트림 패널 웹 업무 도우미`
@@ -1588,7 +1593,9 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
 
 ### 9.9 설정 (편집기 내 모달)
 
-탭 6개: `일반` / `동작` / `모양` / `단축키` / `웹 업무 연결` / `정보`
+Windows 탭 6개: `일반` / `동작` / `모양` / `단축키` / `웹 업무 연결` / `정보`
+
+macOS 탭 5개: `일반` / `동작` / `모양` / `단축키` / `정보`. `웹 업무 연결`은 표시하지 않는다.
 
 - **일반**: 로그인 시 자동 시작 · 시작 시 숨김 · 자동 업데이트 확인 · 설정 초기화(2단계 확인)
 - **동작** (§6.10 — 화면 가림 방지):
@@ -1626,7 +1633,7 @@ CSS 변수로 정의한다. `theme: 'system'`이면 `nativeTheme.shouldUseDarkCo
     각 행에 키 이름 · 단축키 · 상태(`등록됨`/`충돌`) · `해제` 버튼.
     어디에 무엇이 걸려 있는지 한눈에 보이지 않으면 관리가 불가능해진다.
 - **정보**: 버전 · 저장소 링크 · 라이선스 · `업데이트 확인` 버튼 + 진행 상태
-- **웹 업무 연결** (§6.14):
+- **웹 업무 연결** (§6.14, Windows에서만 표시):
   - 엣지·크롬별 `연결됨` / `연결 필요` 상태
   - `확장 기능 폴더 열기` · `확장 관리 열기` · `연결 시험` 단추
   - 인증 정보는 저장하지 않고 저장·제출·결재 전에 멈춘다는 안내
@@ -2312,16 +2319,17 @@ URL 키에 Chrome + 업무용 프로필 + 전용 창을 지정하면 **기본 �
 - 검색어가 비면 숫자 즉시 실행, 타이핑 중이면 숫자가 검색어로 들어간다.
 - §15.3의 "전역 실행"과 "퀵 런처" 항목 전체 통과.
 
-### M6.6 — 엣지·크롬 웹 업무 연결
+### M6.6 — 엣지·크롬 웹 업무 연결 · Windows 전용
 
 `services/webConnector/`의 로컬 연결부, `browser-extension/` 확장 기능,
 `web-connector:status`/`test`/`open-setup` 연결 채널, 액션 라이브러리의 나이스 복무·출장과
 에듀파인 기안·품의 틀, 속성 패널의 브라우저 선택, 설정의 `웹 업무 연결` 탭을 구현한다.
 
-**수용 기준:** 연결 시험에서 엣지와 크롬을 따로 식별한다. 네 업무 키는 선택한 브라우저와
+**수용 기준:** Windows 연결 시험에서 엣지와 크롬을 따로 식별한다. 네 업무 키는 선택한 브라우저와
 프로필로 사이트를 열고 목표 화면까지 이동한 뒤 멈춘다. 로그인 정보는 읽거나 저장하지 않고,
 저장·제출·결재 단추를 누르지 않는다. 확장 기능이 없거나 로컬 연결부가 실패해도 웹사이트는
-열리며 해결 방법이 한국어로 표시된다. 관련 단위 테스트와 전체 기존 테스트가 통과한다.
+열리며 해결 방법이 한국어로 표시된다. macOS에서는 연결 화면·연결 서버·확장 기능 묶음이
+없고 기존 웹 업무 키도 사이트만 연다. 관련 단위 테스트와 전체 기존 테스트가 통과한다.
 
 ### M7 — 트레이 · 키별 단축키 · 가장자리 피크 · 설정 · 자동 시작 · 마감
 `tray.ts`, `shortcuts.ts`, `autoLaunch.ts`,

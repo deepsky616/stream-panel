@@ -14,7 +14,7 @@ import type { WebConnectorService } from '../services/webConnector';
 
 export function registerIpcHandlers(
   configStore: ConfigStore,
-  webConnectorService: WebConnectorService,
+  webConnectorService: WebConnectorService | null,
 ): void {
   registerConfigHandlers(configStore);
   registerDeckHandlers(configStore);
@@ -23,7 +23,7 @@ export function registerIpcHandlers(
   registerDropHandlers();
   registerAppHandlers();
   registerBrowserHandlers();
-  registerWebConnectorHandlers(webConnectorService);
+  if (webConnectorService) registerWebConnectorHandlers(webConnectorService);
   registerIconHandlers();
   registerWindowHandlers(configStore);
   registerLauncherHandlers(configStore);
