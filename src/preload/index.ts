@@ -24,6 +24,10 @@ const api = {
     launch: (input: { path: string[]; id: string; keepOpen?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.BUTTON_LAUNCH, input),
   },
+  multiAction: {
+    cancel: (input: { itemId: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.MULTI_ACTION_CANCEL, input),
+  },
   picker: {
     folder: () => ipcRenderer.invoke(IPC_CHANNELS.PICKER_FOLDER),
     file: () => ipcRenderer.invoke(IPC_CHANNELS.PICKER_FILE),
@@ -41,6 +45,15 @@ const api = {
   browsers: {
     list: (input: { refresh?: boolean } = {}) =>
       ipcRenderer.invoke(IPC_CHANNELS.BROWSERS_LIST, input),
+  },
+  webConnector: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_STATUS, {}),
+    test: (input: { browserId: 'chrome' | 'edge' }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_TEST, input),
+    openSetup: (input: {
+      browserId: 'chrome' | 'edge';
+      target: 'pair' | 'folder' | 'extensions';
+    }) => ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_OPEN_SETUP, input),
   },
   drop: {
     classify: (input: { paths: string[]; text?: string }) =>

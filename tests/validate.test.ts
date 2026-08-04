@@ -16,7 +16,9 @@ import {
   assertLauncherRunInput,
   assertNoInput,
   assertBrowsersListInput,
+  assertMultiActionCancelInput,
 } from '../src/main/security/inputValidation';
+import * as inputValidation from '../src/main/security/inputValidation';
 import {
   getExecutableDialogOptions,
   resolveExecutableSelection,
@@ -141,6 +143,110 @@ describe('security validation', () => {
     ).toThrow(/웹사이트/);
   });
 
+  it('allows only fixed web workflows on their matching secure work sites and browsers', () => {
+    const edge = {
+      path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      profileDir: 'Default',
+      appMode: false,
+    };
+    const leave = action({
+      target: 'https://goe.neis.go.kr',
+      browser: edge,
+      webWorkflow: { id: 'neis-leave', browserId: 'edge' },
+    } as Partial<ActionItem>);
+
+    expect(() => validateActionTarget(leave, 'win32')).not.toThrow();
+    expect(() =>
+      validateActionTarget(
+        { ...leave, target: 'https://klef.goe.go.kr' },
+        'win32',
+      ),
+    ).toThrow(/나이스/);
+    expect(() =>
+      validateActionTarget(
+        {
+          ...leave,
+          webWorkflow: { id: 'edufine-draft', browserId: 'edge' },
+        } as ActionItem,
+        'win32',
+      ),
+    ).toThrow(/에듀파인/);
+    expect(() =>
+      validateDeckItemShallow(
+        {
+          ...leave,
+          webWorkflow: { id: 'run-any-script', browserId: 'edge' },
+        } as unknown as ActionItem,
+      ),
+    ).toThrow(/웹 업무/);
+    expect(() =>
+      validateActionTarget(
+        {
+          ...leave,
+          webWorkflow: { id: 'neis-leave', browserId: 'chrome' },
+        } as ActionItem,
+        'win32',
+      ),
+    ).toThrow(/브라우저/);
+    expect(() =>
+      validateDeckItemShallow(
+        action({
+          type: 'file',
+          target: 'C:\\report.txt',
+          webWorkflow: { id: 'neis-leave', browserId: 'edge' },
+        } as Partial<ActionItem>),
+      ),
+    ).toThrow(/웹사이트/);
+  });
+
+  it('validates multi-action steps, references, and delay limits', () => {
+    const referenced = action({ id: 'open-site', position: 1, label: '사이트 열기' });
+    const valid = action({
+      id: 'morning',
+      type: 'multi',
+      target: '',
+      label: '아침 준비',
+      multiAction: {
+        steps: [
+          { id: 'step-1', kind: 'action', actionId: 'open-site' },
+          { id: 'step-2', kind: 'delay', delayMs: 1_000 },
+        ],
+      },
+    });
+
+    expect(() => validateDeck([valid, referenced], 'darwin')).not.toThrow();
+    expect(() => validateActionTarget(action({
+      ...valid,
+      multiAction: { steps: [] },
+    }), 'darwin')).toThrow(/단계/);
+    expect(() => validateDeck([
+      { ...valid, multiAction: { steps: [{ id: 'step-1', kind: 'action', actionId: 'missing' }] } },
+      referenced,
+    ], 'darwin')).toThrow(/찾을 수/);
+    expect(() => validateDeck([
+      valid,
+      { ...valid, id: 'nested', position: 2, multiAction: {
+        steps: [{ id: 'nested-step', kind: 'action', actionId: 'morning' }],
+      } },
+      referenced,
+    ], 'darwin')).toThrow(/다른 멀티 액션/);
+    expect(() => validateDeck([
+      { ...valid, multiAction: { steps: Array.from({ length: 21 }, (_, index) => ({
+        id: `step-${index}`,
+        kind: 'delay' as const,
+        delayMs: 0,
+      })) } },
+      referenced,
+    ], 'darwin')).toThrow(/20/);
+    expect(() => validateDeck([
+      { ...valid, multiAction: { steps: [
+        { id: 'step-1', kind: 'delay', delayMs: 30_000 },
+        { id: 'step-2', kind: 'delay', delayMs: 30_001 },
+      ] } },
+      referenced,
+    ], 'darwin')).toThrow(/60초/);
+  });
+
   it('enforces layer, depth, and total item limits', () => {
     const layer = Array.from({ length: 121 }, (_, index) => action({ id: `id-${index}`, position: index }));
     expect(() => validateDeck(layer)).toThrow(/120/);
@@ -235,6 +341,35 @@ describe('security validation', () => {
     expect(() => assertNoInput({})).toThrow(/입력/);
     expect(() => assertBrowsersListInput({ refresh: true })).not.toThrow();
     expect(() => assertBrowsersListInput({ refresh: 'yes' })).toThrow(/브라우저/);
+  });
+
+  it('validates multi-action cancellation input', () => {
+    expect(() => assertMultiActionCancelInput({ itemId: 'multi-id' })).not.toThrow();
+    expect(() => assertMultiActionCancelInput({ itemId: '' })).toThrow(/멀티 액션/);
+    expect(() => assertMultiActionCancelInput({ itemId: 'multi-id', force: true })).toThrow(
+      /멀티 액션/,
+    );
+  });
+
+  it('validates every web connector IPC payload before handling it', () => {
+    const validators = inputValidation as typeof inputValidation & {
+      assertWebConnectorStatusInput(value: unknown): asserts value is Record<string, never>;
+      assertWebConnectorBrowserInput(value: unknown): asserts value is { browserId: 'chrome' | 'edge' };
+      assertWebConnectorSetupInput(value: unknown): asserts value is {
+        browserId: 'chrome' | 'edge';
+        target: 'pair' | 'folder' | 'extensions';
+      };
+    };
+    expect(() => validators.assertWebConnectorStatusInput({})).not.toThrow();
+    expect(() => validators.assertWebConnectorStatusInput({ browserId: 'edge' })).toThrow(/연결 상태/);
+    expect(() => validators.assertWebConnectorBrowserInput({ browserId: 'edge' })).not.toThrow();
+    expect(() => validators.assertWebConnectorBrowserInput({ browserId: 'safari' })).toThrow(/브라우저/);
+    expect(() =>
+      validators.assertWebConnectorSetupInput({ browserId: 'chrome', target: 'pair' }),
+    ).not.toThrow();
+    expect(() =>
+      validators.assertWebConnectorSetupInput({ browserId: 'chrome', target: 'pair', command: 'run' }),
+    ).toThrow(/설치/);
   });
 });
 

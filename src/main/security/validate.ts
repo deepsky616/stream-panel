@@ -3,7 +3,19 @@ import { extname, isAbsolute, normalize, win32 } from 'node:path';
 import type { Stats } from 'node:fs';
 import { buildNumberAccelerators, normalizeAccelerator } from '../../shared/accelerator';
 import { validateHintKeys } from '../../shared/hintMap';
-import type { ActionItem, AppConfig, DeckItem, IconSpec } from '../../shared/types';
+import type {
+  ActionItem,
+  AppConfig,
+  DeckItem,
+  IconSpec,
+  MultiActionSpec,
+} from '../../shared/types';
+import {
+  browserIdFromPath,
+  getWebWorkflowDefinition,
+  isAllowedWebWorkflowTarget,
+  isWebWorkflowSpec,
+} from '../../shared/webWorkflows';
 import { isValidProfileDirectory } from '../services/browserService/flags';
 
 export interface GlobalHotkeyConflict {
@@ -185,6 +197,63 @@ function validateIcon(icon: IconSpec): void {
   throw new ValidationError('아이콘 설정이 올바르지 않습니다.');
 }
 
+function validateMultiActionSpec(value: unknown): asserts value is MultiActionSpec {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ValidationError('멀티 액션 설정이 올바르지 않습니다. 편집기에서 다시 만들어 주세요.');
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== 'steps') || !Array.isArray(record.steps)) {
+    throw new ValidationError('멀티 액션 단계 목록이 올바르지 않습니다. 편집기에서 다시 만들어 주세요.');
+  }
+  if (record.steps.length > 20) {
+    throw new ValidationError('멀티 액션 단계는 최대 20개까지 추가할 수 있습니다.');
+  }
+  const ids = new Set<string>();
+  let totalDelayMs = 0;
+  for (const step of record.steps) {
+    if (!step || typeof step !== 'object' || Array.isArray(step)) {
+      throw new ValidationError('멀티 액션 단계 형식이 올바르지 않습니다. 해당 단계를 다시 추가해 주세요.');
+    }
+    const candidate = step as Record<string, unknown>;
+    if (
+      typeof candidate.id !== 'string' ||
+      candidate.id.length < 1 ||
+      candidate.id.length > 100 ||
+      ids.has(candidate.id)
+    ) {
+      throw new ValidationError('멀티 액션 단계 식별자가 비어 있거나 중복되었습니다. 해당 단계를 다시 추가해 주세요.');
+    }
+    ids.add(candidate.id);
+    if (candidate.kind === 'action') {
+      if (
+        Object.keys(candidate).some((key) => !['id', 'kind', 'actionId'].includes(key)) ||
+        typeof candidate.actionId !== 'string' ||
+        candidate.actionId.length < 1 ||
+        candidate.actionId.length > 100
+      ) {
+        throw new ValidationError('멀티 액션 실행 단계가 참조하는 키가 올바르지 않습니다. 다시 선택해 주세요.');
+      }
+      continue;
+    }
+    if (candidate.kind === 'delay') {
+      if (
+        Object.keys(candidate).some((key) => !['id', 'kind', 'delayMs'].includes(key)) ||
+        !Number.isInteger(candidate.delayMs) ||
+        Number(candidate.delayMs) < 0 ||
+        Number(candidate.delayMs) > 60_000
+      ) {
+        throw new ValidationError('멀티 액션 기다리기는 0초부터 60초까지 지정해 주세요.');
+      }
+      totalDelayMs += Number(candidate.delayMs);
+      if (totalDelayMs > 60_000) {
+        throw new ValidationError('멀티 액션의 전체 기다리기 시간은 60초를 넘을 수 없습니다.');
+      }
+      continue;
+    }
+    throw new ValidationError('지원하지 않는 멀티 액션 단계입니다. 해당 단계를 다시 추가해 주세요.');
+  }
+}
+
 export function validateDeckItemShallow(item: DeckItem): void {
   if (!item || typeof item !== 'object') throw new ValidationError('키 자료가 올바르지 않습니다.');
   if (typeof item.id !== 'string' || item.id.length < 1 || item.id.length > 100) {
@@ -214,7 +283,7 @@ export function validateDeckItemShallow(item: DeckItem): void {
     }
     return;
   }
-  if (!['url', 'folder', 'file', 'app', 'uwp'].includes(item.type)) {
+  if (!['url', 'folder', 'file', 'app', 'uwp', 'multi'].includes(item.type)) {
     throw new ValidationError('지원하지 않는 실행 종류입니다.');
   }
   if (typeof item.target !== 'string' || item.target.length > 2048) {
@@ -231,6 +300,34 @@ export function validateDeckItemShallow(item: DeckItem): void {
   }
   if (item.browser !== undefined && item.type !== 'url') {
     throw new ValidationError('브라우저 지정은 웹사이트 키에만 사용할 수 있습니다.');
+  }
+  if (item.webWorkflow !== undefined) {
+    if (item.type !== 'url') {
+      throw new ValidationError('웹 업무 연결은 웹사이트 키에만 사용할 수 있습니다.');
+    }
+    if (!isWebWorkflowSpec(item.webWorkflow)) {
+      throw new ValidationError('웹 업무 연결 설정이 올바르지 않습니다. 목록에서 다시 선택해 주세요.');
+    }
+    if (item.browser) {
+      const browserId = browserIdFromPath(item.browser.path);
+      if (browserId !== item.webWorkflow.browserId) {
+        throw new ValidationError('웹 업무 연결 브라우저가 선택한 브라우저와 다릅니다. 다시 선택해 주세요.');
+      }
+    }
+  }
+  if (item.type === 'multi') {
+    if (
+      item.target !== '' ||
+      item.args.length > 0 ||
+      item.workingDir !== undefined ||
+      item.browser !== undefined ||
+      item.webWorkflow !== undefined
+    ) {
+      throw new ValidationError('멀티 액션에는 주소, 경로, 실행 인자나 브라우저를 지정할 수 없습니다.');
+    }
+    validateMultiActionSpec(item.multiAction);
+  } else if (item.multiAction !== undefined) {
+    throw new ValidationError('멀티 액션 단계는 멀티 액션 키에만 저장할 수 있습니다.');
   }
 }
 
@@ -270,13 +367,22 @@ export function validateActionTarget(
   platform: NodeJS.Platform = process.platform,
 ): void {
   validateDeckItemShallow(item);
-  if (item.type === 'url') {
+  if (item.type === 'multi') {
+    if (!item.multiAction || item.multiAction.steps.length === 0) {
+      throw new ValidationError('멀티 액션 단계가 없습니다. 편집기에서 실행 단계를 추가해 주세요.');
+    }
+  } else if (item.type === 'url') {
     validateUrl(item.target);
     if (item.browser) {
       validateBrowserSpecification(
         item as ActionItem & { browser: NonNullable<ActionItem['browser']> },
         platform,
       );
+    }
+    if (item.webWorkflow && !isAllowedWebWorkflowTarget(item.webWorkflow.id, item.target)) {
+      const definition = getWebWorkflowDefinition(item.webWorkflow.id);
+      const systemName = definition.system === 'neis' ? '나이스' : '에듀파인';
+      throw new ValidationError(`${systemName} 웹 업무는 허용된 ${systemName} 주소에서만 실행할 수 있습니다.`);
     }
   } else if (item.type === 'uwp') {
     if (platform !== 'win32') {
@@ -293,6 +399,7 @@ export function validateDeck(
   platform: NodeJS.Platform = process.platform,
 ): void {
   const ids = new Set<string>();
+  const itemsById = new Map<string, DeckItem>();
   const objects = new WeakSet<object>();
   const hotkeys: GlobalHotkeyConflict[] = [];
   let total = 0;
@@ -309,6 +416,7 @@ export function validateDeck(
       validateDeckItemShallow(item);
       if (ids.has(item.id)) throw new ValidationError('중복된 키 식별자가 있습니다.');
       ids.add(item.id);
+      itemsById.set(item.id, item);
       if (positions.has(item.position)) throw new ValidationError('같은 위치에 여러 키를 둘 수 없습니다.');
       positions.add(item.position);
       if (objects.has(item)) throw new ValidationError('폴더 순환 구조는 저장할 수 없습니다.');
@@ -332,6 +440,25 @@ export function validateDeck(
   };
 
   visit(items, 0);
+  for (const item of itemsById.values()) {
+    if (item.kind !== 'action' || item.type !== 'multi' || !item.multiAction) continue;
+    for (const step of item.multiAction.steps) {
+      if (step.kind !== 'action') continue;
+      const target = itemsById.get(step.actionId);
+      if (!target) {
+        throw new ValidationError(`멀티 액션이 참조하는 키를 찾을 수 없습니다: ${step.actionId}`);
+      }
+      if (target.kind !== 'action') {
+        throw new ValidationError('멀티 액션에는 실행 키만 넣을 수 있습니다. 폴더 키를 다시 선택해 주세요.');
+      }
+      if (target.type === 'multi') {
+        throw new ValidationError('멀티 액션 안에는 다른 멀티 액션을 넣을 수 없습니다.');
+      }
+      if (target.target === '') {
+        throw new ValidationError(`'${target.label}' 키의 실행 대상이 비어 있습니다. 먼저 해당 키를 완성해 주세요.`);
+      }
+    }
+  }
 }
 
 export function validateAppConfig(config: AppConfig): void {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assignHints, findHintByCode } from '../../../shared/hintMap';
 import { findFirstEmptyPosition, getPageCount, getPageSlots } from '../../../shared/layout';
 import { cloneItemWithNewIds, countDeckItems, getItemsAtPath } from '../../../shared/tree';
-import type { DeckItem } from '../../../shared/types';
+import type { DeckItem, MultiActionProgress } from '../../../shared/types';
 import { ContextMenu, type ContextMenuItem } from '../common/ContextMenu';
 import { Toast } from '../common/Toast';
 import { useConfig } from '../hooks/useConfig';
@@ -23,6 +23,19 @@ interface MenuState {
   position: number;
 }
 
+function isMultiActionProgress(payload: unknown): payload is MultiActionProgress {
+  if (!payload || typeof payload !== 'object') return false;
+  const value = payload as Partial<MultiActionProgress>;
+  return (
+    typeof value.runId === 'string' &&
+    typeof value.itemId === 'string' &&
+    typeof value.label === 'string' &&
+    Number.isInteger(value.currentStep) &&
+    Number.isInteger(value.totalSteps) &&
+    ['running', 'completed', 'failed', 'cancelled'].includes(String(value.state))
+  );
+}
+
 export function PanelApp() {
   const config = useConfig();
   const location = useDeckStore((state) => state.location);
@@ -31,6 +44,7 @@ export function PanelApp() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [panelFocused, setPanelFocused] = useState(() => document.hasFocus());
   const [focusUnavailable, setFocusUnavailable] = useState(false);
+  const [multiActionProgress, setMultiActionProgress] = useState<MultiActionProgress | null>(null);
   const [showNumberIntro, setShowNumberIntro] = useState(
     () => localStorage.getItem('global-number-intro-seen') !== '1',
   );
@@ -87,6 +101,21 @@ export function PanelApp() {
     }
   }, [location.path]);
 
+  useEffect(() => {
+    let clearTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = window.api.on('multi-action:progress', (payload) => {
+      if (!isMultiActionProgress(payload)) return;
+      if (clearTimer) clearTimeout(clearTimer);
+      setMultiActionProgress(payload);
+      if (payload.state !== 'running') {
+        clearTimer = setTimeout(() => setMultiActionProgress(null), 4_000);
+      }
+    });
+    return () => {
+      if (clearTimer) clearTimeout(clearTimer);
+      unsubscribe();
+    };
+  }, []);
   useEffect(() => {
     document.title = showFooter ? 'Stream Panel [footer]' : 'Stream Panel';
     void window.api.window.relayout();
@@ -223,7 +252,11 @@ export function PanelApp() {
         { label: '아이콘 변경', onSelect: () => void window.api.editor.open({ path: location.path, slot: menu.position }) },
         {
           label: '위치 열기',
-          disabled: menu.item.kind === 'folder' || menu.item.type === 'url' || menu.item.type === 'uwp',
+          disabled:
+            menu.item.kind === 'folder' ||
+            menu.item.type === 'url' ||
+            menu.item.type === 'uwp' ||
+            menu.item.type === 'multi',
           onSelect: () => menu.item?.kind === 'action' && void window.api.shell.reveal(menu.item.target),
         },
         { separator: true },
@@ -290,6 +323,33 @@ export function PanelApp() {
             설정 보기
           </button>
           <button type="button" onClick={dismissNumberIntro} aria-label="전역 숫자 안내 닫기">✕</button>
+        </div>
+      )}
+      {multiActionProgress && (
+        <div className={`multi-progress multi-progress-${multiActionProgress.state}`} role="status">
+          <div>
+            <strong>{multiActionProgress.label}</strong>
+            <span>
+              {multiActionProgress.state === 'running'
+                ? `${multiActionProgress.currentStep}/${multiActionProgress.totalSteps}단계 실행 중`
+                : multiActionProgress.message}
+            </span>
+          </div>
+          <progress
+            max={multiActionProgress.totalSteps}
+            value={multiActionProgress.currentStep}
+            aria-label="멀티 액션 진행률"
+          />
+          {multiActionProgress.state === 'running' && (
+            <button
+              type="button"
+              onClick={() =>
+                void window.api.multiAction.cancel({ itemId: multiActionProgress.itemId })
+              }
+            >
+              취소
+            </button>
+          )}
         </div>
       )}
       {showFooter && (

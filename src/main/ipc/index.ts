@@ -9,15 +9,23 @@ import { registerIconHandlers } from './iconHandlers';
 import { registerWindowHandlers } from './windowHandlers';
 import { registerLauncherHandlers } from './launcherHandlers';
 import { registerBrowserHandlers } from './browserHandlers';
+import { registerWebConnectorHandlers } from './webConnectorHandlers';
+import type { WebConnectorService } from '../services/webConnector';
+import { registerMultiActionHandlers } from './multiActionHandlers';
 
-export function registerIpcHandlers(configStore: ConfigStore): void {
+export function registerIpcHandlers(
+  configStore: ConfigStore,
+  webConnectorService: WebConnectorService | null,
+): void {
   registerConfigHandlers(configStore);
   registerDeckHandlers(configStore);
   registerLaunchHandlers(configStore);
+  registerMultiActionHandlers();
   registerPickerHandlers();
   registerDropHandlers();
   registerAppHandlers();
   registerBrowserHandlers();
+  if (webConnectorService) registerWebConnectorHandlers(webConnectorService);
   registerIconHandlers();
   registerWindowHandlers(configStore);
   registerLauncherHandlers(configStore);

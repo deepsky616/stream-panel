@@ -167,11 +167,13 @@ export function EditorApp() {
         kind: 'action',
         type: entry.type,
         label: entry.label,
-        target: '',
+        target: entry.target ?? '',
         args: [],
         icon: { kind: 'emoji', value: entry.emoji },
         color: '#5B8CFF',
         position,
+        webWorkflow: entry.webWorkflow,
+        multiAction: entry.type === 'multi' ? { steps: [] } : undefined,
       };
     } else {
       const app = entry.app;
@@ -189,13 +191,33 @@ export function EditorApp() {
       };
     }
     await window.api.deck.upsert({ path: targetPath, item });
+    if (entry.kind === 'action-template' && entry.webWorkflow && item.kind === 'action') {
+      const detected = await window.api.browsers.list();
+      const browser =
+        detected.find((candidate) => candidate.id === entry.webWorkflow?.browserId) ??
+        detected.find((candidate) => candidate.id === 'edge' || candidate.id === 'chrome');
+      if (browser && (browser.id === 'edge' || browser.id === 'chrome')) {
+        item = {
+          ...item,
+          browser: { path: browser.path, appMode: false },
+          webWorkflow: { ...entry.webWorkflow, browserId: browser.id },
+        };
+        await window.api.deck.upsert({ path: targetPath, item });
+      }
+    }
     setLocation({
       path: targetPath,
       page: positionToSlot(position, config.grid.cols * config.grid.rows, targetPath.length > 0).page,
     });
     setSelectedId(item.id);
     setSelectedPosition(item.position);
-    setFocusField(item.kind === 'folder' ? 'label' : item.type === 'url' ? 'target' : null);
+    setFocusField(
+      item.kind === 'folder'
+        ? 'label'
+        : item.type === 'url' && !item.webWorkflow
+          ? 'target'
+          : null,
+    );
 
     if (
       entry.kind === 'action-template' &&
@@ -504,7 +526,11 @@ export function EditorApp() {
         { label: '아이콘 변경', onSelect: () => selectItem(menu.item!.id, menu.position) },
         {
           label: '위치 열기',
-          disabled: menu.item.kind === 'folder' || menu.item.type === 'url' || menu.item.type === 'uwp',
+          disabled:
+            menu.item.kind === 'folder' ||
+            menu.item.type === 'url' ||
+            menu.item.type === 'uwp' ||
+            menu.item.type === 'multi',
           onSelect: () => menu.item?.kind === 'action' && void window.api.shell.reveal(menu.item.target),
         },
         { separator: true },
@@ -581,11 +607,13 @@ export function EditorApp() {
             <TrashZone visible={activeDrag?.source === 'grid'} />
             <p className="editor-hint">빈 키를 선택하거나 오른쪽 액션을 끌어다 놓으세요.</p>
           </div>
-          <ActionLibrary onAdd={(entry) => void addEntry(entry)} />
+          <ActionLibrary platform={config.platform} onAdd={(entry) => void addEntry(entry)} />
         </section>
         <PropertiesPanel
           key={selectedItem?.id ?? 'no-selection'}
           item={selectedItem}
+          root={config.root}
+          platform={config.platform}
           path={location.path}
           focusField={focusField}
           onSaved={saved}

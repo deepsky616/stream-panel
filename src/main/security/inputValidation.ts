@@ -172,6 +172,20 @@ export function assertLaunchInput(
   }
 }
 
+export function assertMultiActionCancelInput(
+  value: unknown,
+): asserts value is { itemId: string } {
+  assertRecord(value, '멀티 액션 취소');
+  if (
+    Object.keys(value).some((key) => key !== 'itemId') ||
+    typeof value.itemId !== 'string' ||
+    value.itemId.length < 1 ||
+    value.itemId.length > 100
+  ) {
+    throw new TypeError('멀티 액션 취소 요청이 올바르지 않습니다. 패널을 다시 열어 주세요.');
+  }
+}
+
 export function assertDeckUpsertInput(
   value: unknown,
 ): asserts value is { path: string[]; item: DeckItem } {
@@ -246,6 +260,43 @@ export function assertBrowsersListInput(value: unknown): asserts value is { refr
     ('refresh' in value && typeof value.refresh !== 'boolean')
   ) {
     throw new TypeError('브라우저 목록 새로고침 값이 올바르지 않습니다. 다시 시도해 주세요.');
+  }
+}
+
+export function assertWebConnectorStatusInput(
+  value: unknown,
+): asserts value is Record<string, never> {
+  assertRecord(value, '웹 업무 연결 상태');
+  if (Object.keys(value).length > 0) {
+    throw new TypeError('웹 업무 연결 상태 요청에는 다른 값을 보낼 수 없습니다.');
+  }
+}
+
+export function assertWebConnectorBrowserInput(
+  value: unknown,
+): asserts value is { browserId: 'chrome' | 'edge' } {
+  assertRecord(value, '웹 업무 연결 브라우저');
+  if (
+    Object.keys(value).some((key) => key !== 'browserId') ||
+    !['chrome', 'edge'].includes(String(value.browserId))
+  ) {
+    throw new TypeError('웹 업무 연결 브라우저가 올바르지 않습니다. 엣지나 크롬을 선택해 주세요.');
+  }
+}
+
+export function assertWebConnectorSetupInput(
+  value: unknown,
+): asserts value is {
+  browserId: 'chrome' | 'edge';
+  target: 'pair' | 'folder' | 'extensions';
+} {
+  assertRecord(value, '웹 업무 연결 설치');
+  if (
+    Object.keys(value).some((key) => !['browserId', 'target'].includes(key)) ||
+    !['chrome', 'edge'].includes(String(value.browserId)) ||
+    !['pair', 'folder', 'extensions'].includes(String(value.target))
+  ) {
+    throw new TypeError('웹 업무 연결 설치 요청이 올바르지 않습니다. 브라우저를 다시 선택해 주세요.');
   }
 }
 

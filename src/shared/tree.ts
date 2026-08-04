@@ -159,7 +159,16 @@ export function cloneItemWithNewIds(
   item: DeckItem,
   createId: () => string = () => crypto.randomUUID(),
 ): DeckItem {
-  if (item.kind === 'action') return { ...structuredClone(item), id: createId() };
+  if (item.kind === 'action') {
+    const cloned = { ...structuredClone(item), id: createId() };
+    if (cloned.multiAction) {
+      cloned.multiAction.steps = cloned.multiAction.steps.map((step) => ({
+        ...step,
+        id: createId(),
+      }));
+    }
+    return cloned;
+  }
   return {
     ...structuredClone(item),
     id: createId(),

@@ -37,6 +37,8 @@ function dependencies(): LauncherDependencies {
       `${bundlePath}/Contents/MacOS/Browser`,
     ),
     notifyWarning: vi.fn(),
+    queueWebWorkflow: vi.fn(() => ({ queued: true })),
+    startMultiAction: vi.fn(() => ({ ok: true as const })),
   };
 }
 
@@ -101,6 +103,31 @@ describe('launcher', () => {
     expect(deps.openExternal).not.toHaveBeenCalled();
     expect(deps.openPath).not.toHaveBeenCalled();
     expect(deps.spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it('delegates a multi action without opening a shell target', async () => {
+    const deps = dependencies();
+    const target = action({ id: 'target', label: '문서 열기' });
+    const multi = action({
+      id: 'multi',
+      type: 'multi',
+      target: '',
+      label: '업무 시작',
+      multiAction: {
+        steps: [{ id: 'step-1', kind: 'action', actionId: target.id }],
+      },
+    });
+
+    expect(await launchDeckItem([multi, target], [], multi.id, deps)).toEqual({ ok: true });
+    expect(deps.startMultiAction).toHaveBeenCalledOnce();
+    expect(deps.openExternal).not.toHaveBeenCalled();
+    expect(deps.openPath).not.toHaveBeenCalled();
+    expect(deps.spawnProcess).not.toHaveBeenCalled();
+
+    const [, root, launch] = vi.mocked(deps.startMultiAction).mock.calls[0];
+    expect(root).toEqual([multi, target]);
+    await expect(launch(target)).resolves.toEqual({ ok: true });
+    expect(deps.openExternal).toHaveBeenCalledWith(target.target);
   });
 
   it('blocks dangerous URL schemes', async () => {
@@ -174,6 +201,67 @@ describe('launcher', () => {
     );
     const options = vi.mocked(deps.spawnProcess).mock.calls[0]?.[2];
     expect(options?.shell).not.toBe(true);
+  });
+
+  it('queues a fixed web workflow before opening its selected browser', async () => {
+    const events: string[] = [];
+    const deps = dependencies();
+    deps.queueWebWorkflow = vi.fn(() => {
+      events.push('queue');
+      return { queued: true };
+    });
+    deps.spawnProcess = vi.fn(() => {
+      events.push('open');
+      return { unref: vi.fn() };
+    });
+    const item = action({
+      target: 'https://goe.neis.go.kr',
+      browser: {
+        path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        profileDir: 'Default',
+        appMode: false,
+      },
+      webWorkflow: { id: 'neis-leave', browserId: 'edge' },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'win32')).toEqual({ ok: true });
+    expect(deps.queueWebWorkflow).toHaveBeenCalledWith(item);
+    expect(events).toEqual(['queue', 'open']);
+  });
+
+  it('opens the site without queuing automation when a workflow browser is not selected', async () => {
+    const deps = dependencies();
+    const item = action({
+      target: 'https://goe.neis.go.kr',
+      webWorkflow: { id: 'neis-trip', browserId: 'edge' },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'win32')).toEqual({ ok: true });
+    expect(deps.queueWebWorkflow).not.toHaveBeenCalled();
+    expect(deps.openExternal).toHaveBeenCalledWith('https://goe.neis.go.kr');
+    expect(deps.notifyWarning).toHaveBeenCalledWith(expect.stringMatching(/엣지나 크롬/));
+  });
+
+  it('opens an existing workflow site on macOS without queuing browser automation', async () => {
+    const deps = dependencies();
+    const item = action({
+      target: 'https://goe.neis.go.kr',
+      browser: {
+        path: '/Applications/Google Chrome.app',
+        profileDir: 'Default',
+        appMode: false,
+      },
+      webWorkflow: { id: 'neis-leave', browserId: 'chrome' },
+    });
+
+    expect(await launchDeckItem([item], [], 'item', deps, 'darwin')).toEqual({ ok: true });
+    expect(deps.queueWebWorkflow).not.toHaveBeenCalled();
+    expect(deps.spawnProcess).toHaveBeenCalledWith(
+      '/Applications/Google Chrome.app/Contents/MacOS/Browser',
+      ['--profile-directory=Default', 'https://goe.neis.go.kr'],
+      { detached: true, stdio: 'ignore' },
+    );
+    expect(deps.notifyWarning).toHaveBeenCalledWith(expect.stringMatching(/윈도우에서만/));
   });
 
   it('launches a selected macOS browser through its internal executable', async () => {

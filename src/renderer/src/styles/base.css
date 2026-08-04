@@ -217,6 +217,57 @@ button {
   cursor: pointer;
 }
 
+.multi-progress {
+  position: absolute;
+  z-index: 9;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  display: grid;
+  padding: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 94%, var(--accent));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  font-size: 10px;
+}
+
+.multi-progress > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.multi-progress span {
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-progress progress {
+  width: 100%;
+  height: 5px;
+  grid-column: 1 / -1;
+  accent-color: var(--accent);
+}
+
+.multi-progress button {
+  padding: 4px 7px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--tile-hover);
+  cursor: pointer;
+}
+
+.multi-progress-failed {
+  border-color: rgb(239 68 68 / 65%);
+}
+
 .key-icon {
   display: grid;
   height: 48%;

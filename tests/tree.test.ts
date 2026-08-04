@@ -93,6 +93,27 @@ describe('tree', () => {
     expect(duplicated[1].position).toBe(1);
   });
 
+  it('assigns new step ids when cloning a multi action', () => {
+    const source = action('multi', 0);
+    source.type = 'multi';
+    source.target = '';
+    source.multiAction = {
+      steps: [
+        { id: 'action-step', kind: 'action', actionId: 'target' },
+        { id: 'delay-step', kind: 'delay', delayMs: 500 },
+      ],
+    };
+    const ids = ['new-item', 'new-action-step', 'new-delay-step'];
+
+    const copy = cloneItemWithNewIds(source, () => ids.shift()!);
+
+    expect(copy.id).toBe('new-item');
+    expect(copy.kind === 'action' ? copy.multiAction?.steps : []).toEqual([
+      { id: 'new-action-step', kind: 'action', actionId: 'target' },
+      { id: 'new-delay-step', kind: 'delay', delayMs: 500 },
+    ]);
+  });
+
   it('adopts the current platform only when an action target is newly selected or changed', () => {
     const previous = action('item', 0);
     expect(shouldAdoptCurrentPlatform(previous, { ...previous, label: '새 이름' })).toBe(false);

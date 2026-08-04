@@ -1,6 +1,7 @@
 import { useDraggable } from '@dnd-kit/core';
 import { useEffect, useState } from 'react';
-import type { InstalledApp, LibraryEntry } from '../../../shared/types';
+import type { AppConfig, InstalledApp, LibraryEntry } from '../../../shared/types';
+import { createWebWorkflowTemplatesForPlatform } from '../../../shared/webWorkflows';
 import type { DragData } from './dndTypes';
 
 type TemplateEntry = Exclude<LibraryEntry, { kind: 'installed-app' }>;
@@ -10,10 +11,12 @@ const ACTION_TEMPLATES: TemplateEntry[] = [
   { kind: 'action-template', type: 'folder', label: '폴더 열기', emoji: '📁' },
   { kind: 'action-template', type: 'file', label: '파일 열기', emoji: '📄' },
   { kind: 'action-template', type: 'app', label: '앱 실행', emoji: '🖥️' },
+  { kind: 'action-template', type: 'multi', label: '멀티 액션', emoji: '⏩' },
   { kind: 'folder-template', label: '폴더 만들기', emoji: '🗂️' },
 ];
 
 interface ActionLibraryProps {
+  platform: AppConfig['platform'];
   onAdd: (entry: LibraryEntry) => void;
 }
 
@@ -102,13 +105,16 @@ function InstalledAppList({ apps, onAdd }: { apps: InstalledApp[]; onAdd: (app: 
   );
 }
 
-export function ActionLibrary({ onAdd }: ActionLibraryProps) {
+export function ActionLibrary({ platform, onAdd }: ActionLibraryProps) {
   const [query, setQuery] = useState('');
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [loading, setLoading] = useState(true);
-  const [platform, setPlatform] = useState<string>('');
   const normalizedQuery = query.trim().toLocaleLowerCase('ko-KR');
+  const workflowTemplates: TemplateEntry[] = createWebWorkflowTemplatesForPlatform(platform);
   const templates = ACTION_TEMPLATES.filter((entry) =>
+    entry.label.toLocaleLowerCase('ko-KR').includes(normalizedQuery),
+  );
+  const filteredWorkflows = workflowTemplates.filter((entry) =>
     entry.label.toLocaleLowerCase('ko-KR').includes(normalizedQuery),
   );
   const filteredApps = apps.filter((app) =>
@@ -126,7 +132,6 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
 
   useEffect(() => {
     let active = true;
-    void window.api.app.info().then((info) => active && setPlatform(info.platform));
     void window.api.apps
       .list()
       .then((items) => active && setApps(items))
@@ -158,6 +163,21 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
           />
         ))}
       </div>
+      {filteredWorkflows.length > 0 && (
+        <>
+          <div className="library-divider"><span>웹 업무</span></div>
+          <div className="template-list workflow-template-list">
+            {filteredWorkflows.map((entry) => (
+              <DraggableTemplate
+                key={entry.label}
+                entry={entry}
+                onAdd={() => onAdd(entry)}
+              />
+            ))}
+          </div>
+          <p className="library-note workflow-note">작성 화면까지만 열고 저장·제출·결재 전에는 멈춥니다.</p>
+        </>
+      )}
       <div className="library-divider">
         <span>설치된 앱</span>
       </div>
@@ -165,8 +185,6 @@ export function ActionLibrary({ onAdd }: ActionLibraryProps) {
         <div className="app-skeleton" aria-label="설치된 앱을 불러오는 중">
           <span /><span /><span /><span />
         </div>
-      ) : platform && !['win32', 'darwin'].includes(platform) ? (
-        <p className="library-note">이 운영체제에서는 설치된 앱 목록을 지원하지 않습니다.</p>
       ) : filteredApps.length ? (
         <InstalledAppList apps={filteredApps} onAdd={(app) => onAdd({ kind: 'installed-app', app })} />
       ) : (

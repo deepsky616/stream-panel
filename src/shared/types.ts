@@ -1,4 +1,4 @@
-export type ActionType = 'url' | 'folder' | 'file' | 'app' | 'uwp';
+export type ActionType = 'url' | 'folder' | 'file' | 'app' | 'uwp' | 'multi';
 
 export type IconSpec =
   | { kind: 'auto' }
@@ -22,6 +22,47 @@ export interface ActionItem extends DeckItemBase {
   args: string[];
   workingDir?: string;
   browser?: BrowserSpec;
+  webWorkflow?: WebWorkflowSpec;
+  multiAction?: MultiActionSpec;
+}
+
+export type MultiActionStep =
+  | { id: string; kind: 'action'; actionId: string }
+  | { id: string; kind: 'delay'; delayMs: number };
+
+export interface MultiActionSpec {
+  steps: MultiActionStep[];
+}
+
+export interface MultiActionProgress {
+  runId: string;
+  itemId: string;
+  label: string;
+  currentStep: number;
+  totalSteps: number;
+  state: 'running' | 'completed' | 'failed' | 'cancelled';
+  message?: string;
+}
+
+export type WebWorkflowId =
+  | 'neis-leave'
+  | 'neis-trip'
+  | 'edufine-draft'
+  | 'edufine-purchase';
+
+export type WebConnectorBrowserId = 'chrome' | 'edge';
+
+export interface WebWorkflowSpec {
+  id: WebWorkflowId;
+  browserId: WebConnectorBrowserId;
+}
+
+export interface WebConnectorStatus {
+  browserId: WebConnectorBrowserId;
+  paired: boolean;
+  connected: boolean;
+  extensionVersion?: string;
+  lastSeenAt?: number;
 }
 
 export interface BrowserSpec {
@@ -121,7 +162,14 @@ export interface InstalledApp {
 }
 
 export type LibraryEntry =
-  | { kind: 'action-template'; type: ActionType; label: string; emoji: string }
+  | {
+      kind: 'action-template';
+      type: ActionType;
+      label: string;
+      emoji: string;
+      target?: string;
+      webWorkflow?: WebWorkflowSpec;
+    }
   | { kind: 'folder-template'; label: string; emoji: string }
   | { kind: 'installed-app'; app: InstalledApp };
 
