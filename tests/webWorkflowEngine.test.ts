@@ -1,62 +1,139 @@
-import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
+import {
+  isForbiddenActionText,
+  selectSafeCandidate,
+  type CandidateSummary,
+  type WorkflowStep,
+} from '../src/main/services/webConnector/workflows/common';
+import { runWorkflow } from '../src/main/services/webConnector/workflows/engine';
 
-const require = createRequire(import.meta.url);
-const engine = require('../browser-extension/workflow-engine.js') as {
-  getWorkflowSteps(id: string): readonly (readonly string[])[];
-  isForbiddenActionText(text: string): boolean;
-  selectMenuCandidate<T extends { text: string; hidden?: boolean; disabled?: boolean }>(
-    candidates: readonly T[],
-    labels: readonly string[],
-  ): T | null;
+function candidate(
+  index: number,
+  text: string,
+  overrides: Partial<CandidateSummary> = {},
+): CandidateSummary {
+  return {
+    index,
+    text,
+    visible: true,
+    enabled: true,
+    width: 120,
+    height: 32,
+    ...overrides,
+  };
+}
+
+const step: WorkflowStep = {
+  id: 'open-duty',
+  candidateLabels: ['복무'],
+  interaction: 'mouse',
+  postcondition: { kind: 'visible-any', labels: ['개인근무상황관리'] },
+  maxChecks: 3,
+  checkDelayMs: 10,
 };
 
-describe('browser extension workflow engine', () => {
-  it('prefers an exact visible enabled menu label over a partial match', () => {
-    const candidates = [
-      { id: 'hidden', text: '개인근무상황관리', hidden: true },
-      { id: 'partial', text: '즐겨찾기 개인근무상황관리' },
-      { id: 'exact', text: ' 개인근무상황관리 ' },
-      { id: 'disabled', text: '개인근무상황관리', disabled: true },
-    ];
-
-    expect(engine.selectMenuCandidate(candidates, ['개인근무상황관리'])?.id).toBe('exact');
+describe('managed web workflow engine', () => {
+  it('selects one exact visible enabled candidate and ignores partial or zero-size matches', () => {
+    expect(selectSafeCandidate([
+      candidate(0, '즐겨찾기 복무'),
+      candidate(1, '복무', { visible: false }),
+      candidate(2, '복무', { enabled: false }),
+      candidate(3, '복무', { width: 0 }),
+      candidate(4, '  복무  '),
+    ], ['복무'])).toEqual(candidate(4, '  복무  '));
   });
 
-  it('never chooses a save, submit, approval, or confirmation action', () => {
+  it('fails closed when more than one safe candidate has the exact approved label', () => {
+    expect(() => selectSafeCandidate([
+      candidate(0, '복무'),
+      candidate(1, ' 복무 '),
+    ], ['복무'])).toThrow(/둘 이상/);
+  });
+
+  it('never selects save, submit, approval, payment, or confirmation actions', () => {
     for (const text of ['저장', '제출', '결재 요청', '상신', '승인', '최종 확정']) {
-      expect(engine.isForbiddenActionText(text)).toBe(true);
+      expect(isForbiddenActionText(text)).toBe(true);
+      expect(() => selectSafeCandidate([candidate(0, text)], [text])).toThrow(/누를 수 없는/);
     }
-    expect(
-      engine.selectMenuCandidate(
-        [
-          { id: 'unsafe', text: '품의 저장' },
-          { id: 'safe', text: '품의작성' },
-        ],
-        ['품의'],
-      )?.id,
-    ).toBe('safe');
+    expect(isForbiddenActionText('품의등록')).toBe(false);
   });
 
-  it('contains only fixed navigation steps for the four approved workflows', () => {
-    expect(engine.getWorkflowSteps('neis-leave')).toEqual([
-      ['복무'],
-      ['개인근무상황관리', '개인근무상황'],
-    ]);
-    expect(engine.getWorkflowSteps('neis-trip')).toEqual([
-      ['복무'],
-      ['개인출장관리', '출장관리'],
-    ]);
-    expect(engine.getWorkflowSteps('edufine-draft')).toEqual([
-      ['업무관리'],
-      ['문서관리'],
-      ['문서작성', '기안작성', '기안'],
-    ]);
-    expect(engine.getWorkflowSteps('edufine-purchase')).toEqual([
-      ['학교회계'],
-      ['사업관리'],
-      ['품의작성', '품의'],
-    ]);
-    expect(() => engine.getWorkflowSteps('arbitrary-script')).toThrow(/지원하지 않는/);
+  it('presses a safe candidate once and advances only after the postcondition succeeds', async () => {
+    const events: string[] = [];
+    let postconditionChecks = 0;
+
+    const result = await runWorkflow(
+      { id: 'neis-leave', label: '나이스 복무', finalState: 'leave-form', steps: [step] },
+      {
+        inspectCandidates: async () => [candidate(0, '복무')],
+        pressCandidate: async (selected) => { events.push(`press:${selected.index}`); },
+        checkPostcondition: async () => {
+          postconditionChecks += 1;
+          events.push(`check:${postconditionChecks}`);
+          return postconditionChecks === 2;
+        },
+        wait: async () => { events.push('wait'); },
+      },
+    );
+
+    expect(result).toEqual({ workflowId: 'neis-leave', finalState: 'leave-form' });
+    expect(events).toEqual(['press:0', 'check:1', 'wait', 'check:2']);
+  });
+
+  it('does not press the next step when the current postcondition never succeeds', async () => {
+    const pressed: string[] = [];
+    const second: WorkflowStep = {
+      ...step,
+      id: 'open-management',
+      candidateLabels: ['개인근무상황관리'],
+    };
+
+    await expect(runWorkflow(
+      {
+        id: 'neis-leave',
+        label: '나이스 복무',
+        finalState: 'leave-form',
+        steps: [step, second],
+      },
+      {
+        inspectCandidates: async (current) => [candidate(0, current.candidateLabels[0])],
+        pressCandidate: async (_selected, current) => { pressed.push(current.id); },
+        checkPostcondition: async () => false,
+        wait: async () => undefined,
+      },
+    )).rejects.toThrow(/화면을 확인하지 못했습니다/);
+    expect(pressed).toEqual(['open-duty']);
+  });
+
+  it('rechecks a missing candidate three times but stops immediately on ambiguity', async () => {
+    let inspections = 0;
+    await expect(runWorkflow(
+      { id: 'neis-trip', label: '나이스 출장', finalState: 'trip-form', steps: [step] },
+      {
+        inspectCandidates: async () => {
+          inspections += 1;
+          return [];
+        },
+        pressCandidate: async () => undefined,
+        checkPostcondition: async () => true,
+        wait: async () => undefined,
+      },
+    )).rejects.toThrow(/찾지 못했습니다/);
+    expect(inspections).toBe(3);
+
+    inspections = 0;
+    await expect(runWorkflow(
+      { id: 'neis-trip', label: '나이스 출장', finalState: 'trip-form', steps: [step] },
+      {
+        inspectCandidates: async () => {
+          inspections += 1;
+          return [candidate(0, '복무'), candidate(1, '복무')];
+        },
+        pressCandidate: async () => undefined,
+        checkPostcondition: async () => true,
+        wait: async () => undefined,
+      },
+    )).rejects.toThrow(/둘 이상/);
+    expect(inspections).toBe(1);
   });
 });
