@@ -1,18 +1,20 @@
 import type {
+  BuiltInWebWorkflowId,
+  CustomWebWorkflowDefinition,
   DeckItem,
   EducationOfficeCode,
   LibraryEntry,
   WebConnectorBrowserId,
-  WebWorkflowId,
   WebWorkflowSpec,
+  WebWorkflowSystem,
 } from './types';
 import { EDUCATION_OFFICES, getEducationOffice } from './educationOffices';
 
 export interface WebWorkflowDefinition {
-  id: WebWorkflowId;
+  id: BuiltInWebWorkflowId;
   label: string;
   defaultTarget: string;
-  system: 'neis' | 'edufine';
+  system: WebWorkflowSystem;
 }
 
 export const WEB_WORKFLOW_DEFINITIONS: readonly WebWorkflowDefinition[] = [
@@ -42,10 +44,79 @@ export const WEB_WORKFLOW_DEFINITIONS: readonly WebWorkflowDefinition[] = [
   },
 ] as const;
 
-const WORKFLOW_IDS = new Set<WebWorkflowId>(
+const WORKFLOW_IDS = new Set<BuiltInWebWorkflowId>(
   WEB_WORKFLOW_DEFINITIONS.map((definition) => definition.id),
 );
 const BROWSER_IDS = new Set<WebConnectorBrowserId>(['chrome', 'edge']);
+const CUSTOM_FORBIDDEN_ACTION_TOKENS = [
+  '저장',
+  '제출',
+  '결재',
+  '상신',
+  '승인',
+  '확정',
+  '삭제',
+  '취소',
+  '확인',
+  '지급',
+  '송금',
+  '이체',
+  '발송',
+  '인증서',
+  '비밀번호',
+  '암호',
+  '등록',
+  '신청',
+  '요청',
+  '완료',
+  '반려',
+  '서명',
+  '동의',
+  '전송',
+  '처리',
+] as const;
+
+function normalizeWorkflowText(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+export function isForbiddenCustomWorkflowLabel(value: unknown): boolean {
+  const label = normalizeWorkflowText(value);
+  return CUSTOM_FORBIDDEN_ACTION_TOKENS.some((token) => label.includes(token));
+}
+
+function isCustomWebWorkflowDefinition(value: unknown): value is CustomWebWorkflowDefinition {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const name = normalizeWorkflowText(record.name);
+  const finalText = normalizeWorkflowText(record.finalText);
+  if (
+    Object.keys(record).some((key) => !['name', 'system', 'steps', 'finalText'].includes(key)) ||
+    (record.system !== 'neis' && record.system !== 'edufine') ||
+    record.name !== name ||
+    name.length < 1 ||
+    Array.from(name).length > 24 ||
+    record.finalText !== finalText ||
+    finalText.length < 1 ||
+    Array.from(finalText).length > 60 ||
+    !Array.isArray(record.steps) ||
+    record.steps.length < 1 ||
+    record.steps.length > 8
+  ) return false;
+  return record.steps.every((step, index) => {
+    if (!step || typeof step !== 'object' || Array.isArray(step)) return false;
+    const candidate = step as Record<string, unknown>;
+    const label = normalizeWorkflowText(candidate.label);
+    return (
+      Object.keys(candidate).every((key) => key === 'id' || key === 'label') &&
+      candidate.id === `step-${index + 1}` &&
+      candidate.label === label &&
+      label.length > 0 &&
+      Array.from(label).length <= 40 &&
+      !isForbiddenCustomWorkflowLabel(label)
+    );
+  });
+}
 
 export function isWebConnectorSupportedPlatform(
   platform: string | null,
@@ -53,8 +124,8 @@ export function isWebConnectorSupportedPlatform(
   return platform === 'win32';
 }
 
-export function isWebWorkflowId(value: unknown): value is WebWorkflowId {
-  return typeof value === 'string' && WORKFLOW_IDS.has(value as WebWorkflowId);
+export function isWebWorkflowId(value: unknown): value is BuiltInWebWorkflowId {
+  return typeof value === 'string' && WORKFLOW_IDS.has(value as BuiltInWebWorkflowId);
 }
 
 export function isWebConnectorBrowserId(value: unknown): value is WebConnectorBrowserId {
@@ -64,6 +135,13 @@ export function isWebConnectorBrowserId(value: unknown): value is WebConnectorBr
 export function isWebWorkflowSpec(value: unknown): value is WebWorkflowSpec {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
+  if (record.id === 'custom') {
+    return (
+      Object.keys(record).every((key) => key === 'id' || key === 'browserId' || key === 'custom') &&
+      isWebConnectorBrowserId(record.browserId) &&
+      isCustomWebWorkflowDefinition(record.custom)
+    );
+  }
   return (
     Object.keys(record).every((key) => key === 'id' || key === 'browserId') &&
     isWebWorkflowId(record.id) &&
@@ -71,12 +149,12 @@ export function isWebWorkflowSpec(value: unknown): value is WebWorkflowSpec {
   );
 }
 
-export function getWebWorkflowDefinition(id: WebWorkflowId): WebWorkflowDefinition {
+export function getWebWorkflowDefinition(id: BuiltInWebWorkflowId): WebWorkflowDefinition {
   return WEB_WORKFLOW_DEFINITIONS.find((definition) => definition.id === id)!;
 }
 
 function targetForSystem(
-  system: WebWorkflowDefinition['system'],
+  system: WebWorkflowSystem,
   officeCode: EducationOfficeCode,
 ): string {
   const office = getEducationOffice(officeCode);
@@ -84,14 +162,27 @@ function targetForSystem(
 }
 
 export function getWebWorkflowTarget(
-  id: WebWorkflowId,
+  id: BuiltInWebWorkflowId,
   officeCode: EducationOfficeCode,
 ): string {
   return targetForSystem(getWebWorkflowDefinition(id).system, officeCode);
 }
 
+export function getWebWorkflowSystem(spec: WebWorkflowSpec): WebWorkflowSystem {
+  return spec.id === 'custom'
+    ? spec.custom.system
+    : getWebWorkflowDefinition(spec.id).system;
+}
+
+export function getWebWorkflowTargetForSpec(
+  spec: WebWorkflowSpec,
+  officeCode: EducationOfficeCode,
+): string {
+  return targetForSystem(getWebWorkflowSystem(spec), officeCode);
+}
+
 export function isAllowedWebWorkflowTarget(
-  id: WebWorkflowId,
+  id: BuiltInWebWorkflowId,
   target: string,
   officeCode?: EducationOfficeCode,
 ): boolean {
@@ -119,6 +210,33 @@ export function isAllowedWebWorkflowTarget(
   });
 }
 
+export function isAllowedWebWorkflowSpecTarget(
+  spec: WebWorkflowSpec,
+  target: string,
+  officeCode?: EducationOfficeCode,
+): boolean {
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:') return false;
+  const system = getWebWorkflowSystem(spec);
+  const offices = officeCode
+    ? [getEducationOffice(officeCode)]
+    : EDUCATION_OFFICES;
+  return offices.some((office) => {
+    const expected = new URL(system === 'neis' ? office.neisUrl : office.edufineUrl);
+    return (
+      url.hostname.toLowerCase() === expected.hostname &&
+      url.port === '' &&
+      url.username === '' &&
+      url.password === ''
+    );
+  });
+}
+
 export function browserIdFromPath(path: string): WebConnectorBrowserId | null {
   const normalized = path.replaceAll('\\', '/').toLowerCase().replace(/\/+$/, '');
   if (normalized.endsWith('/msedge.exe') || normalized.endsWith('/microsoft edge.app')) {
@@ -130,7 +248,7 @@ export function browserIdFromPath(path: string): WebConnectorBrowserId | null {
   return null;
 }
 
-const WORKFLOW_EMOJI: Record<WebWorkflowId, string> = {
+const WORKFLOW_EMOJI: Record<BuiltInWebWorkflowId, string> = {
   'neis-leave': '🗓️',
   'neis-trip': '🧳',
   'edufine-draft': '✍️',
@@ -138,7 +256,7 @@ const WORKFLOW_EMOJI: Record<WebWorkflowId, string> = {
 };
 
 export function createWebWorkflowTemplate(
-  id: WebWorkflowId,
+  id: BuiltInWebWorkflowId,
   browserId: WebConnectorBrowserId,
   officeCode: EducationOfficeCode = 'goe',
 ): Extract<LibraryEntry, { kind: 'action-template' }> {
@@ -150,6 +268,65 @@ export function createWebWorkflowTemplate(
     emoji: WORKFLOW_EMOJI[id],
     target: getWebWorkflowTarget(id, officeCode),
     webWorkflow: { id, browserId },
+  };
+}
+
+export interface CreateCustomWebWorkflowInput {
+  name: string;
+  system: WebWorkflowSystem;
+  browserId: WebConnectorBrowserId;
+  stepLabels: string[];
+  finalText: string;
+  officeCode?: EducationOfficeCode;
+}
+
+export function createCustomWebWorkflowTemplate({
+  name,
+  system,
+  browserId,
+  stepLabels,
+  finalText,
+  officeCode = 'goe',
+}: CreateCustomWebWorkflowInput): Extract<LibraryEntry, { kind: 'action-template' }> {
+  const normalizedName = normalizeWorkflowText(name);
+  const normalizedSteps = stepLabels.map(normalizeWorkflowText);
+  const normalizedFinalText = normalizeWorkflowText(finalText);
+  if (Array.from(normalizedName).length < 1 || Array.from(normalizedName).length > 24) {
+    throw new Error('업무 이름은 한 글자부터 스물네 글자까지 입력해 주세요.');
+  }
+  if (normalizedSteps.length < 1) {
+    throw new Error('자동으로 누를 메뉴를 한 단계 이상 추가해 주세요.');
+  }
+  if (normalizedSteps.length > 8) {
+    throw new Error('자동 이동 단계는 여덟 단계까지 추가할 수 있습니다.');
+  }
+  for (const label of normalizedSteps) {
+    if (Array.from(label).length < 1 || Array.from(label).length > 40) {
+      throw new Error('각 메뉴 이름은 한 글자부터 마흔 글자까지 입력해 주세요.');
+    }
+    if (isForbiddenCustomWorkflowLabel(label)) {
+      throw new Error(`'${label}' 동작은 안전을 위해 자동으로 누를 수 없습니다. 해당 단계는 사용자가 직접 진행해 주세요.`);
+    }
+  }
+  if (Array.from(normalizedFinalText).length < 1 || Array.from(normalizedFinalText).length > 60) {
+    throw new Error('도착 화면 확인 문구는 한 글자부터 예순 글자까지 입력해 주세요.');
+  }
+  return {
+    kind: 'action-template',
+    type: 'url',
+    label: normalizedName,
+    emoji: '🧭',
+    target: targetForSystem(system, officeCode),
+    webWorkflow: {
+      id: 'custom',
+      browserId,
+      custom: {
+        name: normalizedName,
+        system,
+        steps: normalizedSteps.map((label, index) => ({ id: `step-${index + 1}`, label })),
+        finalText: normalizedFinalText,
+      },
+    },
   };
 }
 
@@ -174,7 +351,7 @@ export function retargetWebWorkflowItems(
     if (!item.webWorkflow) return item;
     return {
       ...item,
-      target: getWebWorkflowTarget(item.webWorkflow.id, officeCode),
+      target: getWebWorkflowTargetForSpec(item.webWorkflow, officeCode),
     };
   });
 }

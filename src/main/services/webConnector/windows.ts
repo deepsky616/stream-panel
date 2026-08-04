@@ -7,17 +7,25 @@ import type {
   EducationOfficeCode,
   WebConnectorBrowserId,
   WebWorkflowId,
+  WebWorkflowSpec,
 } from '../../../shared/types';
 import {
   getWebWorkflowTarget,
+  getWebWorkflowTargetForSpec,
   isAllowedWebWorkflowTarget,
+  isAllowedWebWorkflowSpecTarget,
+  isWebWorkflowSpec,
 } from '../../../shared/webWorkflows';
 import type { ManagedBrowserConnection } from './cdp/transport';
 import {
   connectManagedBrowser,
   type ManagedBrowserConnectOptions,
 } from './cdp/transport';
-import type { CandidateSummary, WorkflowStep } from './workflows/common';
+import {
+  createCustomManagedWorkflowDefinition,
+  type CandidateSummary,
+  type WorkflowStep,
+} from './workflows/common';
 import { runWorkflow, type WorkflowPageAdapter, type WorkflowRunResult } from './workflows/engine';
 import { EDUFINE_WORKFLOWS } from './workflows/edufine';
 import { NEIS_WORKFLOWS } from './workflows/neis';
@@ -70,6 +78,7 @@ export interface ExecuteWindowsWorkflowDependencies {
   openWorkflowPage(
     session: ManagedBrowserSession,
     workflowId: WebWorkflowId,
+    workflowSpec?: WebWorkflowSpec,
   ): Promise<WindowsWorkflowPage>;
   isWxsClientRegistered(): Promise<boolean>;
   listWxsClientWindows(): Promise<readonly WxsClientWindow[]>;
@@ -78,8 +87,40 @@ export interface ExecuteWindowsWorkflowDependencies {
 
 const MANAGED_WORKFLOWS = { ...NEIS_WORKFLOWS, ...EDUFINE_WORKFLOWS };
 
-function managedWorkflowDefinition(workflowId: WebWorkflowId) {
-  return MANAGED_WORKFLOWS[workflowId];
+function managedWorkflowDefinition(request: ManagedWorkflowRequest) {
+  if (request.workflowId === 'custom') {
+    if (!isWebWorkflowSpec(request.workflowSpec) || request.workflowSpec.id !== 'custom') {
+      throw new Error('사용자 지정 웹 업무 설정이 올바르지 않습니다. 편집기에서 키를 다시 만들어 주세요.');
+    }
+    return createCustomManagedWorkflowDefinition(request.workflowSpec);
+  }
+  return MANAGED_WORKFLOWS[request.workflowId];
+}
+
+function requestWorkflowSpec(
+  workflowId: WebWorkflowId,
+  workflowSpec?: WebWorkflowSpec,
+): WebWorkflowSpec | null {
+  if (workflowId === 'custom') {
+    return isWebWorkflowSpec(workflowSpec) && workflowSpec.id === 'custom'
+      ? workflowSpec
+      : null;
+  }
+  return { id: workflowId, browserId: workflowSpec?.browserId ?? 'edge' };
+}
+
+function requestTarget(
+  workflowId: WebWorkflowId,
+  officeCode: EducationOfficeCode,
+  workflowSpec?: WebWorkflowSpec,
+): string {
+  const spec = requestWorkflowSpec(workflowId, workflowSpec);
+  if (!spec) {
+    throw new Error('사용자 지정 웹 업무 설정이 올바르지 않습니다. 편집기에서 키를 다시 만들어 주세요.');
+  }
+  return spec.id === 'custom'
+    ? getWebWorkflowTargetForSpec(spec, officeCode)
+    : getWebWorkflowTarget(spec.id, officeCode);
 }
 
 export function resolveWindowsManagedBrowserExecutable(
@@ -107,10 +148,15 @@ export function selectWindowsWorkflowTarget(
   targets: readonly WindowsTargetInfo[],
   officeCode: EducationOfficeCode,
   workflowId: WebWorkflowId,
+  workflowSpec?: WebWorkflowSpec,
 ): WindowsTargetInfo | null {
+  const spec = requestWorkflowSpec(workflowId, workflowSpec);
+  if (!spec) return null;
   return targets.find((target) => (
     target.type === 'page' &&
-    isAllowedWebWorkflowTarget(workflowId, target.url, officeCode)
+    (spec.id === 'custom'
+      ? isAllowedWebWorkflowSpecTarget(spec, target.url, officeCode)
+      : isAllowedWebWorkflowTarget(spec.id, target.url, officeCode))
   )) ?? null;
 }
 
@@ -165,6 +211,7 @@ function validateWorkflowOrigin(
   origin: string,
   officeCode: EducationOfficeCode,
   workflowId: WebWorkflowId,
+  workflowSpec?: WebWorkflowSpec,
 ): void {
   const office = getEducationOffice(officeCode);
   let parsed: URL;
@@ -176,9 +223,16 @@ function validateWorkflowOrigin(
   if (parsed.origin === new URL(office.portalUrl).origin) {
     throw new Error('업무 시스템 로그인이 필요합니다. 업무용 브라우저에서 직접 로그인한 뒤 키를 다시 눌러 주세요.');
   }
+  const spec = requestWorkflowSpec(workflowId, workflowSpec);
+  if (!spec) {
+    throw new Error('사용자 지정 웹 업무 설정이 올바르지 않습니다. 편집기에서 키를 다시 만들어 주세요.');
+  }
+  const allowedTarget = spec.id === 'custom'
+    ? isAllowedWebWorkflowSpecTarget(spec, parsed.href, officeCode)
+    : isAllowedWebWorkflowTarget(spec.id, parsed.href, officeCode);
   if (
     !isAllowedOfficeHost(officeCode, parsed.href) ||
-    !isAllowedWebWorkflowTarget(workflowId, parsed.href, officeCode)
+    !allowedTarget
   ) {
     throw new Error('허용되지 않은 주소로 이동해 자동 이동을 중단했습니다. 업무용 브라우저의 주소를 확인한 뒤 직접 계속해 주세요.');
   }
@@ -195,7 +249,17 @@ export async function executeWindowsWorkflow(
   ) {
     throw new Error('업무 요청과 브라우저 세션이 다릅니다. 설정에서 업무용 브라우저를 다시 열어 주세요.');
   }
-  const definition = managedWorkflowDefinition(request.workflowId);
+  if (
+    request.workflowSpec &&
+    (
+      !isWebWorkflowSpec(request.workflowSpec) ||
+      request.workflowSpec.browserId !== request.browserId ||
+      request.workflowSpec.id !== request.workflowId
+    )
+  ) {
+    throw new Error('웹 업무와 업무용 브라우저 설정이 서로 다릅니다. 편집기에서 브라우저를 다시 선택해 주세요.');
+  }
+  const definition = managedWorkflowDefinition(request);
   if (request.workflowId === 'edufine-draft' && !await dependencies.isWxsClientRegistered()) {
     throw new Error('기안 편집 프로그램이 설치되어 있지 않습니다. 에듀파인 설치 안내에서 WXSClient를 설치한 뒤 다시 시도해 주세요.');
   }
@@ -203,11 +267,16 @@ export async function executeWindowsWorkflow(
     ? new Set((await dependencies.listWxsClientWindows()).map(({ id }) => id))
     : new Set<number>();
   let newEditorWindow: WxsClientWindow | undefined;
-  const page = await dependencies.openWorkflowPage(session, request.workflowId);
+  const page = await dependencies.openWorkflowPage(
+    session,
+    request.workflowId,
+    request.workflowSpec,
+  );
   const assertOrigin = async (): Promise<void> => validateWorkflowOrigin(
     await page.currentOrigin(),
     request.officeCode,
     request.workflowId,
+    request.workflowSpec,
   );
   await assertOrigin();
   const guardedPage: WorkflowPageAdapter = {
@@ -292,7 +361,10 @@ const CANDIDATE_SCAN_EXPRESSION = `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 return clickable().slice(0,500).map(({element},index)=>{
   const rect=element.getBoundingClientRect();
-  return {index,text:textOf(element),visible:visible(element),enabled:enabled(element),width:rect.width,height:rect.height};
+  const role=normalize(element.getAttribute?.('role')).toLowerCase();
+  const tag=String(element.tagName||'').toUpperCase();
+  const navigation=tag==='A'||role==='link'||role==='menuitem'||role==='tab'||element.getAttribute?.('aria-haspopup')==='menu';
+  return {index,text:textOf(element),visible:visible(element),enabled:enabled(element),width:rect.width,height:rect.height,navigation};
 });
 })()`;
 
@@ -368,7 +440,8 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       typeof candidate.visible !== 'boolean' ||
       typeof candidate.enabled !== 'boolean' ||
       typeof candidate.width !== 'number' ||
-      typeof candidate.height !== 'number'
+      typeof candidate.height !== 'number' ||
+      typeof candidate.navigation !== 'boolean'
     ) {
       return [];
     }
@@ -379,6 +452,7 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       enabled: candidate.enabled,
       width: candidate.width,
       height: candidate.height,
+      navigation: candidate.navigation,
     }];
   });
 }
@@ -409,13 +483,20 @@ function readTargetInfos(value: unknown): WindowsTargetInfo[] {
 export async function openCdpWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   workflowId: WebWorkflowId,
+  workflowSpec?: WebWorkflowSpec,
 ): Promise<WindowsWorkflowPage> {
   const protocol = session.connection.protocol;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  let target = selectWindowsWorkflowTarget(targets, session.officeCode, workflowId);
+  let target = selectWindowsWorkflowTarget(
+    targets,
+    session.officeCode,
+    workflowId,
+    workflowSpec,
+  );
   if (!target) {
+    const targetUrl = requestTarget(workflowId, session.officeCode, workflowSpec);
     const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
-      url: getWebWorkflowTarget(workflowId, session.officeCode),
+      url: targetUrl,
     });
     if (typeof created.targetId !== 'string') {
       throw new Error('업무용 브라우저 탭을 만들지 못했습니다. 브라우저를 다시 열어 주세요.');
@@ -423,7 +504,7 @@ export async function openCdpWindowsWorkflowPage(
     target = {
       targetId: created.targetId,
       type: 'page',
-      url: getWebWorkflowTarget(workflowId, session.officeCode),
+      url: targetUrl,
     };
   }
   const attached = await protocol.send<{ sessionId?: unknown }>('Target.attachToTarget', {
@@ -599,11 +680,15 @@ export function createWindowsManagedSessionManager(
   options: CreateWindowsManagedSessionManagerOptions,
 ): ManagedBrowserSessionManager<WindowsManagedBrowserSession, WorkflowRunResult> {
   const workflowDependencies: ExecuteWindowsWorkflowDependencies = {
-    openWorkflowPage: async (session, workflowId) => {
+    openWorkflowPage: async (session, workflowId, workflowSpec) => {
       if (!('connection' in session)) {
         throw new Error('업무용 브라우저 연결 정보가 없습니다. 브라우저를 다시 열어 주세요.');
       }
-      return openCdpWindowsWorkflowPage(session as WindowsManagedBrowserSession, workflowId);
+      return openCdpWindowsWorkflowPage(
+        session as WindowsManagedBrowserSession,
+        workflowId,
+        workflowSpec,
+      );
     },
     isWxsClientRegistered,
     listWxsClientWindows,

@@ -44,11 +44,15 @@ export interface MultiActionProgress {
   message?: string;
 }
 
-export type WebWorkflowId =
+export type BuiltInWebWorkflowId =
   | 'neis-leave'
   | 'neis-trip'
   | 'edufine-draft'
   | 'edufine-purchase';
+
+export type WebWorkflowId = BuiltInWebWorkflowId | 'custom';
+
+export type WebWorkflowSystem = 'neis' | 'edufine';
 
 export type WebConnectorBrowserId = 'chrome' | 'edge';
 
@@ -71,10 +75,28 @@ export type EducationOfficeCode =
   | 'gwe'
   | 'jje';
 
-export interface WebWorkflowSpec {
-  id: WebWorkflowId;
-  browserId: WebConnectorBrowserId;
+export interface CustomWebWorkflowStep {
+  id: string;
+  label: string;
 }
+
+export interface CustomWebWorkflowDefinition {
+  name: string;
+  system: WebWorkflowSystem;
+  steps: CustomWebWorkflowStep[];
+  finalText: string;
+}
+
+export type WebWorkflowSpec =
+  | {
+      id: BuiltInWebWorkflowId;
+      browserId: WebConnectorBrowserId;
+    }
+  | {
+      id: 'custom';
+      browserId: WebConnectorBrowserId;
+      custom: CustomWebWorkflowDefinition;
+    };
 
 export interface WebConnectorStatus {
   browserId: WebConnectorBrowserId;

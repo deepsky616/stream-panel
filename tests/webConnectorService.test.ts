@@ -162,6 +162,67 @@ describe('managed web connector service', () => {
     }]);
   });
 
+  it('queues a custom Edufine workflow with its validated definition and reports its own name', async () => {
+    const requests: unknown[] = [];
+    const notifications: Array<{ message: string; level: string }> = [];
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    controller.run = async (request) => {
+      requests.push(request);
+      return { workflowId: 'custom', finalState: 'custom-target-ready' };
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async () => undefined,
+      },
+      notify: (message, level) => { notifications.push({ message, level }); },
+    });
+    await service.start();
+
+    expect(service.queue(workflowAction({
+      id: 'custom-documents',
+      label: '에듀파인 문서함',
+      target: 'https://klef.goe.go.kr/',
+      webWorkflow: {
+        id: 'custom',
+        browserId: 'edge',
+        custom: {
+          name: '에듀파인 문서함',
+          system: 'edufine',
+          steps: [{ id: 'step-1', label: '내 문서함' }],
+          finalText: '내 문서함 목록',
+        },
+      },
+    }))).toEqual({ queued: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(requests).toEqual([expect.objectContaining({
+      officeCode: 'goe',
+      browserId: 'edge',
+      workflowId: 'custom',
+      workflowSpec: expect.objectContaining({
+        id: 'custom',
+        custom: expect.objectContaining({ name: '에듀파인 문서함', system: 'edufine' }),
+      }),
+    })]);
+    expect(notifications).toEqual([{
+      message: '에듀파인 문서함 화면을 열었습니다. 내용을 확인한 뒤 필요한 최종 동작은 직접 진행해 주세요.',
+      level: 'info',
+    }]);
+  });
+
   it('rejects another office target and never falls back to a personal browser', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },

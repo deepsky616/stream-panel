@@ -176,18 +176,37 @@ export interface MultiActionProgress {
   message?: string;
 }
 
-export type WebWorkflowId =
+export type BuiltInWebWorkflowId =
   | 'neis-leave'
   | 'neis-trip'
   | 'edufine-draft'
   | 'edufine-purchase';
 
+export type WebWorkflowId = BuiltInWebWorkflowId | 'custom';
+
+export type WebWorkflowSystem = 'neis' | 'edufine';
+
 export type WebConnectorBrowserId = 'chrome' | 'edge';
 
-export interface WebWorkflowSpec {
-  id: WebWorkflowId;
-  browserId: WebConnectorBrowserId;
+export interface CustomWebWorkflowStep {
+  id: string;    // step-1부터 순서대로. 최대 8개
+  label: string; // 화면에 보이는 정확한 메뉴 이름. 선택자나 스크립트 금지
 }
+
+export interface CustomWebWorkflowDefinition {
+  name: string;
+  system: WebWorkflowSystem;
+  steps: CustomWebWorkflowStep[];
+  finalText: string; // 마지막 클릭 뒤 반드시 보여야 하는 도착 확인 문구
+}
+
+export type WebWorkflowSpec =
+  | { id: BuiltInWebWorkflowId; browserId: WebConnectorBrowserId }
+  | {
+      id: 'custom';
+      browserId: WebConnectorBrowserId;
+      custom: CustomWebWorkflowDefinition;
+    };
 
 export interface WebConnectorStatus {
   browserId: WebConnectorBrowserId;
@@ -1250,9 +1269,11 @@ spawn(exe, flags, { detached: true, stdio: 'ignore' }).unref();
 에듀파인 주소를 새 교육청 주소로 바꾸되 키 식별자, 브라우저 선택과 멀티 액션 참조는 보존한다.
 이전 교육청의 소유 세션은 닫는다.
 
-지원하는 업무는 `neis-leave`, `neis-trip`, `edufine-draft`, `edufine-purchase` 네 개뿐이다.
-렌더러는 교육청, 브라우저와 이 네 식별자만 보낼 수 있다. 임의 주소, 선택자, 자바스크립트,
-개발 도구 명령과 사용자 입력 명령을 전달하는 통로는 만들지 않는다.
+기본 업무는 `neis-leave`, `neis-trip`, `edufine-draft`, `edufine-purchase` 네 개다.
+사용자는 `custom` 업무에서 이름, 나이스 또는 에듀파인 구분, 브라우저, 화면에 보이는 정확한
+메뉴 이름 한 단계부터 여덟 단계와 마지막 도착 확인 문구만 저장할 수 있다. 사용자 지정 클릭은
+링크, 메뉴, 탭 또는 메뉴를 여는 요소처럼 이동 역할이 확인된 후보로 제한한다. 임의 주소, 선택자,
+자바스크립트, 개발 도구 명령과 사용자 입력 명령을 전달하는 통로는 만들지 않는다.
 
 **전용 브라우저 연결**
 
@@ -1272,13 +1293,16 @@ spawn(exe, flags, { detached: true, stdio: 'ignore' }).unref();
    주소면 개인 브라우저를 열지 않고 거부한다.
 3. 허용된 포털, 나이스 또는 에듀파인 탭만 선택한다. 로그인 포털에서는 자동 이동을 멈추고
    사용자가 직접 로그인하도록 알린다.
-4. 고정 단계마다 화면에서 정확히 한 개인 표시 상태의 활성 후보만 고른다. 후보가 없거나
+4. 고정 단계와 사용자 지정 단계마다 화면에서 정확히 한 개인 표시 상태의 활성 후보만 고른다. 후보가 없거나
    둘 이상이면 누르지 않는다.
-5. 각 클릭 전후에 허용 주소를 다시 확인하고, 다음 화면 조건이 확인되어야 다음 단계로 간다.
+5. 각 클릭 전후에 허용 주소를 다시 확인한다. 사용자 지정 단계는 다음 메뉴가 보이는지 확인하고,
+   마지막 단계는 사용자가 입력한 도착 문구가 보여야 끝낸다.
 6. 목표 작성 화면이 열리면 멈추고 결과를 스트림 패널 알림으로 보낸다.
 
 로그인, 인증서, 암호와 외부 보안 프로그램 확인은 사용자가 직접 한다. 저장, 제출, 상신,
-승인, 결재와 확인 단추는 금지 목록으로 고정하며 자동으로 누르지 않는다. 에듀파인 기안은
+승인, 결재, 확정, 삭제, 취소, 확인, 지급, 송금, 이체, 발송, 등록, 신청, 요청, 완료, 반려,
+서명, 동의, 전송, 처리와 인증 입력 단추는 사용자 지정 금지 목록으로
+고정하며 자동으로 누르지 않는다. 사용자 지정 단계는 이 문구를 포함하면 저장부터 거부한다. 에듀파인 기안은
 Windows에 등록된 `WXSClient`가 있어야 하며 새로 생긴 표준 서식 창만 앞으로 가져온다.
 
 상태 파일 `userData/web-connector/managed-state.json`에는 교육청과 브라우저별 마지막 성공
@@ -1698,6 +1722,8 @@ macOS 탭 5개: `일반` / `동작` / `모양` / `단축키` / `정보`. `웹 �
   - 업무용 엣지 추천 카드와 업무용 크롬 카드
   - 브라우저별 `준비됨` / `실행 중` / `연결 필요` / `오류` 상태
   - `업무용 브라우저 열기` · `연결 시험`, 오류일 때만 `문제 해결 폴더 열기`
+  - `내 웹 업무 만들기`: 업무 이름 · 나이스/에듀파인 · 엣지/크롬 · 최대 8개 메뉴 이름 · 도착 확인 문구
+  - `키로 추가`를 누르면 루트의 첫 빈 위치에 만들고 속성 패널에서 경로를 읽기 전용으로 표시
   - 개인 프로필 분리, 인증 정보 미저장, 저장·제출·상신·승인·결재 전에 멈춘다는 안내
 
 ### 9.10 문구 언어
@@ -2104,8 +2130,8 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
   다른 교육청·브라우저 분리, 소유 세션만 종료
 - `webConnectorService.test.ts` / `webConnectorHandlers.test.ts` — 기존 IPC 입력·출력 호환,
   상태 계산, 즉시 접수와 나중 알림, 개인 브라우저 우회 금지, 진단 폴더만 열기
-- `webWorkflowDefinitions.test.ts` / `webWorkflowEngine.test.ts` — 고정 네 업무와 메뉴 후보,
-  숨김·비활성·중복 요소 제외, 저장·제출·상신·승인·결재 단추를 절대 선택하지 않음
+- `webWorkflowDefinitions.test.ts` / `webWorkflowEngine.test.ts` — 고정 네 업무와 사용자 지정 단계 변환,
+  다음 메뉴·도착 문구 확인, 숨김·비활성·중복 요소 제외, 위험 단추를 절대 선택하지 않음
 - `webConnectorPlatform.test.ts` — 허용 탭과 주소 재검증, 로그인 포털 중단,
   `WXSClient` 확인과 새 창만 활성화, macOS 안전 기본값
 - `multiAction.test.ts` — 순차 실행, 기다리기 순서, 실패 즉시 중단, 중복 실행 거부,
@@ -2291,6 +2317,9 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
 - [ ] 연결 시험 뒤 해당 카드가 `준비됨`으로 바뀐다
 - [ ] 나이스 복무와 출장 키가 정확한 작성 화면까지 이동한 뒤 멈춘다
 - [ ] 에듀파인 기안과 품의 키가 정확한 작성 화면까지 이동한 뒤 멈춘다
+- [ ] 나이스와 에듀파인 사용자 지정 키를 1~8단계로 만들고 루트 첫 빈 위치에 추가할 수 있다
+- [ ] 사용자 지정 키가 단계마다 다음 메뉴와 마지막 도착 문구를 확인하고, 찾지 못하면 멈춘다
+- [ ] 위험 동작 문구, 임의 주소, 선택자와 스크립트를 사용자 지정 단계에 저장할 수 없다
 - [ ] 에듀파인 기안은 새로 열린 `WXSClient` 창만 앞으로 가져온다
 - [ ] 로그인과 인증서 입력, 외부 보안 프로그램 확인은 사용자가 직접 한다
 - [ ] 메뉴가 없거나 같은 이름 후보가 둘 이상이면 누르지 않고 직접 계속할 방법을 안내한다
@@ -2416,11 +2445,12 @@ URL 키에 Chrome + 업무용 프로필 + 전용 창을 지정하면 **기본 �
 `services/webConnector/`의 전용 브라우저 프로세스, 개발 도구 통신과 상태 기반 업무 엔진,
 `web-connector:status`/`test`/`open-setup` 연결 채널, 액션 라이브러리의 나이스 복무·출장과
 에듀파인 기안·품의 틀, 속성 패널의 업무용 브라우저 선택, 설정의 교육청과
-`웹 업무 연결` 탭을 구현한다.
+`웹 업무 연결` 탭, 나이스·에듀파인 사용자 지정 업무 만들기를 구현한다.
 
 **수용 기준:** Windows 연결 시험에서 엣지와 크롬, 17개 교육청 프로필을 따로 식별한다.
-네 업무 키는 개인 브라우저를 열지 않고 전용 프로필에서 목표 화면까지 이동한 뒤 멈춘다.
-로그인 정보는 읽거나 저장하지 않고 저장·제출·상신·승인·결재 단추를 누르지 않는다.
+기본 네 업무 키와 검증된 사용자 지정 업무 키는 개인 브라우저를 열지 않고 전용 프로필에서
+목표 화면까지 이동한 뒤 멈춘다. 사용자 지정 업무는 최대 여덟 개의 정확한 메뉴 이름과 마지막
+도착 문구만 받는다. 로그인 정보는 읽거나 저장하지 않고 위험 단추를 누르지 않는다.
 연결이나 자동 이동이 실패해도 개인 브라우저로 우회하지 않으며 원인과 해결 방법이 한국어로
 표시된다. macOS에서는 연결 화면과 전용 브라우저 구현이 없고 기존 웹 업무 키도 차단한다.
 관련 단위 테스트와 전체 기존 테스트가 통과한다. 실제 교육청 계정 실기는 별도로 확인한다.

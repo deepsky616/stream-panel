@@ -10,7 +10,15 @@ import {
 import { createMacosWebAutomation } from '../src/main/services/webConnector/macos';
 
 function safeCandidate(index: number, text: string): CandidateSummary {
-  return { index, text, visible: true, enabled: true, width: 100, height: 30 };
+  return {
+    index,
+    text,
+    visible: true,
+    enabled: true,
+    width: 100,
+    height: 30,
+    navigation: true,
+  };
 }
 
 function page(origin: string): WindowsWorkflowPage {
@@ -169,6 +177,64 @@ describe('Windows managed web automation', () => {
       },
     )).rejects.toThrow(/허용되지 않은/);
     expect(activated).toBe(0);
+  });
+
+  it('runs a validated custom Edufine path on the Edufine host', async () => {
+    const pressed: string[] = [];
+    let activated = 0;
+    const workflowPage = page('https://klef.goe.go.kr');
+    workflowPage.pressCandidate = async (_candidate, step) => { pressed.push(step.id); };
+    workflowPage.activate = async () => { activated += 1; };
+
+    await expect(executeWindowsWorkflow(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      {
+        officeCode: 'goe',
+        browserId: 'edge',
+        workflowId: 'custom',
+        workflowSpec: {
+          id: 'custom',
+          browserId: 'edge',
+          custom: {
+            name: '에듀파인 문서함',
+            system: 'edufine',
+            steps: [
+              { id: 'step-1', label: '업무관리' },
+              { id: 'step-2', label: '내 문서함' },
+            ],
+            finalText: '내 문서함 목록',
+          },
+        },
+      },
+      {
+        openWorkflowPage: async () => workflowPage,
+        isWxsClientRegistered: async () => false,
+        listWxsClientWindows: async () => [],
+        focusWindow: async () => true,
+      },
+    )).resolves.toEqual({ workflowId: 'custom', finalState: 'custom-target-ready' });
+    expect(pressed).toEqual(['step-1', 'step-2']);
+    expect(activated).toBe(1);
+  });
+
+  it('rejects a workflow identifier and definition mismatch before opening a page', async () => {
+    let opened = false;
+    await expect(executeWindowsWorkflow(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      {
+        officeCode: 'goe',
+        browserId: 'edge',
+        workflowId: 'neis-leave',
+        workflowSpec: { id: 'edufine-purchase', browserId: 'edge' },
+      },
+      {
+        openWorkflowPage: async () => { opened = true; return page('https://goe.neis.go.kr'); },
+        isWxsClientRegistered: async () => true,
+        listWxsClientWindows: async () => [],
+        focusWindow: async () => true,
+      },
+    )).rejects.toThrow(/서로 다릅니다/);
+    expect(opened).toBe(false);
   });
 
   it('requires WXSClient and focuses only a newly created standard-form window', async () => {

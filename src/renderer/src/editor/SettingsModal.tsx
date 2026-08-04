@@ -10,6 +10,7 @@ import type {
   AppConfig,
   DeckItem,
   EducationOfficeCode,
+  LibraryEntry,
   WebConnectorBrowserId,
   WebConnectorStatus,
 } from '../../../shared/types';
@@ -18,6 +19,7 @@ import {
   createWebWorkBrowserCards,
   shouldShowWebWorkSettings,
 } from './webWorkViewModel';
+import { CustomWebWorkflowBuilder } from './CustomWebWorkflowBuilder';
 
 type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'web-work' | 'about';
 
@@ -25,6 +27,7 @@ interface SettingsModalProps {
   open: boolean;
   config: AppConfig;
   onClose: () => void;
+  onAddWebWorkflow: (entry: LibraryEntry) => Promise<void>;
 }
 
 interface HotkeyRow {
@@ -41,7 +44,7 @@ function collectHotkeys(items: readonly DeckItem[], path: readonly string[] = []
   return rows;
 }
 
-export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
+export function SettingsModal({ open, config, onClose, onAddWebWorkflow }: SettingsModalProps) {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [info, setInfo] = useState<{ version: string; platform: string; isPackaged: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -463,6 +466,10 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                     <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓고 실행합니다.</li>
                   </ol>
                 </div>
+                <CustomWebWorkflowBuilder
+                  officeCode={config.educationOfficeCode}
+                  onCreate={onAddWebWorkflow}
+                />
                 <p className="connector-legacy-note">
                   예전 확장 기능은 더 이상 필요하지 않습니다. 설치되어 있다면 브라우저에서 직접 제거해도 됩니다.
                 </p>

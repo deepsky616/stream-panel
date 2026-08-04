@@ -1098,6 +1098,163 @@
   line-height: 1.55;
 }
 
+.custom-workflow-builder {
+  display: grid;
+  gap: 13px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 11px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 48%),
+    color-mix(in srgb, var(--tile) 54%, transparent);
+}
+
+.custom-workflow-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.custom-workflow-heading h3 {
+  margin: 0 0 5px;
+  font-size: 14px;
+}
+
+.custom-workflow-heading p,
+.custom-workflow-steps > p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.custom-workflow-heading > span {
+  padding: 3px 8px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.custom-workflow-basics {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(120px, .7fr) minmax(140px, .8fr);
+  gap: 9px;
+}
+
+.custom-workflow-basics label,
+.custom-workflow-final {
+  display: grid !important;
+  align-items: stretch !important;
+  gap: 6px !important;
+}
+
+.custom-workflow-basics input,
+.custom-workflow-basics select,
+.custom-workflow-final input,
+.custom-workflow-step input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 9px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--tile);
+}
+
+.custom-workflow-steps {
+  display: grid;
+  margin: 0;
+  padding: 12px;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.custom-workflow-steps legend {
+  padding: 0 5px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.custom-workflow-step {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.custom-workflow-step > span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.custom-workflow-step button,
+.settings-content .custom-workflow-add-step {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.custom-workflow-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 8px 10px;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.custom-workflow-route strong {
+  color: var(--accent);
+}
+
+.custom-workflow-submit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.custom-workflow-submit small,
+.custom-workflow-final small {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.custom-workflow-feedback {
+  margin: 0;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.workflow-route-summary {
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  font-size: 10px;
+}
+
+.workflow-route-summary strong {
+  color: var(--accent);
+}
+
 @media (max-width: 900px) {
   .editor-workspace {
     grid-template-columns: minmax(0, 1fr) 240px;

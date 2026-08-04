@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { normalizeAccelerator } from '../../../shared/accelerator';
 import type { AppConfig, DeckItem, DetectedBrowser } from '../../../shared/types';
-import { getWebWorkflowDefinition } from '../../../shared/webWorkflows';
 import { ColorPicker } from '../common/ColorPicker';
 import { IconPicker } from '../common/IconPicker';
 import { MultiActionEditor } from './MultiActionEditor';
-import { updateWebWorkflowBrowser } from './webWorkViewModel';
+import {
+  getWebWorkflowSummary,
+  updateCustomWebWorkflowName,
+  updateWebWorkflowBrowser,
+} from './webWorkViewModel';
 
 interface PropertiesPanelProps {
   item: DeckItem | null;
@@ -111,9 +114,9 @@ export function PropertiesPanel({
     draft.kind === 'action' && draft.type === 'url' && draft.browser
       ? browsers.find((browser) => browser.path === draft.browser?.path)
       : undefined;
-  const workflowDefinition =
+  const workflowSummary =
     draft.kind === 'action' && draft.webWorkflow
-      ? getWebWorkflowDefinition(draft.webWorkflow.id)
+      ? getWebWorkflowSummary(draft)
       : null;
   const chooseTarget = async () => {
     if (draft.kind !== 'action') return;
@@ -169,7 +172,14 @@ export function PropertiesPanel({
               ref={labelRef}
               value={draft.label}
               maxLength={24}
-              onChange={(event) => patch({ label: event.target.value })}
+              onChange={(event) => {
+                const label = event.target.value;
+                if (draft.kind === 'action') {
+                  setDraft(updateCustomWebWorkflowName(draft, label));
+                } else {
+                  patch({ label });
+                }
+              }}
             />
             <small>{Array.from(draft.label).length}/24</small>
           </span>
@@ -183,7 +193,7 @@ export function PropertiesPanel({
           <IconPicker icon={draft.icon} onChange={(icon) => patch({ icon })} />
         </label>
         <div className="property-kind">
-          종류 <strong>{draft.kind === 'folder' ? '폴더 키' : workflowDefinition ? '웹 업무' : ACTION_TYPE_LABELS[draft.type]}</strong>
+          종류 <strong>{draft.kind === 'folder' ? '폴더 키' : workflowSummary ? '웹 업무' : ACTION_TYPE_LABELS[draft.type]}</strong>
         </div>
         {draft.kind === 'action' && draft.type !== 'multi' && (
           <label className="property-target">
@@ -238,12 +248,20 @@ export function PropertiesPanel({
         )}
         {draft.kind === 'action' && draft.type === 'url' && (
           <div className="browser-settings">
-            {workflowDefinition && draft.webWorkflow ? (
+            {workflowSummary && draft.webWorkflow ? (
               <>
               <div className="workflow-summary">
-                <strong>{workflowDefinition.label}</strong>
-                <span>개인 브라우저와 분리된 전용 창에서 정해진 작성 화면까지만 이동합니다.</span>
+                <strong>{workflowSummary.label}</strong>
+                <span>{workflowSummary.custom
+                  ? `${workflowSummary.systemLabel} 사용자 지정 이동`
+                  : '개인 브라우저와 분리된 전용 창에서 정해진 작성 화면까지만 이동합니다.'}</span>
               </div>
+              {workflowSummary.custom && (
+                <div className="workflow-route-summary">
+                  <span>{workflowSummary.route.join(' → ')}</span>
+                  <strong>도착 확인: {workflowSummary.finalText}</strong>
+                </div>
+              )}
               <label>
                 업무용 브라우저
                 <select
