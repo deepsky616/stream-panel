@@ -79,6 +79,10 @@ export class CdpProtocol {
     });
   }
 
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
   send<T = unknown>(
     method: AllowedCdpMethod,
     params: Record<string, unknown>,
