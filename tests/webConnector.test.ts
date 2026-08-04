@@ -4,9 +4,34 @@ import {
   isAuthorizedWebConnectorToken,
 } from '../src/main/services/webConnector/core';
 import { loadWebConnectorState } from '../src/main/services/webConnector/state';
-import { copyExtensionManagementAddress } from '../src/main/services/webConnector';
+import {
+  copyExtensionManagementAddress,
+  openBrowserExtensionInstall,
+} from '../src/main/services/webConnector';
 
 describe('web connector extension setup', () => {
+  it('opens an official store listing without copying the manual address', async () => {
+    const opened: string[] = [];
+    const copied: string[] = [];
+    const result = await openBrowserExtensionInstall('chrome', {
+      storeUrls: {
+        chrome: 'https://chromewebstore.google.com/detail/stream-panel/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        edge: null,
+      },
+      writeText: (text) => copied.push(text),
+      openStore: async (url) => {
+        opened.push(url);
+        return { ok: true };
+      },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(opened).toEqual([
+      'https://chromewebstore.google.com/detail/stream-panel/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ]);
+    expect(copied).toEqual([]);
+  });
+
   it('copies the protected extension address instead of treating it as a launch URL', () => {
     const copied: string[] = [];
 
