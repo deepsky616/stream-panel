@@ -12,7 +12,9 @@ export interface LauncherDependencies {
   ) => Pick<ChildProcess, 'unref'>;
   resolveMacBundleExecutable: (bundlePath: string) => Promise<string | null>;
   notifyWarning: (message: string) => void;
-  queueWebWorkflow: (item: ActionItem) => { queued: boolean; message?: string };
+  queueWebWorkflow: (item: ActionItem) =>
+    | { queued: true }
+    | { queued: false; message: string };
   startMultiAction: (
     item: ActionItem,
     root: readonly DeckItem[],

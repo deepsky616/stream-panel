@@ -50,6 +50,27 @@ async function launchResolvedAction(
     return launchFailure('BLOCKED', message);
   }
 
+  if (item.webWorkflow) {
+    if (!isWebConnectorSupportedPlatform(platform)) {
+      return launchFailure(
+        'BLOCKED',
+        '나이스와 에듀파인 자동 이동은 윈도우에서만 사용할 수 있습니다. 윈도우에서 다시 실행해 주세요.',
+      );
+    }
+    try {
+      const queued = dependencies.queueWebWorkflow(item);
+      return queued.queued
+        ? { ok: true }
+        : launchFailure('FAILED', queued.message);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '알 수 없는 오류';
+      return launchFailure(
+        'FAILED',
+        `업무용 브라우저 요청을 접수하지 못했습니다. 설정에서 연결을 시험해 주세요: ${detail}`,
+      );
+    }
+  }
+
   if (['folder', 'file', 'app'].includes(item.type) && !dependencies.exists(item.target)) {
     return launchFailure(
       'NOT_FOUND',
@@ -58,25 +79,6 @@ async function launchResolvedAction(
   }
 
   try {
-    if (item.webWorkflow && !isWebConnectorSupportedPlatform(platform)) {
-      dependencies.notifyWarning(
-        '나이스·에듀파인 자동 이동은 윈도우에서만 사용할 수 있습니다. 맥에서는 사이트만 엽니다.',
-      );
-    } else if (item.webWorkflow) {
-      if (!item.browser) {
-        dependencies.notifyWarning(
-          '웹 업무 자동 이동에는 엣지나 크롬 선택이 필요합니다. 사이트만 열었습니다.',
-        );
-      } else {
-        const queued = dependencies.queueWebWorkflow(item);
-        if (!queued.queued) {
-          dependencies.notifyWarning(
-            queued.message ??
-              '웹 업무 연결을 시작하지 못했습니다. 설정의 웹 업무 연결에서 다시 연결해 주세요.',
-          );
-        }
-      }
-    }
     if (item.type === 'url' && item.browser) {
       return platform === 'win32'
         ? await launchWindowsBrowser(item as typeof item & { browser: NonNullable<typeof item.browser> }, dependencies)
