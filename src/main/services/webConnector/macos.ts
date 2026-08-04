@@ -1,3 +1,7 @@
+export function isMacosManagedBrowserAutomationSupported(): false {
+  return false;
+}
+
 export async function resolveMacosConnectorBrowserExecutable(
   bundlePath: string,
   exists: (path: string) => boolean,
