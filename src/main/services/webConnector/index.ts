@@ -6,6 +6,7 @@ import type {
   WebConnectorBrowserId,
   WebConnectorStatus,
 } from '../../../shared/types';
+import { getBrowserExtensionManagementUrl } from '../../../shared/webWorkflows';
 import { resolveMacBrowserExecutable } from '../browserService/macos';
 import {
   WebConnectorBroker,
@@ -28,6 +29,23 @@ export interface ResolveWebConnectorBrowserExecutableOptions {
   platform?: NodeJS.Platform;
   exists?: (path: string) => boolean;
   resolveMacExecutable?: (bundlePath: string) => Promise<string | null>;
+}
+
+export function copyExtensionManagementAddress(
+  browserId: WebConnectorBrowserId,
+  writeText: (text: string) => void,
+): { ok: true } | { ok: false; message: string } {
+  const address = getBrowserExtensionManagementUrl(browserId);
+  try {
+    writeText(address);
+    return { ok: true };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : '알 수 없는 오류';
+    return {
+      ok: false,
+      message: `확장 관리 주소를 복사하지 못했습니다. 브라우저 주소창에 ${address} 주소를 직접 입력해 주세요: ${detail}`,
+    };
+  }
 }
 
 export async function resolveWebConnectorBrowserExecutable(

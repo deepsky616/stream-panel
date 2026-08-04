@@ -4,6 +4,31 @@ import {
   isAuthorizedWebConnectorToken,
 } from '../src/main/services/webConnector/core';
 import { loadWebConnectorState } from '../src/main/services/webConnector/state';
+import { copyExtensionManagementAddress } from '../src/main/services/webConnector';
+
+describe('web connector extension setup', () => {
+  it('copies the protected extension address instead of treating it as a launch URL', () => {
+    const copied: string[] = [];
+
+    const edgeResult = copyExtensionManagementAddress('edge', (text) => copied.push(text));
+    const chromeResult = copyExtensionManagementAddress('chrome', (text) => copied.push(text));
+
+    expect(edgeResult).toEqual({ ok: true });
+    expect(chromeResult).toEqual({ ok: true });
+    expect(copied).toEqual(['edge://extensions/', 'chrome://extensions/']);
+  });
+
+  it('gives the exact manual address when clipboard copying fails', () => {
+    const result = copyExtensionManagementAddress('edge', () => {
+      throw new Error('클립보드 잠김');
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringMatching(/edge:\/\/extensions\/.*직접 입력.*클립보드 잠김/),
+    });
+  });
+});
 
 describe('web connector broker', () => {
   it('keeps Edge and Chrome commands separate and binds a command to its exact origin', () => {
