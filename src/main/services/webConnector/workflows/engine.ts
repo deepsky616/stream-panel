@@ -37,6 +37,7 @@ async function findCandidate(
     const selected = selectSafeCandidate(
       await adapter.inspectCandidates(step),
       step.candidateLabels,
+      step.navigationOnly,
     );
     if (selected) return selected;
     if (check < step.maxChecks) await adapter.wait(step.checkDelayMs);

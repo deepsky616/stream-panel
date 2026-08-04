@@ -24,8 +24,119 @@ const createWebWorkflowTemplatesForPlatform = (
     ): Array<{ target?: string }>;
   }
 ).createWebWorkflowTemplatesForPlatform;
+const createCustomWebWorkflowTemplate = (
+  webWorkflows as unknown as {
+    createCustomWebWorkflowTemplate?: (input: {
+      name: string;
+      system: 'neis' | 'edufine';
+      browserId: 'chrome' | 'edge';
+      stepLabels: string[];
+      finalText: string;
+      officeCode?: 'goe' | 'sen' | 'gbe';
+    }) => unknown;
+  }
+).createCustomWebWorkflowTemplate;
 
 describe('web workflow templates', () => {
+  it('creates a custom Edufine navigation key without accepting addresses or selectors', () => {
+    expect(createCustomWebWorkflowTemplate).toBeTypeOf('function');
+    expect(createCustomWebWorkflowTemplate!({
+      name: '에듀파인 문서함',
+      system: 'edufine',
+      browserId: 'edge',
+      stepLabels: ['업무관리', '문서관리', '내 문서함'],
+      finalText: '내 문서함',
+      officeCode: 'sen',
+    })).toEqual({
+      kind: 'action-template',
+      type: 'url',
+      label: '에듀파인 문서함',
+      emoji: '🧭',
+      target: 'https://klef.sen.go.kr/',
+      webWorkflow: {
+        id: 'custom',
+        browserId: 'edge',
+        custom: {
+          name: '에듀파인 문서함',
+          system: 'edufine',
+          steps: [
+            { id: 'step-1', label: '업무관리' },
+            { id: 'step-2', label: '문서관리' },
+            { id: 'step-3', label: '내 문서함' },
+          ],
+          finalText: '내 문서함',
+        },
+      },
+    });
+  });
+
+  it('rejects unsafe or malformed custom navigation steps', () => {
+    const safe = createCustomWebWorkflowTemplate!({
+      name: '나이스 급여 조회',
+      system: 'neis',
+      browserId: 'chrome',
+      stepLabels: ['급여', '급여 조회'],
+      finalText: '급여 조회',
+    }) as { webWorkflow: unknown };
+    expect(webWorkflows.isWebWorkflowSpec(safe.webWorkflow)).toBe(true);
+
+    for (const forbidden of [
+      '저장',
+      '제출하기',
+      '결재 요청',
+      '삭제',
+      '확인',
+      '인증서 선택',
+      '등록',
+      '신청',
+      '처리 요청',
+      '업무 완료',
+      '반려',
+      '전자 서명',
+      '개인정보 동의',
+      '문서 전송',
+    ]) {
+      expect(() => createCustomWebWorkflowTemplate!({
+        name: '위험한 업무',
+        system: 'edufine',
+        browserId: 'edge',
+        stepLabels: ['업무관리', forbidden],
+        finalText: '도착 화면',
+      })).toThrow(/자동으로 누를 수 없습니다/);
+    }
+    expect(() => createCustomWebWorkflowTemplate!({
+      name: '빈 업무',
+      system: 'neis',
+      browserId: 'edge',
+      stepLabels: [],
+      finalText: '도착 화면',
+    })).toThrow(/한 단계/);
+    expect(() => createCustomWebWorkflowTemplate!({
+      name: '너무 긴 업무',
+      system: 'neis',
+      browserId: 'edge',
+      stepLabels: Array.from({ length: 9 }, (_, index) => `메뉴 ${index + 1}`),
+      finalText: '도착 화면',
+    })).toThrow(/여덟 단계/);
+
+    const withSelector = {
+      ...(safe.webWorkflow as object),
+      custom: {
+        ...((safe.webWorkflow as { custom: object }).custom),
+        selector: '#submit',
+      },
+    };
+    expect(webWorkflows.isWebWorkflowSpec(withSelector)).toBe(false);
+    const withControlCharacters = {
+      ...(safe.webWorkflow as object),
+      custom: {
+        ...((safe.webWorkflow as { custom: object }).custom),
+        name: '급여\n조회',
+      },
+    };
+    expect(webWorkflows.isWebWorkflowSpec(withControlCharacters)).toBe(false);
+  });
+
   it('exposes the connector and workflow templates only on Windows', () => {
     expect(isWebConnectorSupportedPlatform('win32')).toBe(true);
     expect(isWebConnectorSupportedPlatform('darwin')).toBe(false);
@@ -123,6 +234,27 @@ describe('web workflow templates', () => {
           },
         ],
       },
+      {
+        id: 'custom-documents',
+        kind: 'action',
+        type: 'url',
+        label: '에듀파인 문서함',
+        target: 'https://klef.goe.go.kr/',
+        args: [],
+        icon: { kind: 'emoji', value: '🧭' },
+        color: '#5B8CFF',
+        position: 3,
+        webWorkflow: {
+          id: 'custom',
+          browserId: 'edge',
+          custom: {
+            name: '에듀파인 문서함',
+            system: 'edufine',
+            steps: [{ id: 'step-1', label: '내 문서함' }],
+            finalText: '내 문서함 목록',
+          },
+        },
+      },
     ];
 
     const updated = webWorkflows.retargetWebWorkflowItems(items, 'sen');
@@ -146,5 +278,18 @@ describe('web workflow templates', () => {
       ],
     });
     expect(items[0]).toMatchObject({ target: 'https://goe.neis.go.kr/' });
+    expect(updated[3]).toMatchObject({
+      id: 'custom-documents',
+      target: 'https://klef.sen.go.kr/',
+      webWorkflow: {
+        id: 'custom',
+        browserId: 'edge',
+        custom: {
+          name: '에듀파인 문서함',
+          system: 'edufine',
+          steps: [{ id: 'step-1', label: '내 문서함' }],
+        },
+      },
+    });
   });
 });

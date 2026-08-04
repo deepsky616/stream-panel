@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createDefaultConfig } from '../src/shared/defaults';
 import type { ActionItem } from '../src/shared/types';
 import {
@@ -8,6 +10,8 @@ import {
   shouldShowWebWorkSettings,
   updateWebWorkflowBrowser,
 } from '../src/renderer/src/editor/webWorkViewModel';
+import * as settingsComponents from '../src/renderer/src/editor/CustomWebWorkflowBuilder';
+import * as webWorkViewModel from '../src/renderer/src/editor/webWorkViewModel';
 
 function workflowAction(): ActionItem {
   return {
@@ -30,6 +34,29 @@ function workflowAction(): ActionItem {
 }
 
 describe('web work settings view model', () => {
+  it('renders a guided custom workflow builder for both NEIS and Edufine', () => {
+    const CustomWebWorkflowBuilder = (
+      settingsComponents as unknown as {
+        CustomWebWorkflowBuilder?: (props: {
+          officeCode: 'goe';
+          onCreate: () => Promise<void>;
+        }) => ReturnType<typeof createElement>;
+      }
+    ).CustomWebWorkflowBuilder;
+    expect(CustomWebWorkflowBuilder).toBeTypeOf('function');
+    const html = renderToStaticMarkup(createElement(CustomWebWorkflowBuilder!, {
+      officeCode: 'goe',
+      onCreate: async () => undefined,
+    }));
+    expect(html).toContain('내 웹 업무 만들기');
+    expect(html).toContain('나이스');
+    expect(html).toContain('에듀파인');
+    expect(html).toContain('업무 이름');
+    expect(html).toContain('누를 메뉴 이름');
+    expect(html).toContain('도착 화면 확인 문구');
+    expect(html).toContain('키로 추가');
+  });
+
   it('shows managed web work only on Windows', () => {
     expect(shouldShowWebWorkSettings('win32')).toBe(true);
     expect(shouldShowWebWorkSettings('darwin')).toBe(false);
@@ -98,5 +125,72 @@ describe('web work settings view model', () => {
       webWorkflow: { id: 'neis-leave', browserId: 'chrome' },
     });
     expect(updateWebWorkflowBrowser(item, 'chrome').browser).toBeUndefined();
+  });
+
+  it('describes a custom workflow route for the key properties panel', () => {
+    const getWebWorkflowSummary = (
+      webWorkViewModel as unknown as {
+        getWebWorkflowSummary?: (item: ActionItem) => unknown;
+      }
+    ).getWebWorkflowSummary;
+    expect(getWebWorkflowSummary).toBeTypeOf('function');
+    expect(getWebWorkflowSummary!({
+      ...workflowAction(),
+      id: 'custom-documents',
+      label: '에듀파인 문서함',
+      target: 'https://klef.goe.go.kr/',
+      webWorkflow: {
+        id: 'custom',
+        browserId: 'edge',
+        custom: {
+          name: '에듀파인 문서함',
+          system: 'edufine',
+          steps: [
+            { id: 'step-1', label: '업무관리' },
+            { id: 'step-2', label: '내 문서함' },
+          ],
+          finalText: '내 문서함 목록',
+        },
+      },
+    })).toEqual({
+      label: '에듀파인 문서함',
+      systemLabel: '에듀파인',
+      custom: true,
+      route: ['업무관리', '내 문서함'],
+      finalText: '내 문서함 목록',
+    });
+  });
+
+  it('keeps a custom workflow name in sync when the key title changes', () => {
+    const updateCustomWebWorkflowName = (
+      webWorkViewModel as unknown as {
+        updateCustomWebWorkflowName?: (item: ActionItem, name: string) => ActionItem;
+      }
+    ).updateCustomWebWorkflowName;
+    expect(updateCustomWebWorkflowName).toBeTypeOf('function');
+    const custom = {
+      ...workflowAction(),
+      label: '에듀파인 문서함',
+      webWorkflow: {
+        id: 'custom' as const,
+        browserId: 'edge' as const,
+        custom: {
+          name: '에듀파인 문서함',
+          system: 'edufine' as const,
+          steps: [{ id: 'step-1', label: '내 문서함' }],
+          finalText: '내 문서함 목록',
+        },
+      },
+    };
+    expect(updateCustomWebWorkflowName!(custom, '받은 문서 조회')).toMatchObject({
+      label: '받은 문서 조회',
+      webWorkflow: {
+        id: 'custom',
+        custom: {
+          name: '받은 문서 조회',
+          steps: [{ id: 'step-1', label: '내 문서함' }],
+        },
+      },
+    });
   });
 });

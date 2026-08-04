@@ -621,7 +621,16 @@ export function EditorApp() {
         <button className="settings-button" type="button" onClick={() => setSettingsOpen(true)}>
           설정
         </button>
-        <SettingsModal open={settingsOpen} config={config} onClose={() => setSettingsOpen(false)} />
+        <SettingsModal
+          open={settingsOpen}
+          config={config}
+          onClose={() => setSettingsOpen(false)}
+          onAddWebWorkflow={(entry) => addEntry(
+            entry,
+            findFirstEmptyPosition(config.root),
+            [],
+          )}
+        />
         {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />}
         {dndMessage && (
           <div className="dnd-message" role="status">

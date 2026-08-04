@@ -1,4 +1,7 @@
-import { retargetWebWorkflowItems } from '../../../shared/webWorkflows';
+import {
+  getWebWorkflowDefinition,
+  retargetWebWorkflowItems,
+} from '../../../shared/webWorkflows';
 import type {
   ActionItem,
   AppConfig,
@@ -88,5 +91,49 @@ export function updateWebWorkflowBrowser(
   return {
     ...managedItem,
     webWorkflow: { ...item.webWorkflow, browserId },
+  };
+}
+
+export function updateCustomWebWorkflowName(
+  item: ActionItem,
+  name: string,
+): ActionItem {
+  if (item.webWorkflow?.id !== 'custom') return { ...item, label: name };
+  return {
+    ...item,
+    label: name,
+    webWorkflow: {
+      ...item.webWorkflow,
+      custom: { ...item.webWorkflow.custom, name },
+    },
+  };
+}
+
+export interface WebWorkflowSummary {
+  label: string;
+  systemLabel: '나이스' | '에듀파인';
+  custom: boolean;
+  route: string[];
+  finalText?: string;
+}
+
+export function getWebWorkflowSummary(item: ActionItem): WebWorkflowSummary | null {
+  const spec = item.webWorkflow;
+  if (!spec) return null;
+  if (spec.id === 'custom') {
+    return {
+      label: spec.custom.name,
+      systemLabel: spec.custom.system === 'neis' ? '나이스' : '에듀파인',
+      custom: true,
+      route: spec.custom.steps.map((step) => step.label),
+      finalText: spec.custom.finalText,
+    };
+  }
+  const definition = getWebWorkflowDefinition(spec.id);
+  return {
+    label: definition.label,
+    systemLabel: definition.system === 'neis' ? '나이스' : '에듀파인',
+    custom: false,
+    route: [],
   };
 }

@@ -143,7 +143,7 @@ describe('security validation', () => {
     ).toThrow(/웹사이트/);
   });
 
-  it('allows only fixed web workflows on their matching secure work sites and browsers', () => {
+  it('allows only validated web workflows on their matching secure work sites and browsers', () => {
     const edge = {
       path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       profileDir: 'Default',
@@ -197,6 +197,39 @@ describe('security validation', () => {
         } as Partial<ActionItem>),
       ),
     ).toThrow(/웹사이트/);
+
+    const customSpec = {
+      id: 'custom' as const,
+      browserId: 'edge' as const,
+      custom: {
+        name: '에듀파인 문서함',
+        system: 'edufine' as const,
+        steps: [{ id: 'step-1', label: '내 문서함' }],
+        finalText: '내 문서함 목록',
+      },
+    };
+    const custom: ActionItem = {
+      ...leave,
+      id: 'custom-documents',
+      label: '에듀파인 문서함',
+      target: 'https://klef.goe.go.kr/',
+      webWorkflow: customSpec,
+    };
+    expect(() => validateActionTarget(custom, 'win32')).not.toThrow();
+    expect(() => validateActionTarget({
+      ...custom,
+      target: 'https://goe.neis.go.kr/',
+    }, 'win32')).toThrow(/에듀파인/);
+    expect(() => validateDeckItemShallow({
+      ...custom,
+      webWorkflow: {
+        ...customSpec,
+        custom: {
+          ...customSpec.custom,
+          steps: [{ id: 'step-1', label: '결재 요청' }],
+        },
+      },
+    } as ActionItem)).toThrow(/웹 업무/);
   });
 
   it('validates multi-action steps, references, and delay limits', () => {

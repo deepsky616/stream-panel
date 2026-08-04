@@ -1,12 +1,64 @@
 import { describe, expect, it } from 'vitest';
-import type { WebWorkflowId } from '../src/shared/types';
+import type { BuiltInWebWorkflowId } from '../src/shared/types';
 import { EDUFINE_WORKFLOWS } from '../src/main/services/webConnector/workflows/edufine';
 import { NEIS_WORKFLOWS } from '../src/main/services/webConnector/workflows/neis';
 import { isForbiddenActionText } from '../src/main/services/webConnector/workflows/common';
+import * as workflowCommon from '../src/main/services/webConnector/workflows/common';
+import type { WebWorkflowSpec } from '../src/shared/types';
 
 const definitions = { ...NEIS_WORKFLOWS, ...EDUFINE_WORKFLOWS };
 
 describe('managed web workflow definitions', () => {
+  it('turns a custom path into checked navigation steps ending at the requested screen text', () => {
+    const createCustomManagedWorkflowDefinition = (
+      workflowCommon as unknown as {
+        createCustomManagedWorkflowDefinition?: (spec: WebWorkflowSpec) => unknown;
+      }
+    ).createCustomManagedWorkflowDefinition;
+    expect(createCustomManagedWorkflowDefinition).toBeTypeOf('function');
+    expect(createCustomManagedWorkflowDefinition!({
+      id: 'custom',
+      browserId: 'edge',
+      custom: {
+        name: '에듀파인 문서함',
+        system: 'edufine',
+        steps: [
+          { id: 'step-1', label: '업무관리' },
+          { id: 'step-2', label: '문서관리' },
+          { id: 'step-3', label: '내 문서함' },
+        ],
+        finalText: '내 문서함 목록',
+      },
+    })).toEqual({
+      id: 'custom',
+      label: '에듀파인 문서함',
+      finalState: 'custom-target-ready',
+      steps: [
+        expect.objectContaining({
+          id: 'step-1',
+          candidateLabels: ['업무관리'],
+          interaction: 'mouse',
+          navigationOnly: true,
+          postcondition: { kind: 'visible-any', labels: ['문서관리'] },
+        }),
+        expect.objectContaining({
+          id: 'step-2',
+          candidateLabels: ['문서관리'],
+          interaction: 'mouse',
+          navigationOnly: true,
+          postcondition: { kind: 'visible-any', labels: ['내 문서함'] },
+        }),
+        expect.objectContaining({
+          id: 'step-3',
+          candidateLabels: ['내 문서함'],
+          interaction: 'mouse',
+          navigationOnly: true,
+          postcondition: { kind: 'visible-any', labels: ['내 문서함 목록'] },
+        }),
+      ],
+    });
+  });
+
   it('defines only the four approved workflows and their final user-input states', () => {
     expect(Object.keys(definitions).sort()).toEqual([
       'edufine-draft',
@@ -67,6 +119,6 @@ describe('managed web workflow definitions', () => {
   });
 
   it('does not expose a definition for an arbitrary workflow identifier', () => {
-    expect(definitions['run-script' as WebWorkflowId]).toBeUndefined();
+    expect(definitions['run-script' as BuiltInWebWorkflowId]).toBeUndefined();
   });
 });

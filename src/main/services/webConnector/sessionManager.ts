@@ -2,6 +2,7 @@ import type {
   EducationOfficeCode,
   WebConnectorBrowserId,
   WebWorkflowId,
+  WebWorkflowSpec,
 } from '../../../shared/types';
 
 export interface ManagedBrowserSession {
@@ -15,6 +16,7 @@ export interface ManagedWorkflowRequest {
   officeCode: EducationOfficeCode;
   browserId: WebConnectorBrowserId;
   workflowId: WebWorkflowId;
+  workflowSpec?: WebWorkflowSpec;
 }
 
 export interface ManagedBrowserSessionManagerDependencies<

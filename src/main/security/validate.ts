@@ -13,8 +13,8 @@ import type {
 } from '../../shared/types';
 import {
   browserIdFromPath,
-  getWebWorkflowDefinition,
-  isAllowedWebWorkflowTarget,
+  getWebWorkflowSystem,
+  isAllowedWebWorkflowSpecTarget,
   isWebWorkflowSpec,
 } from '../../shared/webWorkflows';
 import { isValidProfileDirectory } from '../services/browserService/flags';
@@ -380,9 +380,8 @@ export function validateActionTarget(
         platform,
       );
     }
-    if (item.webWorkflow && !isAllowedWebWorkflowTarget(item.webWorkflow.id, item.target)) {
-      const definition = getWebWorkflowDefinition(item.webWorkflow.id);
-      const systemName = definition.system === 'neis' ? '나이스' : '에듀파인';
+    if (item.webWorkflow && !isAllowedWebWorkflowSpecTarget(item.webWorkflow, item.target)) {
+      const systemName = getWebWorkflowSystem(item.webWorkflow) === 'neis' ? '나이스' : '에듀파인';
       throw new ValidationError(`${systemName} 웹 업무는 허용된 ${systemName} 주소에서만 실행할 수 있습니다.`);
     }
   } else if (item.type === 'uwp') {

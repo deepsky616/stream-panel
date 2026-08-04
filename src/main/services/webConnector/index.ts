@@ -6,9 +6,12 @@ import type {
   EducationOfficeCode,
   WebConnectorBrowserId,
   WebConnectorStatus,
-  WebWorkflowId,
+  WebWorkflowSpec,
 } from '../../../shared/types';
-import { isAllowedWebWorkflowTarget } from '../../../shared/webWorkflows';
+import {
+  isAllowedWebWorkflowSpecTarget,
+  isWebWorkflowSpec,
+} from '../../../shared/webWorkflows';
 import {
   createWebConnectorDiagnostics,
   type WebConnectorDiagnostics,
@@ -106,8 +109,8 @@ function unavailableController(): WebConnectorSessionController {
   };
 }
 
-function workflowSuccessMessage(workflowId: WebWorkflowId): string {
-  switch (workflowId) {
+function workflowSuccessMessage(workflowSpec: WebWorkflowSpec): string {
+  switch (workflowSpec.id) {
     case 'neis-leave':
       return '나이스 복무 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.';
     case 'neis-trip':
@@ -116,6 +119,8 @@ function workflowSuccessMessage(workflowId: WebWorkflowId): string {
       return '에듀파인 기안 화면을 열었습니다. 내용을 확인한 뒤 직접 상신해 주세요.';
     case 'edufine-purchase':
       return '에듀파인 품의 화면을 열었습니다. 내용을 확인한 뒤 직접 상신해 주세요.';
+    case 'custom':
+      return `${workflowSpec.custom.name} 화면을 열었습니다. 내용을 확인한 뒤 필요한 최종 동작은 직접 진행해 주세요.`;
   }
 }
 
@@ -233,14 +238,15 @@ export function createWebConnectorService({
           message: '나이스와 에듀파인 자동 이동은 윈도우에서만 사용할 수 있습니다. 윈도우에서 다시 실행해 주세요.',
         };
       }
-      if (!item.webWorkflow) {
+      if (!isWebWorkflowSpec(item.webWorkflow)) {
         return {
           queued: false,
           message: '웹 업무 종류가 지정되지 않았습니다. 편집기에서 업무 키를 다시 만들어 주세요.',
         };
       }
+      const workflowSpec = item.webWorkflow;
       const officeCode = currentOffice();
-      if (!isAllowedWebWorkflowTarget(item.webWorkflow.id, item.target, officeCode)) {
+      if (!isAllowedWebWorkflowSpecTarget(workflowSpec, item.target, officeCode)) {
         return {
           queued: false,
           message: '선택한 교육청과 업무 주소가 일치하지 않습니다. 설정에서 소속 교육청을 다시 선택해 주세요.',
@@ -248,8 +254,9 @@ export function createWebConnectorService({
       }
       const request: ManagedWorkflowRequest = {
         officeCode,
-        browserId: item.webWorkflow.browserId,
-        workflowId: item.webWorkflow.id,
+        browserId: workflowSpec.browserId,
+        workflowId: workflowSpec.id,
+        workflowSpec,
       };
       const startedAt = now();
       const task = (async () => {
@@ -261,7 +268,7 @@ export function createWebConnectorService({
             await persist();
           }
           await controller.run(request);
-          notify(workflowSuccessMessage(request.workflowId), 'info');
+          notify(workflowSuccessMessage(workflowSpec), 'info');
           await diagnostics.record({
             at: now(),
             browserId: request.browserId,
