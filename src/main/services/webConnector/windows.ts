@@ -499,6 +499,33 @@ export async function openCdpWindowsWorkflowPage(
   };
 }
 
+export async function openWindowsOfficePortal(
+  session: WindowsManagedBrowserSession,
+): Promise<void> {
+  const protocol = session.connection.protocol;
+  const office = getEducationOffice(session.officeCode);
+  const portalOrigin = new URL(office.portalUrl).origin;
+  const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
+  let target = targets.find((candidate) => {
+    if (candidate.type !== 'page') return false;
+    try {
+      return new URL(candidate.url).origin === portalOrigin;
+    } catch {
+      return false;
+    }
+  });
+  if (!target) {
+    const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
+      url: office.portalUrl,
+    });
+    if (typeof created.targetId !== 'string') {
+      throw new Error('업무 포털 탭을 만들지 못했습니다. 업무용 브라우저를 다시 열어 주세요.');
+    }
+    target = { targetId: created.targetId, type: 'page', url: office.portalUrl };
+  }
+  await protocol.send('Target.activateTarget', { targetId: target.targetId });
+}
+
 function runWindowsCommand(
   command: string,
   args: readonly string[],

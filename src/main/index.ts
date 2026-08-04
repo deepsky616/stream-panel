@@ -1,5 +1,4 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
-import { join } from 'node:path';
 import { createDefaultConfig } from '../shared/defaults';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { isWebConnectorSupportedPlatform } from '../shared/webWorkflows';
@@ -25,6 +24,8 @@ type QuitAwareApp = typeof app & { isQuitting?: boolean };
 app.setName('stream-panel');
 const gotLock = app.requestSingleInstanceLock();
 let webConnectorService: WebConnectorService | null = null;
+let connectorShutdownStarted = false;
+let connectorShutdownComplete = false;
 if (!gotLock) {
   console.error('다른 Stream Panel 실행 과정이 이미 단일 실행 잠금을 사용하고 있습니다.');
   app.quit();
@@ -56,9 +57,8 @@ app.whenReady().then(async () => {
   if (isWebConnectorSupportedPlatform(PLATFORM.platform)) {
     webConnectorService = createWebConnectorService({
       userDataPath: app.getPath('userData'),
-      extensionDirectory: app.isPackaged
-        ? join(process.resourcesPath, 'browser-extension')
-        : join(app.getAppPath(), 'browser-extension'),
+      platform: PLATFORM.platform,
+      getConfig: () => configStore.get(),
       notify: (message, level) => {
         for (const window of createSafeWindowList()) {
           window.webContents.send(IPC_CHANNELS.TOAST, { level, message });
@@ -94,6 +94,7 @@ app.whenReady().then(async () => {
       quickLauncherEnabled = config.keyboard.quickLauncher;
       setLauncherEnabled(quickLauncherEnabled);
     }
+    void webConnectorService?.onConfigChanged(config);
   });
   app.on('second-instance', () => showPanel());
 }).catch((error: unknown) => {
@@ -105,10 +106,17 @@ function createSafeWindowList(): BrowserWindow[] {
   return BrowserWindow.getAllWindows();
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   (app as QuitAwareApp).isQuitting = true;
+  if (!webConnectorService || connectorShutdownComplete) return;
+  event.preventDefault();
+  if (connectorShutdownStarted) return;
+  connectorShutdownStarted = true;
   setActiveWebConnectorService(null);
-  void webConnectorService?.stop();
+  void webConnectorService.stop().finally(() => {
+    connectorShutdownComplete = true;
+    app.quit();
+  });
 });
 
 app.on('window-all-closed', () => {

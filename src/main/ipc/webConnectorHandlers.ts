@@ -1,128 +1,67 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { app, clipboard, ipcMain, shell } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
-import type { ActionItem, DetectedBrowser, WebConnectorBrowserId } from '../../shared/types';
+import type { WebConnectorBrowserId } from '../../shared/types';
 import {
   assertWebConnectorBrowserInput,
   assertWebConnectorSetupInput,
   assertWebConnectorStatusInput,
 } from '../security/inputValidation';
-import { createBrowserService } from '../services/browserService';
-import { launchDeckItem } from '../services/launcher';
-import {
-  copyExtensionManagementAddress,
-  type WebConnectorService,
-} from '../services/webConnector';
+import type { ConnectorReply, WebConnectorService } from '../services/webConnector';
 
-type ConnectorReply = { ok: true } | { ok: false; message: string };
+interface WebConnectorHandlerDependencies {
+  openDiagnosticsDirectory(path: string): Promise<string>;
+}
 
-async function delay(milliseconds: number): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+export function createWebConnectorHandlerActions(
+  service: WebConnectorService,
+  dependencies: WebConnectorHandlerDependencies = {
+    openDiagnosticsDirectory: (path) => shell.openPath(path),
+  },
+) {
+  return {
+    status: () => service.getStatuses(),
+    test: (input: { browserId: WebConnectorBrowserId }) => service.test(input.browserId),
+    async openSetup(input: {
+      browserId: WebConnectorBrowserId;
+      target: 'pair' | 'folder' | 'extensions';
+    }): Promise<ConnectorReply> {
+      if (input.target !== 'folder') {
+        return service.openSetup(input.browserId, input.target);
+      }
+      try {
+        const directory = await service.ensureDiagnosticsDirectory();
+        const error = await dependencies.openDiagnosticsDirectory(directory);
+        if (!error) return { ok: true };
+        return {
+          ok: false,
+          message: `문제 해결 폴더를 열지 못했습니다. 폴더 접근 권한을 확인해 주세요: ${error}`,
+        };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : '알 수 없는 오류';
+        return {
+          ok: false,
+          message: `문제 해결 폴더를 열지 못했습니다. 폴더 접근 권한을 확인해 주세요: ${detail}`,
+        };
+      }
+    },
+  };
 }
 
 export function registerWebConnectorHandlers(service: WebConnectorService): void {
-  const browsers = createBrowserService({
-    userDataPath: app.getPath('userData'),
-    homePath: app.getPath('home'),
-  });
-
-  const findBrowser = async (
-    browserId: WebConnectorBrowserId,
-  ): Promise<DetectedBrowser | null> => {
-    const installed = await browsers.list();
-    return installed.find((browser) => browser.id === browserId) ?? null;
-  };
-
-  const openHttpUrl = async (
-    browser: DetectedBrowser,
-    url: string,
-  ): Promise<ConnectorReply> => {
-    const item: ActionItem = {
-      id: 'web-connector-setup',
-      kind: 'action',
-      type: 'url',
-      label: '웹 업무 연결',
-      target: url,
-      args: [],
-      icon: { kind: 'auto' },
-      color: '#5B8CFF',
-      position: 0,
-      browser: { path: browser.path, appMode: false },
-    };
-    const result = await launchDeckItem([item], [], item.id);
-    return result.ok ? { ok: true } : { ok: false, message: result.message };
-  };
-
-  const openPairPage = async (
-    browserId: WebConnectorBrowserId,
-  ): Promise<ConnectorReply> => {
-    const started = await service.start();
-    if (!started.ok) return started;
-    const browser = await findBrowser(browserId);
-    if (!browser) {
-      const name = browserId === 'edge' ? '엣지' : '크롬';
-      return {
-        ok: false,
-        message: `${name}를 찾을 수 없습니다. 브라우저를 설치한 뒤 목록을 새로고침해 주세요.`,
-      };
-    }
-    const setupUrl = service.getSetupUrl(browserId);
-    if (!setupUrl) {
-      return {
-        ok: false,
-        message: '웹 업무 연결 페이지를 만들지 못했습니다. 스트림 패널을 다시 시작해 주세요.',
-      };
-    }
-    return openHttpUrl(browser, setupUrl);
-  };
+  const actions = createWebConnectorHandlerActions(service);
 
   ipcMain.handle(IPC_CHANNELS.WEB_CONNECTOR_STATUS, (_event, input: unknown) => {
     assertWebConnectorStatusInput(input);
-    return service.getStatuses();
+    return actions.status();
   });
 
-  ipcMain.handle(IPC_CHANNELS.WEB_CONNECTOR_TEST, async (_event, input: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.WEB_CONNECTOR_TEST, (_event, input: unknown) => {
     assertWebConnectorBrowserInput(input);
-    const opened = await openPairPage(input.browserId);
-    if (!opened.ok) return opened;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      if (service.getStatuses().find((status) => status.browserId === input.browserId)?.connected) {
-        return { ok: true } as const;
-      }
-      await delay(250);
-    }
-    const name = input.browserId === 'edge' ? '엣지' : '크롬';
-    return {
-      ok: false,
-      message: `${name} 확장 기능의 응답이 없습니다. 확장 기능을 설치하고 켠 뒤 다시 시험해 주세요.`,
-    } as const;
+    return actions.test(input);
   });
 
-  ipcMain.handle(IPC_CHANNELS.WEB_CONNECTOR_OPEN_SETUP, async (_event, input: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.WEB_CONNECTOR_OPEN_SETUP, (_event, input: unknown) => {
     assertWebConnectorSetupInput(input);
-    if (input.target === 'folder') {
-      const manifestPath = join(service.extensionDirectory, 'manifest.json');
-      if (!existsSync(manifestPath)) {
-        return {
-          ok: false,
-          message: '포함된 브라우저 확장 기능을 찾을 수 없습니다. 스트림 패널을 다시 설치해 주세요.',
-        } as const;
-      }
-      shell.showItemInFolder(manifestPath);
-      return { ok: true } as const;
-    }
-    if (input.target === 'extensions') {
-      return copyExtensionManagementAddress(input.browserId, (address) => clipboard.writeText(address));
-    }
-    const browser = await findBrowser(input.browserId);
-    if (!browser) {
-      const name = input.browserId === 'edge' ? '엣지' : '크롬';
-      return {
-        ok: false,
-        message: `${name}를 찾을 수 없습니다. 브라우저를 설치한 뒤 다시 시도해 주세요.`,
-      } as const;
-    }
-    return openPairPage(input.browserId);
+    return actions.openSetup(input);
   });
 }
