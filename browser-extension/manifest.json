@@ -3,7 +3,6 @@
   "name": "스트림 패널 웹 업무 도우미",
   "description": "스트림 패널에서 나이스와 에듀파인의 정해진 업무 화면을 엽니다.",
   "version": "1.0.0",
-  "homepage_url": "https://github.com/deepsky616/stream-panel",
   "minimum_chrome_version": "100",
   "permissions": ["storage"],
   "host_permissions": ["http://127.0.0.1:38473/*"],

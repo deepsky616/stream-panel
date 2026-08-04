@@ -12,7 +12,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "vitest run",
-    "extension:package": "node scripts/package-browser-extension.mjs",
     "build:win": "npm run build && electron-builder --win --publish never",
     "build:mac": "npm run build && electron-builder --mac --x64 --arm64 --publish never",
     "release:win": "npm run build && electron-builder --win --publish always",

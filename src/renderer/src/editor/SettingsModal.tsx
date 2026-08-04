@@ -6,10 +6,7 @@ import {
 } from '../../../shared/accelerator';
 import { searchDeckItems } from '../../../shared/search';
 import type { AppConfig, DeckItem, WebConnectorStatus } from '../../../shared/types';
-import {
-  getBrowserExtensionInstallTarget,
-  getBrowserExtensionManagementUrl,
-} from '../../../shared/webWorkflows';
+import { getBrowserExtensionManagementUrl } from '../../../shared/webWorkflows';
 
 type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'web-work' | 'about';
 
@@ -167,13 +164,6 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
   );
 
   if (!open) return null;
-  const extensionInstallTargets = {
-    edge: getBrowserExtensionInstallTarget('edge'),
-    chrome: getBrowserExtensionInstallTarget('chrome'),
-  } as const;
-  const manualExtensionSetup = Object.values(extensionInstallTargets).some(
-    (target) => target.kind === 'manual',
-  );
   const setConfig = (patch: Partial<AppConfig>) => {
     void window.api.config.set(patch).catch((error) => {
       setMessage(error instanceof Error ? error.message : '설정을 바꾸지 못했습니다. 입력값을 확인해 주세요.');
@@ -247,15 +237,12 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
     setMessage(null);
     try {
       const result = await window.api.webConnector.openSetup({ browserId, target });
-      const extensionTarget = getBrowserExtensionInstallTarget(browserId);
       setMessage(
         result.ok
           ? target === 'folder'
             ? '확장 기능 폴더를 열었습니다. 브라우저의 확장 관리 화면에서 이 폴더를 불러오세요.'
             : target === 'extensions'
-              ? extensionTarget.kind === 'store'
-                ? `${browserId === 'edge' ? '엣지' : '크롬'} 공식 설치 페이지를 열었습니다. 브라우저에서 확장 기능 추가를 승인하세요.`
-                : `${browserId === 'edge' ? '엣지' : '크롬'} 확장 관리 주소를 복사했습니다. 해당 브라우저 주소창에 붙여넣고 엔터 키를 누르세요.`
+              ? `${browserId === 'edge' ? '엣지' : '크롬'} 확장 관리 주소를 복사했습니다. 해당 브라우저 주소창에 붙여넣고 엔터 키를 누르세요.`
               : '브라우저 연결 페이지를 열었습니다.'
           : result.message,
       );
@@ -389,21 +376,18 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                     <h3>엣지·크롬 확장 기능</h3>
                     <p>파워 오토메이트 없이 나이스와 에듀파인의 정해진 작성 화면까지 이동합니다.</p>
                   </div>
-                  {manualExtensionSetup && (
-                    <button
-                      type="button"
-                      disabled={connectorBusy !== null}
-                      onClick={() => void openConnectorSetup('edge', 'folder')}
-                    >
-                      확장 기능 폴더 열기
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    disabled={connectorBusy !== null}
+                    onClick={() => void openConnectorSetup('edge', 'folder')}
+                  >
+                    확장 기능 폴더 열기
+                  </button>
                 </div>
                 <div className="connector-browser-list">
                   {(['edge', 'chrome'] as const).map((browserId) => {
                     const status = connectorStatuses.find((item) => item.browserId === browserId);
                     const browserName = browserId === 'edge' ? '엣지' : '크롬';
-                    const installTarget = extensionInstallTargets[browserId];
                     const stateLabel = status?.connected
                       ? '지금 연결됨'
                       : status?.paired
@@ -417,20 +401,16 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                             {stateLabel}
                           </span>
                           {status?.extensionVersion && <small>확장 기능 {status.extensionVersion}</small>}
-                          {installTarget.kind === 'store' ? (
-                            <small>공식 브라우저 스토어</small>
-                          ) : (
-                            <code className="connector-address">
-                              {getBrowserExtensionManagementUrl(browserId)}
-                            </code>
-                          )}
+                          <code className="connector-address">
+                            {getBrowserExtensionManagementUrl(browserId)}
+                          </code>
                         </div>
                         <div className="connector-actions">
                           <button
                             type="button"
                             disabled={connectorBusy !== null}
                             onClick={() => void openConnectorSetup(browserId, 'extensions')}
-                          >{installTarget.kind === 'store' ? '확장 기능 설치' : '확장 주소 복사'}</button>
+                          >확장 주소 복사</button>
                           <button
                             className="primary-action"
                             type="button"
@@ -444,22 +424,13 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                 </div>
                 <div className="connector-guide">
                   <h3>처음 연결하는 순서</h3>
-                  {manualExtensionSetup ? (
-                    <ol>
-                      <li>사용할 브라우저의 확장 주소 복사를 누릅니다.</li>
-                      <li>해당 브라우저 주소창에 붙여넣고 엔터 키를 누른 뒤 개발자 모드를 켭니다.</li>
-                      <li>압축 해제된 확장 기능을 불러오고 위에서 연 폴더를 선택합니다.</li>
-                      <li>사용할 브라우저의 연결 시험을 누릅니다.</li>
-                      <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓습니다.</li>
-                    </ol>
-                  ) : (
-                    <ol>
-                      <li>사용할 브라우저의 확장 기능 설치를 누릅니다.</li>
-                      <li>브라우저에서 확장 기능 추가를 승인합니다.</li>
-                      <li>스트림 패널로 돌아와 연결 시험을 누릅니다.</li>
-                      <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓습니다.</li>
-                    </ol>
-                  )}
+                  <ol>
+                    <li>사용할 브라우저의 확장 주소 복사를 누릅니다.</li>
+                    <li>해당 브라우저 주소창에 붙여넣고 엔터 키를 누른 뒤 개발자 모드를 켭니다.</li>
+                    <li>압축 해제된 확장 기능을 불러오고 위에서 연 폴더를 선택합니다.</li>
+                    <li>사용할 브라우저의 연결 시험을 누릅니다.</li>
+                    <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓습니다.</li>
+                  </ol>
                 </div>
                 <p className="workflow-safety-note">
                   로그인과 인증서 암호는 사용자가 직접 입력합니다. 저장·제출·결재는 자동으로 실행하지 않습니다.

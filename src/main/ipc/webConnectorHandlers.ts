@@ -11,7 +11,7 @@ import {
 import { createBrowserService } from '../services/browserService';
 import { launchDeckItem } from '../services/launcher';
 import {
-  openBrowserExtensionInstall,
+  copyExtensionManagementAddress,
   type WebConnectorService,
 } from '../services/webConnector';
 
@@ -113,20 +113,7 @@ export function registerWebConnectorHandlers(service: WebConnectorService): void
       return { ok: true } as const;
     }
     if (input.target === 'extensions') {
-      return openBrowserExtensionInstall(input.browserId, {
-        writeText: (address) => clipboard.writeText(address),
-        openStore: async (url) => {
-          const browser = await findBrowser(input.browserId);
-          if (!browser) {
-            const name = input.browserId === 'edge' ? '엣지' : '크롬';
-            return {
-              ok: false,
-              message: `${name}를 찾을 수 없습니다. 브라우저를 설치한 뒤 다시 시도해 주세요.`,
-            };
-          }
-          return openHttpUrl(browser, url);
-        },
-      });
+      return copyExtensionManagementAddress(input.browserId, (address) => clipboard.writeText(address));
     }
     const browser = await findBrowser(input.browserId);
     if (!browser) {

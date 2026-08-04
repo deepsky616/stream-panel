@@ -6,12 +6,7 @@ import type {
   WebConnectorBrowserId,
   WebConnectorStatus,
 } from '../../../shared/types';
-import {
-  BROWSER_EXTENSION_STORE_URLS,
-  getBrowserExtensionInstallTarget,
-  getBrowserExtensionManagementUrl,
-  type BrowserExtensionStoreUrls,
-} from '../../../shared/webWorkflows';
+import { getBrowserExtensionManagementUrl } from '../../../shared/webWorkflows';
 import { resolveMacBrowserExecutable } from '../browserService/macos';
 import {
   WebConnectorBroker,
@@ -51,28 +46,6 @@ export function copyExtensionManagementAddress(
       message: `확장 관리 주소를 복사하지 못했습니다. 브라우저 주소창에 ${address} 주소를 직접 입력해 주세요: ${detail}`,
     };
   }
-}
-
-type BrowserExtensionSetupReply = { ok: true } | { ok: false; message: string };
-
-export interface OpenBrowserExtensionInstallOptions {
-  storeUrls?: Readonly<BrowserExtensionStoreUrls>;
-  writeText: (text: string) => void;
-  openStore: (url: string) => Promise<BrowserExtensionSetupReply>;
-}
-
-export async function openBrowserExtensionInstall(
-  browserId: WebConnectorBrowserId,
-  {
-    storeUrls = BROWSER_EXTENSION_STORE_URLS,
-    writeText,
-    openStore,
-  }: OpenBrowserExtensionInstallOptions,
-): Promise<BrowserExtensionSetupReply> {
-  const target = getBrowserExtensionInstallTarget(browserId, storeUrls);
-  return target.kind === 'store'
-    ? openStore(target.url)
-    : copyExtensionManagementAddress(browserId, writeText);
 }
 
 export async function resolveWebConnectorBrowserExecutable(
