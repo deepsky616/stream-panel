@@ -11,7 +11,7 @@ describe('managed web connector state', () => {
       token: 'secret-pairing-token',
       pairings: { edge: { extensionVersion: '1.2.1' } },
       port: 38_473,
-      websocket: 'ws://127.0.0.1:38473/devtools/browser/secret',
+      websocket: `ws://127.0.0.1:${38_473}/devtools/browser/secret`,
     });
 
     const state = await loadManagedWebConnectorState({

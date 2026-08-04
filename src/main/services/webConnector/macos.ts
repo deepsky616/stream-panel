@@ -36,12 +36,3 @@ export function createMacosWebAutomation(
     closeAll: async () => undefined,
   };
 }
-
-export async function resolveMacosConnectorBrowserExecutable(
-  bundlePath: string,
-  exists: (path: string) => boolean,
-  resolveBundleExecutable: (path: string) => Promise<string | null>,
-): Promise<string | null> {
-  const executable = await resolveBundleExecutable(bundlePath);
-  return executable && exists(executable) ? executable : null;
-}

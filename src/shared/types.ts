@@ -80,7 +80,6 @@ export interface WebConnectorStatus {
   browserId: WebConnectorBrowserId;
   paired: boolean;
   connected: boolean;
-  extensionVersion?: string;
   lastSeenAt?: number;
 }
 

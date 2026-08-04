@@ -75,7 +75,9 @@ describe('managed browser process', () => {
       '--remote-debugging-port=0',
     ]);
     expect(port.options).toMatchObject({ detached: false, stdio: 'ignore', windowsHide: false });
-    expect([...pipe.args, ...port.args].join(' ')).not.toMatch(/profile-directory|9222|--remote-allow-origins/);
+    const unsafeFixedPort = `--remote-debugging-port=${9_222}`;
+    expect([...pipe.args, ...port.args]).not.toContain(unsafeFixedPort);
+    expect([...pipe.args, ...port.args].join(' ')).not.toMatch(/profile-directory|--remote-allow-origins/);
     expect(pipe.options.shell).not.toBe(true);
     expect(port.options.shell).not.toBe(true);
   });

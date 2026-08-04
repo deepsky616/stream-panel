@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type {
@@ -9,11 +8,7 @@ import type {
   WebConnectorStatus,
   WebWorkflowId,
 } from '../../../shared/types';
-import {
-  getBrowserExtensionManagementUrl,
-  isAllowedWebWorkflowTarget,
-} from '../../../shared/webWorkflows';
-import { resolveMacBrowserExecutable } from '../browserService/macos';
+import { isAllowedWebWorkflowTarget } from '../../../shared/webWorkflows';
 import {
   createWebConnectorDiagnostics,
   type WebConnectorDiagnostics,
@@ -28,58 +23,12 @@ import {
   type LoadManagedWebConnectorStateOptions,
   type ManagedWebConnectorState,
 } from './state';
-import { resolveMacosConnectorBrowserExecutable } from './macos';
 import {
   createWindowsManagedSessionManager,
   openWindowsOfficePortal,
-  resolveWindowsConnectorBrowserExecutable,
   type WindowsManagedBrowserSession,
 } from './windows';
 import type { WorkflowRunResult } from './workflows/engine';
-
-export interface ResolveWebConnectorBrowserExecutableOptions {
-  platform?: NodeJS.Platform;
-  exists?: (path: string) => boolean;
-  resolveMacExecutable?: (bundlePath: string) => Promise<string | null>;
-}
-
-export function copyExtensionManagementAddress(
-  browserId: WebConnectorBrowserId,
-  writeText: (text: string) => void,
-): { ok: true } | { ok: false; message: string } {
-  const address = getBrowserExtensionManagementUrl(browserId);
-  try {
-    writeText(address);
-    return { ok: true };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : '알 수 없는 오류';
-    return {
-      ok: false,
-      message: `확장 관리 주소를 복사하지 못했습니다. 브라우저 주소창에 ${address} 주소를 직접 입력해 주세요: ${detail}`,
-    };
-  }
-}
-
-export async function resolveWebConnectorBrowserExecutable(
-  browserPath: string,
-  {
-    platform = process.platform,
-    exists = existsSync,
-    resolveMacExecutable = resolveMacBrowserExecutable,
-  }: ResolveWebConnectorBrowserExecutableOptions = {},
-): Promise<string | null> {
-  try {
-    if (platform === 'win32') {
-      return resolveWindowsConnectorBrowserExecutable(browserPath, exists);
-    }
-    if (platform === 'darwin') {
-      return await resolveMacosConnectorBrowserExecutable(browserPath, exists, resolveMacExecutable);
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 export type ConnectorReply = { ok: true } | { ok: false; message: string };
 

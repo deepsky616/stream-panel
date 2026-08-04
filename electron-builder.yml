@@ -22,11 +22,6 @@ win:
       arch: [x64]
   icon: build/icon.ico
   artifactName: StreamPanel-${version}-Setup.${ext}
-  extraResources:
-    - from: browser-extension
-      to: browser-extension
-      filter:
-        - "**/*"
 mac:
   target:
     - target: dmg

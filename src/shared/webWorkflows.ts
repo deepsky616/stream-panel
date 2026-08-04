@@ -178,9 +178,3 @@ export function retargetWebWorkflowItems(
     };
   });
 }
-
-export function getBrowserExtensionManagementUrl(
-  browserId: WebConnectorBrowserId,
-): 'chrome://extensions/' | 'edge://extensions/' {
-  return browserId === 'edge' ? 'edge://extensions/' : 'chrome://extensions/';
-}
