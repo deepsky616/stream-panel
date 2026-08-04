@@ -5,8 +5,19 @@ import {
   normalizeAccelerator,
 } from '../../../shared/accelerator';
 import { searchDeckItems } from '../../../shared/search';
-import type { AppConfig, DeckItem, WebConnectorStatus } from '../../../shared/types';
-import { getBrowserExtensionManagementUrl } from '../../../shared/webWorkflows';
+import { EDUCATION_OFFICES } from '../../../shared/educationOffices';
+import type {
+  AppConfig,
+  DeckItem,
+  EducationOfficeCode,
+  WebConnectorBrowserId,
+  WebConnectorStatus,
+} from '../../../shared/types';
+import {
+  createEducationOfficePatch,
+  createWebWorkBrowserCards,
+  shouldShowWebWorkSettings,
+} from './webWorkViewModel';
 
 type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'web-work' | 'about';
 
@@ -38,7 +49,8 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
   const [failedNumbers, setFailedNumbers] = useState<string[]>([]);
   const [hotkeyStatuses, setHotkeyStatuses] = useState<Record<string, string>>({});
   const [connectorStatuses, setConnectorStatuses] = useState<WebConnectorStatus[]>([]);
-  const [connectorBusy, setConnectorBusy] = useState<string | null>(null);
+  const [connectorBusy, setConnectorBusy] = useState<WebConnectorBrowserId | null>(null);
+  const [connectorError, setConnectorError] = useState<WebConnectorBrowserId | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const hotkeys = useMemo(() => collectHotkeys(config.root), [config.root]);
   const numberPreview = useMemo(() => {
@@ -61,6 +73,10 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
       };
     });
   }, [config.grid, config.root]);
+  const connectorCards = useMemo(
+    () => createWebWorkBrowserCards(connectorStatuses, connectorBusy, connectorError),
+    [connectorBusy, connectorError, connectorStatuses],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -229,38 +245,50 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
     setKeyboard({ globalNumberHotkeys: true });
   };
   const openConnectorSetup = async (
-    browserId: 'chrome' | 'edge',
-    target: 'pair' | 'folder' | 'extensions',
+    browserId: WebConnectorBrowserId,
+    target: 'pair' | 'folder',
   ) => {
-    const busyKey = `${browserId}:${target}`;
-    setConnectorBusy(busyKey);
+    setConnectorBusy(browserId);
+    setConnectorError(null);
     setMessage(null);
     try {
       const result = await window.api.webConnector.openSetup({ browserId, target });
-      setMessage(
-        result.ok
-          ? target === 'folder'
-            ? '확장 기능 폴더를 열었습니다. 브라우저의 확장 관리 화면에서 이 폴더를 불러오세요.'
-            : target === 'extensions'
-              ? `${browserId === 'edge' ? '엣지' : '크롬'} 확장 관리 주소를 복사했습니다. 해당 브라우저 주소창에 붙여넣고 엔터 키를 누르세요.`
-              : '브라우저 연결 페이지를 열었습니다.'
-          : result.message,
-      );
+      if (result.ok) {
+        setMessage(target === 'folder'
+          ? '문제 해결 폴더를 열었습니다.'
+          : '업무용 브라우저와 소속 교육청 포털을 열었습니다. 로그인은 브라우저에서 직접 진행해 주세요.');
+        if (target === 'pair') await refreshConnectorStatuses();
+      } else {
+        setConnectorError(browserId);
+        setMessage(result.message);
+      }
+    } catch (error) {
+      setConnectorError(browserId);
+      setMessage(error instanceof Error
+        ? error.message
+        : '업무용 브라우저를 열지 못했습니다. 설치 상태를 확인한 뒤 다시 시도해 주세요.');
     } finally {
       setConnectorBusy(null);
     }
   };
-  const testConnector = async (browserId: 'chrome' | 'edge') => {
-    setConnectorBusy(`${browserId}:test`);
-    setMessage('브라우저 연결 페이지를 열었습니다. 연결 결과를 확인하고 있습니다.');
+  const testConnector = async (browserId: WebConnectorBrowserId) => {
+    setConnectorBusy(browserId);
+    setConnectorError(null);
+    setMessage('업무용 브라우저를 열고 소속 교육청 포털 연결을 확인하고 있습니다.');
     try {
       const result = await window.api.webConnector.test({ browserId });
-      setMessage(
-        result.ok
-          ? `${browserId === 'edge' ? '엣지' : '크롬'} 연결을 확인했습니다.`
-          : result.message,
-      );
+      if (result.ok) {
+        setMessage(`${browserId === 'edge' ? '엣지' : '크롬'} 업무용 브라우저 연결을 확인했습니다.`);
+      } else {
+        setConnectorError(browserId);
+        setMessage(result.message);
+      }
       await refreshConnectorStatuses();
+    } catch (error) {
+      setConnectorError(browserId);
+      setMessage(error instanceof Error
+        ? error.message
+        : '업무용 브라우저 연결을 확인하지 못했습니다. 브라우저 설치 상태를 확인해 주세요.');
     } finally {
       setConnectorBusy(null);
     }
@@ -280,7 +308,7 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
               ['appearance', '모양'],
               ['behavior', '동작'],
               ['shortcut', '단축키'],
-              ...(config.platform === 'win32'
+              ...(shouldShowWebWorkSettings(config.platform)
                 ? [['web-work', '웹 업무 연결'] as [SettingsTab, string]]
                 : []),
               ['about', '정보'],
@@ -373,67 +401,73 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
               <>
                 <div className="web-work-heading">
                   <div>
-                    <h3>엣지·크롬 확장 기능</h3>
-                    <p>파워 오토메이트 없이 나이스와 에듀파인의 정해진 작성 화면까지 이동합니다.</p>
+                    <h3>업무용 브라우저</h3>
+                    <p>개인 브라우저와 분리된 전용 창에서 나이스와 에듀파인의 정해진 작성 화면까지 이동합니다.</p>
                   </div>
-                  <button
-                    type="button"
-                    disabled={connectorBusy !== null}
-                    onClick={() => void openConnectorSetup('edge', 'folder')}
-                  >
-                    확장 기능 폴더 열기
-                  </button>
                 </div>
+                <label className="education-office-field">
+                  소속 교육청
+                  <select
+                    value={config.educationOfficeCode}
+                    disabled={connectorBusy !== null}
+                    onChange={(event) => setConfig(createEducationOfficePatch(
+                      config,
+                      event.target.value as EducationOfficeCode,
+                    ))}
+                  >
+                    {EDUCATION_OFFICES.map((office) => (
+                      <option key={office.code} value={office.code}>{office.name}</option>
+                    ))}
+                  </select>
+                  <small>교육청을 바꾸면 등록된 웹 업무 키 주소도 함께 안전하게 바뀝니다.</small>
+                </label>
                 <div className="connector-browser-list">
-                  {(['edge', 'chrome'] as const).map((browserId) => {
-                    const status = connectorStatuses.find((item) => item.browserId === browserId);
-                    const browserName = browserId === 'edge' ? '엣지' : '크롬';
-                    const stateLabel = status?.connected
-                      ? '지금 연결됨'
-                      : status?.paired
-                        ? '설치됨 · 응답 대기'
-                        : '연결 필요';
-                    return (
-                      <article className="connector-browser-card" key={browserId}>
+                  {connectorCards.map((card) => (
+                      <article className={`connector-browser-card connector-${card.state}`} key={card.browserId}>
                         <div>
-                          <strong>{browserName}</strong>
-                          <span className={status?.connected ? 'connector-ok' : status?.paired ? 'connector-waiting' : 'connector-missing'}>
-                            {stateLabel}
+                          <strong>{card.name}</strong>
+                          {card.recommended && <span className="connector-recommended">추천</span>}
+                          <span className={`connector-state connector-state-${card.state}`}>
+                            {card.stateLabel}
                           </span>
-                          {status?.extensionVersion && <small>확장 기능 {status.extensionVersion}</small>}
-                          <code className="connector-address">
-                            {getBrowserExtensionManagementUrl(browserId)}
-                          </code>
+                          <small>소속 교육청 전용 프로필을 사용하며 개인 방문 기록과 설정을 섞지 않습니다.</small>
                         </div>
                         <div className="connector-actions">
                           <button
                             type="button"
                             disabled={connectorBusy !== null}
-                            onClick={() => void openConnectorSetup(browserId, 'extensions')}
-                          >확장 주소 복사</button>
+                            onClick={() => void openConnectorSetup(card.browserId, 'pair')}
+                          >업무용 브라우저 열기</button>
                           <button
                             className="primary-action"
                             type="button"
                             disabled={connectorBusy !== null}
-                            onClick={() => void testConnector(browserId)}
-                          >{connectorBusy === `${browserId}:test` ? '확인 중…' : '연결 시험'}</button>
+                            onClick={() => void testConnector(card.browserId)}
+                          >{connectorBusy === card.browserId ? '확인 중…' : '연결 시험'}</button>
+                          {card.state === 'error' && (
+                            <button
+                              type="button"
+                              disabled={connectorBusy !== null}
+                              onClick={() => void openConnectorSetup(card.browserId, 'folder')}
+                            >문제 해결 폴더 열기</button>
+                          )}
                         </div>
                       </article>
-                    );
-                  })}
+                  ))}
                 </div>
                 <div className="connector-guide">
-                  <h3>처음 연결하는 순서</h3>
+                  <h3>사용 순서</h3>
                   <ol>
-                    <li>사용할 브라우저의 확장 주소 복사를 누릅니다.</li>
-                    <li>해당 브라우저 주소창에 붙여넣고 엔터 키를 누른 뒤 개발자 모드를 켭니다.</li>
-                    <li>압축 해제된 확장 기능을 불러오고 위에서 연 폴더를 선택합니다.</li>
-                    <li>사용할 브라우저의 연결 시험을 누릅니다.</li>
-                    <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓습니다.</li>
+                    <li>소속 교육청과 사용할 엣지 또는 크롬을 고릅니다.</li>
+                    <li>업무용 브라우저 열기를 누르고 나이스와 에듀파인에 직접 로그인합니다.</li>
+                    <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓고 실행합니다.</li>
                   </ol>
                 </div>
+                <p className="connector-legacy-note">
+                  예전 확장 기능은 더 이상 필요하지 않습니다. 설치되어 있다면 브라우저에서 직접 제거해도 됩니다.
+                </p>
                 <p className="workflow-safety-note">
-                  로그인과 인증서 암호는 사용자가 직접 입력합니다. 저장·제출·결재는 자동으로 실행하지 않습니다.
+                  로그인과 인증서 암호, 외부 프로그램 확인은 사용자가 직접 진행합니다. 저장·제출·상신·승인·결재는 자동으로 실행하지 않습니다.
                 </p>
               </>
             )}

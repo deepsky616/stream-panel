@@ -1,5 +1,6 @@
 import { isAbsolute, win32 } from 'node:path';
 import { validateHintKeys } from '../../shared/hintMap';
+import { isEducationOfficeCode } from '../../shared/educationOffices';
 import type { AppConfig, DeckItem } from '../../shared/types';
 
 function assertRecord(value: unknown, name: string): asserts value is Record<string, unknown> {
@@ -13,6 +14,7 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
   const allowed = new Set([
     'version',
     'platform',
+    'educationOfficeCode',
     'root',
     'grid',
     'window',
@@ -29,6 +31,9 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
   if ('version' in value && value.version !== 1) throw new TypeError('지원하지 않는 설정 버전입니다.');
   if ('platform' in value && !['win32', 'darwin'].includes(String(value.platform))) {
     throw new TypeError('운영체제 설정이 올바르지 않습니다.');
+  }
+  if ('educationOfficeCode' in value && !isEducationOfficeCode(value.educationOfficeCode)) {
+    throw new TypeError('소속 교육청 설정이 올바르지 않습니다. 목록에서 다시 선택해 주세요.');
   }
   if ('theme' in value && !['dark', 'light', 'system'].includes(String(value.theme))) {
     throw new TypeError('테마 설정이 올바르지 않습니다.');

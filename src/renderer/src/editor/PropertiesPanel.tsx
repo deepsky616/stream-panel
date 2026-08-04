@@ -5,6 +5,7 @@ import { getWebWorkflowDefinition } from '../../../shared/webWorkflows';
 import { ColorPicker } from '../common/ColorPicker';
 import { IconPicker } from '../common/IconPicker';
 import { MultiActionEditor } from './MultiActionEditor';
+import { updateWebWorkflowBrowser } from './webWorkViewModel';
 
 interface PropertiesPanelProps {
   item: DeckItem | null;
@@ -110,10 +111,6 @@ export function PropertiesPanel({
     draft.kind === 'action' && draft.type === 'url' && draft.browser
       ? browsers.find((browser) => browser.path === draft.browser?.path)
       : undefined;
-  const availableBrowsers =
-    draft.kind === 'action' && draft.webWorkflow
-      ? browsers.filter((browser) => browser.id === 'edge' || browser.id === 'chrome')
-      : browsers;
   const workflowDefinition =
     draft.kind === 'action' && draft.webWorkflow
       ? getWebWorkflowDefinition(draft.webWorkflow.id)
@@ -241,87 +238,97 @@ export function PropertiesPanel({
         )}
         {draft.kind === 'action' && draft.type === 'url' && (
           <div className="browser-settings">
-            {workflowDefinition && (
+            {workflowDefinition && draft.webWorkflow ? (
+              <>
               <div className="workflow-summary">
                 <strong>{workflowDefinition.label}</strong>
-                <span>로그인 뒤 정해진 작성 화면까지만 이동합니다.</span>
+                <span>개인 브라우저와 분리된 전용 창에서 정해진 작성 화면까지만 이동합니다.</span>
               </div>
-            )}
-            <label>
-              열 브라우저
-              <select
-                value={draft.browser?.path ?? ''}
-                onChange={(event) => {
-                  const browser = browsers.find((candidate) => candidate.path === event.target.value);
-                  patch({
-                    browser: browser
-                      ? { path: browser.path, appMode: false }
-                      : undefined,
-                    ...(draft.webWorkflow && browser && (browser.id === 'edge' || browser.id === 'chrome')
-                      ? { webWorkflow: { ...draft.webWorkflow, browserId: browser.id } }
-                      : {}),
-                  } as Partial<DeckItem>);
-                }}
-              >
-                <option value="">기본 브라우저</option>
-                {availableBrowsers.map((browser) => (
-                  <option key={browser.path} value={browser.path}>{browser.name}</option>
-                ))}
-                {draft.browser && browsersLoaded && !selectedBrowser && (
-                  <option value={draft.browser.path}>찾을 수 없음 — {draft.browser.path}</option>
-                )}
-              </select>
-            </label>
-            {draft.browser && browsersLoaded && !selectedBrowser && (
-              <p className="browser-warning">지정한 브라우저를 찾을 수 없습니다. 실행할 때 기본 브라우저로 엽니다.</p>
-            )}
-            {selectedBrowser?.supportsProfiles && selectedBrowser.profiles.length > 1 && (
               <label>
-                프로필
+                업무용 브라우저
                 <select
-                  value={draft.browser?.profileDir ?? ''}
-                  onChange={(event) => patch({
-                    browser: draft.browser
-                      ? {
-                          ...draft.browser,
-                          profileDir: event.target.value || undefined,
-                        }
-                      : undefined,
-                  } as Partial<DeckItem>)}
-                >
-                  <option value="">브라우저 기본 프로필</option>
-                  {selectedBrowser.profiles.map((profile) => (
-                    <option key={profile.dir} value={profile.dir}>{profile.name}</option>
+                  value={draft.webWorkflow.browserId}
+                  onChange={(event) => setDraft(updateWebWorkflowBrowser(
+                    draft,
+                    event.target.value as 'edge' | 'chrome',
                   ))}
+                >
+                  <option value="edge">엣지 — 추천</option>
+                  <option value="chrome">크롬</option>
                 </select>
               </label>
-            )}
-            <label className={!selectedBrowser?.supportsAppMode ? 'disabled-option' : ''}>
-              <input
-                type="checkbox"
-                checked={draft.browser?.appMode ?? false}
-                disabled={!selectedBrowser?.supportsAppMode}
-                onChange={(event) => patch({
-                  browser: draft.browser
-                    ? { ...draft.browser, appMode: event.target.checked }
-                    : undefined,
-                } as Partial<DeckItem>)}
-              />
-              전용 창으로 열기
-              <small>주소창과 탭이 없는 창으로 열립니다</small>
-            </label>
-            {selectedBrowser && !selectedBrowser.supportsAppMode && (
-              <p className="browser-note">이 브라우저는 프로필과 전용 창을 지원하지 않습니다.</p>
-            )}
-            {platform === 'win32' && draft.webWorkflow && !draft.browser && (
-              <p className="browser-warning">웹 업무 자동 이동에는 엣지나 크롬 선택이 필요합니다.</p>
-            )}
-            {draft.webWorkflow && (
               <p className="workflow-safety-note">
                 {platform === 'win32'
-                  ? '암호와 인증서 정보는 저장하지 않습니다. 저장·제출·결재 단추도 자동으로 누르지 않습니다.'
-                  : '나이스·에듀파인 자동 이동은 윈도우에서만 지원합니다. 맥에서는 사이트만 엽니다.'}
+                  ? '암호와 인증서 정보는 저장하지 않습니다. 저장·제출·상신·승인·결재 단추도 자동으로 누르지 않습니다.'
+                  : '나이스와 에듀파인 자동 이동은 윈도우에서만 지원합니다.'}
               </p>
+              </>
+            ) : (
+              <>
+                <label>
+                  열 브라우저
+                  <select
+                    value={draft.browser?.path ?? ''}
+                    onChange={(event) => {
+                      const browser = browsers.find((candidate) => candidate.path === event.target.value);
+                      patch({
+                        browser: browser
+                          ? { path: browser.path, appMode: false }
+                          : undefined,
+                      } as Partial<DeckItem>);
+                    }}
+                  >
+                    <option value="">기본 브라우저</option>
+                    {browsers.map((browser) => (
+                      <option key={browser.path} value={browser.path}>{browser.name}</option>
+                    ))}
+                    {draft.browser && browsersLoaded && !selectedBrowser && (
+                      <option value={draft.browser.path}>찾을 수 없음 — {draft.browser.path}</option>
+                    )}
+                  </select>
+                </label>
+                {draft.browser && browsersLoaded && !selectedBrowser && (
+                  <p className="browser-warning">지정한 브라우저를 찾을 수 없습니다. 실행할 때 기본 브라우저로 엽니다.</p>
+                )}
+                {selectedBrowser?.supportsProfiles && selectedBrowser.profiles.length > 1 && (
+                  <label>
+                    프로필
+                    <select
+                      value={draft.browser?.profileDir ?? ''}
+                      onChange={(event) => patch({
+                        browser: draft.browser
+                          ? {
+                              ...draft.browser,
+                              profileDir: event.target.value || undefined,
+                            }
+                          : undefined,
+                      } as Partial<DeckItem>)}
+                    >
+                      <option value="">브라우저 기본 프로필</option>
+                      {selectedBrowser.profiles.map((profile) => (
+                        <option key={profile.dir} value={profile.dir}>{profile.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className={!selectedBrowser?.supportsAppMode ? 'disabled-option' : ''}>
+                  <input
+                    type="checkbox"
+                    checked={draft.browser?.appMode ?? false}
+                    disabled={!selectedBrowser?.supportsAppMode}
+                    onChange={(event) => patch({
+                      browser: draft.browser
+                        ? { ...draft.browser, appMode: event.target.checked }
+                        : undefined,
+                    } as Partial<DeckItem>)}
+                  />
+                  전용 창으로 열기
+                  <small>주소창과 탭이 없는 창으로 열립니다</small>
+                </label>
+                {selectedBrowser && !selectedBrowser.supportsAppMode && (
+                  <p className="browser-note">이 브라우저는 프로필과 전용 창을 지원하지 않습니다.</p>
+                )}
+              </>
             )}
           </div>
         )}

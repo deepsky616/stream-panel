@@ -102,6 +102,7 @@ export function createDefaultConfig(
   return {
     version: 1,
     platform: configPlatform,
+    educationOfficeCode: 'goe',
     root: createDefaultItems(paths, createId),
     grid: { ...DEFAULT_GRID },
     window: { ...DEFAULT_WINDOW },

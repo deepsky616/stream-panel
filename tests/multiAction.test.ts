@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ActionItem, MultiActionStep } from '../src/shared/types';
+import type { ActionItem, DeckItem, LaunchResult, MultiActionStep } from '../src/shared/types';
+import { launchDeckItem, type LauncherDependencies } from '../src/main/services/launcher';
 
 const multiActionModule = await import('../src/main/services/multiAction/core').catch(() => null);
 
@@ -33,6 +34,86 @@ function multi(steps: MultiActionStep[]): ActionItem {
 }
 
 describe('multi action runner', () => {
+  it('treats an accepted web workflow as a completed step and continues', async () => {
+    const events: string[] = [];
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const runner = new multiActionModule!.MultiActionRunner({
+      onProgress: (progress: { state: string }) => {
+        if (progress.state === 'completed') finish();
+      },
+    });
+    const workflow = {
+      ...action('workflow', '나이스 복무'),
+      target: 'https://goe.neis.go.kr/',
+      webWorkflow: { id: 'neis-leave' as const, browserId: 'edge' as const },
+    };
+    const next = action('next', '다음 작업');
+    const item = multi([
+      { id: 'step-1', kind: 'action', actionId: workflow.id },
+      { id: 'step-2', kind: 'action', actionId: next.id },
+    ]);
+    const deps: LauncherDependencies = {
+      exists: () => true,
+      openExternal: async (target) => { events.push(`open:${target}`); },
+      openPath: async () => '',
+      spawnProcess: vi.fn(() => ({ unref: vi.fn() })),
+      resolveMacBundleExecutable: async () => null,
+      notifyWarning: vi.fn(),
+      queueWebWorkflow: () => { events.push('queue:workflow'); return { queued: true }; },
+      startMultiAction: (
+        target: ActionItem,
+        root: readonly DeckItem[],
+        launch: (entry: ActionItem) => Promise<LaunchResult>,
+      ) => runner.start(target, root, launch),
+    };
+
+    expect(await launchDeckItem([item, workflow, next], [], item.id, deps, 'win32')).toEqual({ ok: true });
+    await finished;
+
+    expect(events).toEqual(['queue:workflow', `open:${next.target}`]);
+  });
+
+  it('stops a multi action when the web workflow queue rejects a step', async () => {
+    const events: string[] = [];
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const runner = new multiActionModule!.MultiActionRunner({
+      onProgress: (progress: { state: string }) => {
+        if (progress.state === 'failed') finish();
+      },
+    });
+    const workflow = {
+      ...action('workflow', '나이스 복무'),
+      target: 'https://goe.neis.go.kr/',
+      webWorkflow: { id: 'neis-leave' as const, browserId: 'edge' as const },
+    };
+    const next = action('next', '다음 작업');
+    const item = multi([
+      { id: 'step-1', kind: 'action', actionId: workflow.id },
+      { id: 'step-2', kind: 'action', actionId: next.id },
+    ]);
+    const deps: LauncherDependencies = {
+      exists: () => true,
+      openExternal: async (target) => { events.push(`open:${target}`); },
+      openPath: async () => '',
+      spawnProcess: vi.fn(() => ({ unref: vi.fn() })),
+      resolveMacBundleExecutable: async () => null,
+      notifyWarning: vi.fn(),
+      queueWebWorkflow: () => ({ queued: false, message: '업무용 브라우저 연결 실패' }),
+      startMultiAction: (
+        target: ActionItem,
+        root: readonly DeckItem[],
+        launch: (entry: ActionItem) => Promise<LaunchResult>,
+      ) => runner.start(target, root, launch),
+    };
+
+    expect(await launchDeckItem([item, workflow, next], [], item.id, deps, 'win32')).toEqual({ ok: true });
+    await finished;
+
+    expect(events).toEqual([]);
+  });
+
   it('runs referenced actions and delays in their saved order', async () => {
     expect(multiActionModule?.MultiActionRunner).toBeTypeOf('function');
     const events: string[] = [];

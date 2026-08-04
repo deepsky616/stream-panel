@@ -52,6 +52,25 @@ export type WebWorkflowId =
 
 export type WebConnectorBrowserId = 'chrome' | 'edge';
 
+export type EducationOfficeCode =
+  | 'sen'
+  | 'goe'
+  | 'gne'
+  | 'pen'
+  | 'dge'
+  | 'dje'
+  | 'gbe'
+  | 'sje'
+  | 'use'
+  | 'ice'
+  | 'gen'
+  | 'jne'
+  | 'jbe'
+  | 'cne'
+  | 'cbe'
+  | 'gwe'
+  | 'jje';
+
 export interface WebWorkflowSpec {
   id: WebWorkflowId;
   browserId: WebConnectorBrowserId;
@@ -61,7 +80,6 @@ export interface WebConnectorStatus {
   browserId: WebConnectorBrowserId;
   paired: boolean;
   connected: boolean;
-  extensionVersion?: string;
   lastSeenAt?: number;
 }
 
@@ -135,6 +153,7 @@ export interface KeyboardConfig {
 export interface AppConfig {
   version: number;
   platform: 'win32' | 'darwin';
+  educationOfficeCode: EducationOfficeCode;
   root: DeckItem[];
   grid: GridConfig;
   window: WindowConfig;

@@ -1,104 +1,186 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { createDefaultConfig } from '../src/shared/defaults';
 import type { ActionItem } from '../src/shared/types';
 import {
   createWebConnectorService,
-  resolveWebConnectorBrowserExecutable,
+  type WebConnectorSessionController,
 } from '../src/main/services/webConnector';
+import type { ManagedBrowserSession } from '../src/main/services/webConnector/sessionManager';
 
-const running: Array<{ stop(): Promise<void> }> = [];
-
-afterEach(async () => {
-  await Promise.all(running.splice(0).map((service) => service.stop()));
-});
-
-function workflowAction(): ActionItem {
+function workflowAction(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
     id: 'leave',
     kind: 'action',
     type: 'url',
     label: '나이스 복무',
-    target: 'https://goe.neis.go.kr',
+    target: 'https://goe.neis.go.kr/',
     args: [],
     icon: { kind: 'auto' },
     color: '#5B8CFF',
     position: 0,
-    browser: {
-      path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      appMode: false,
-    },
     webWorkflow: { id: 'neis-leave', browserId: 'edge' },
+    ...overrides,
   };
 }
 
-describe('web connector service', () => {
-  it('resolves Windows and macOS browser executables through injected platform adapters', async () => {
-    await expect(resolveWebConnectorBrowserExecutable('C:\\Edge\\msedge.exe', {
-      platform: 'win32',
-      exists: (path) => path === 'C:\\Edge\\msedge.exe',
-    })).resolves.toBe('C:\\Edge\\msedge.exe');
+function createController(): WebConnectorSessionController {
+  const sessions = new Map<string, ManagedBrowserSession>();
+  return {
+    async prepare(officeCode, browserId) {
+      const session: ManagedBrowserSession = {
+        officeCode,
+        browserId,
+        isAlive: () => true,
+        close: async () => undefined,
+      };
+      sessions.set(`${officeCode}:${browserId}`, session);
+      return session;
+    },
+    async run() {
+      return { workflowId: 'neis-leave', finalState: 'leave-request-form' };
+    },
+    getSession: (officeCode, browserId) => sessions.get(`${officeCode}:${browserId}`),
+    closeOtherOffices: async (officeCode) => {
+      for (const [key, session] of sessions) {
+        if (session.officeCode !== officeCode) sessions.delete(key);
+      }
+    },
+    closeAll: async () => { sessions.clear(); },
+  };
+}
 
-    await expect(resolveWebConnectorBrowserExecutable('/Applications/Google Chrome.app', {
-      platform: 'darwin',
-      exists: (path) => path.endsWith('/Google Chrome'),
-      resolveMacExecutable: async () => '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    })).resolves.toBe('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
-
-    await expect(resolveWebConnectorBrowserExecutable('/missing', {
-      platform: 'linux',
-      exists: () => true,
-    })).resolves.toBeNull();
-
-    await expect(resolveWebConnectorBrowserExecutable('/broken.app', {
-      platform: 'darwin',
-      exists: () => true,
-      resolveMacExecutable: async () => { throw new Error('broken plist'); },
-    })).resolves.toBeNull();
-  });
-
-  it('persists pairing, exposes a fragment-only setup token, and queues a fixed action', async () => {
+describe('managed web connector service', () => {
+  it('loads non-sensitive state without starting a loopback extension server', async () => {
     const writes: string[] = [];
-    const notify = vi.fn();
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
     const service = createWebConnectorService({
-      port: 0,
-      extensionDirectory: '/app/browser-extension',
-      notify,
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: createController(),
       stateIo: {
         read: async () => undefined,
         write: async (text) => { writes.push(text); },
-        randomToken: () => 't'.repeat(43),
       },
+      openPortal: async () => undefined,
     });
-    running.push(service);
-    const started = await service.start();
-    expect(started.ok).toBe(true);
 
-    const setupUrl = service.getSetupUrl('edge');
-    expect(setupUrl).not.toBeNull();
-    const parsed = new URL(setupUrl!);
-    expect(parsed.pathname).toBe('/setup');
-    expect(parsed.search).toBe('');
-    expect(parsed.hash).toContain(`token=${'t'.repeat(43)}`);
-    expect(parsed.hash).toContain('browserId=edge');
+    await expect(service.start()).resolves.toEqual({ ok: true });
+    expect(JSON.parse(writes[0])).toEqual({
+      version: 1,
+      offices: {},
+      legacyExtensionNoticeShown: false,
+    });
+    expect(writes[0]).not.toMatch(/token|port|websocket|pairings/i);
+    await service.stop();
+  });
 
-    const token = new URLSearchParams(parsed.hash.slice(1)).get('token');
-    const paired = await fetch(new URL('/v1/pair', parsed.origin), {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
+  it('marks the current office browser paired after a handshake and portal check', async () => {
+    const writes: string[] = [];
+    const opened: string[] = [];
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: createController(),
+      stateIo: {
+        read: async () => undefined,
+        write: async (text) => { writes.push(text); },
       },
-      body: JSON.stringify({ browserId: 'edge', extensionVersion: '1.0.0' }),
+      openPortal: async (session) => { opened.push(`${session.officeCode}:${session.browserId}`); },
+      now: () => 1_800_000_000_000,
     });
-    expect(paired.status).toBe(200);
-    expect(service.getStatuses().find((status) => status.browserId === 'edge')).toMatchObject({
-      paired: true,
-      connected: true,
+    await service.start();
+
+    await expect(service.test('edge')).resolves.toEqual({ ok: true });
+
+    expect(opened).toEqual(['goe:edge']);
+    expect(service.getStatuses()).toEqual([
+      {
+        browserId: 'edge',
+        paired: true,
+        connected: true,
+        lastSeenAt: 1_800_000_000_000,
+      },
+      { browserId: 'chrome', paired: false, connected: false },
+    ]);
+    expect(JSON.parse(writes.at(-1)!)).toEqual({
+      version: 1,
+      offices: { goe: { edge: { lastSeenAt: 1_800_000_000_000 } } },
+      legacyExtensionNoticeShown: false,
     });
-    expect(JSON.parse(writes.at(-1)!)).toMatchObject({
-      pairings: { edge: { extensionVersion: '1.0.0' } },
+  });
+
+  it('accepts a validated workflow immediately and reports its later result through notifications', async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const notifications: Array<{ message: string; level: string }> = [];
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    controller.run = async () => {
+      await gate;
+      return { workflowId: 'neis-leave', finalState: 'leave-request-form' };
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async () => undefined,
+      },
+      notify: (message, level) => { notifications.push({ message, level }); },
+      now: () => 1_800_000_000_000,
     });
-    expect(service.queue(workflowAction())).toMatchObject({ queued: true });
-    expect(service.extensionDirectory).toBe('/app/browser-extension');
-    expect(notify).not.toHaveBeenCalled();
+    await service.start();
+
+    expect(service.queue(workflowAction())).toEqual({ queued: true });
+    expect(notifications).toEqual([]);
+    finish();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(notifications).toEqual([{
+      message: '나이스 복무 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.',
+      level: 'info',
+    }]);
+  });
+
+  it('rejects another office target and never falls back to a personal browser', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: createController(),
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+    });
+    await service.start();
+
+    expect(service.queue(workflowAction({ target: 'https://sen.neis.go.kr/' }))).toMatchObject({
+      queued: false,
+      message: expect.stringMatching(/교육청/),
+    });
   });
 });

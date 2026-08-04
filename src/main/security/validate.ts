@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { extname, isAbsolute, normalize, win32 } from 'node:path';
 import type { Stats } from 'node:fs';
 import { buildNumberAccelerators, normalizeAccelerator } from '../../shared/accelerator';
+import { isEducationOfficeCode } from '../../shared/educationOffices';
 import { validateHintKeys } from '../../shared/hintMap';
 import type {
   ActionItem,
@@ -465,6 +466,9 @@ export function validateAppConfig(config: AppConfig): void {
   if (config.version !== 1) throw new ValidationError('지원하지 않는 설정 버전입니다.');
   if (config.platform !== 'win32' && config.platform !== 'darwin') {
     throw new ValidationError('지원하지 않는 운영체제 설정입니다.');
+  }
+  if (!isEducationOfficeCode(config.educationOfficeCode)) {
+    throw new ValidationError('소속 교육청 설정이 올바르지 않습니다. 목록에서 다시 선택해 주세요.');
   }
   if (
     !Number.isInteger(config.grid.cols) ||
