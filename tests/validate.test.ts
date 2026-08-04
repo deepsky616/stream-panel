@@ -328,6 +328,16 @@ describe('security validation', () => {
         keyboard: { ...mac.keyboard, quickLauncher: 'yes' as unknown as boolean },
       }),
     ).toThrow(/키보드/);
+    expect(() =>
+      validateAppConfig({
+        ...mac,
+        educationOfficeCode: 'wrong' as typeof mac.educationOfficeCode,
+      }),
+    ).toThrow(/교육청/);
+    expect(() => inputValidation.assertConfigPatch({ educationOfficeCode: 'sen' })).not.toThrow();
+    expect(() => inputValidation.assertConfigPatch({ educationOfficeCode: 'wrong' })).toThrow(
+      /교육청/,
+    );
   });
 
   it('validates every quick-launcher IPC payload and rejects extra fields', () => {

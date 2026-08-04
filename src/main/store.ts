@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ElectronStore from 'electron-store';
 import { normalizeAccelerator } from '../shared/accelerator';
+import { isEducationOfficeCode } from '../shared/educationOffices';
 import { normalizeHintKeys } from '../shared/hintMap';
 import { normalizeDeckPositions } from '../shared/layout';
 import type {
@@ -75,6 +76,9 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
       parsed.platform === 'win32' || parsed.platform === 'darwin'
         ? parsed.platform
         : defaultConfig.platform,
+    educationOfficeCode: isEducationOfficeCode(parsed.educationOfficeCode)
+      ? parsed.educationOfficeCode
+      : defaultConfig.educationOfficeCode,
     root: normalizeItemHotkeys(normalized.items),
     grid: { ...defaultConfig.grid, ...grid },
     window: { ...defaultConfig.window, ...window },

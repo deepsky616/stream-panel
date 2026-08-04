@@ -48,6 +48,7 @@ describe('store migration', () => {
     delete legacy.platform;
     delete legacy.behavior;
     delete legacy.keyboard;
+    delete legacy.educationOfficeCode;
     legacy.hotkey = 'Control+Alt+D';
 
     const result = recoverConfigText(JSON.stringify(legacy), defaults);
@@ -64,6 +65,21 @@ describe('store migration', () => {
     });
     expect(result.config.keyboard.hintKeys).toHaveLength(40);
     expect(result.config.hotkey).toBe('CommandOrControl+Alt+D');
+    expect(result.config.educationOfficeCode).toBe('goe');
+  });
+
+  it('preserves an allowed office and replaces an invalid office with Gyeonggi', () => {
+    const seoul = recoverConfigText(
+      JSON.stringify({ ...defaults, educationOfficeCode: 'sen' }),
+      defaults,
+    );
+    const invalid = recoverConfigText(
+      JSON.stringify({ ...defaults, educationOfficeCode: 'wrong' }),
+      defaults,
+    );
+
+    expect(seoul.config.educationOfficeCode).toBe('sen');
+    expect(invalid.config.educationOfficeCode).toBe('goe');
   });
 
   it('preserves a config that was created on the other supported platform', () => {
@@ -98,6 +114,7 @@ describe('platform defaults', () => {
       idleFade: false,
     });
     expect(config.autoUpdate).toBe(false);
+    expect(config.educationOfficeCode).toBe('goe');
   });
 
   it('enables automatic updates on Windows', () => {
@@ -115,5 +132,6 @@ describe('platform defaults', () => {
       quickLauncherHotkey: 'CommandOrControl+Alt+Space',
     });
     expect(config.autoUpdate).toBe(true);
+    expect(config.educationOfficeCode).toBe('goe');
   });
 });
