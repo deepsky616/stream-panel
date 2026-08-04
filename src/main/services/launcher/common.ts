@@ -1,5 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import type { ActionItem, LaunchResult } from '../../../shared/types';
+import type { ActionItem, DeckItem, LaunchResult } from '../../../shared/types';
 
 export interface LauncherDependencies {
   exists: (target: string) => boolean;
@@ -13,6 +13,11 @@ export interface LauncherDependencies {
   resolveMacBundleExecutable: (bundlePath: string) => Promise<string | null>;
   notifyWarning: (message: string) => void;
   queueWebWorkflow: (item: ActionItem) => { queued: boolean; message?: string };
+  startMultiAction: (
+    item: ActionItem,
+    root: readonly DeckItem[],
+    launch: (item: ActionItem) => Promise<LaunchResult>,
+  ) => LaunchResult;
 }
 
 export function launchFailure(

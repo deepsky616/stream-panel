@@ -11,6 +11,7 @@ import { registerLauncherHandlers } from './launcherHandlers';
 import { registerBrowserHandlers } from './browserHandlers';
 import { registerWebConnectorHandlers } from './webConnectorHandlers';
 import type { WebConnectorService } from '../services/webConnector';
+import { registerMultiActionHandlers } from './multiActionHandlers';
 
 export function registerIpcHandlers(
   configStore: ConfigStore,
@@ -19,6 +20,7 @@ export function registerIpcHandlers(
   registerConfigHandlers(configStore);
   registerDeckHandlers(configStore);
   registerLaunchHandlers(configStore);
+  registerMultiActionHandlers();
   registerPickerHandlers();
   registerDropHandlers();
   registerAppHandlers();

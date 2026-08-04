@@ -16,6 +16,7 @@ import {
   assertLauncherRunInput,
   assertNoInput,
   assertBrowsersListInput,
+  assertMultiActionCancelInput,
 } from '../src/main/security/inputValidation';
 import * as inputValidation from '../src/main/security/inputValidation';
 import {
@@ -198,6 +199,54 @@ describe('security validation', () => {
     ).toThrow(/웹사이트/);
   });
 
+  it('validates multi-action steps, references, and delay limits', () => {
+    const referenced = action({ id: 'open-site', position: 1, label: '사이트 열기' });
+    const valid = action({
+      id: 'morning',
+      type: 'multi',
+      target: '',
+      label: '아침 준비',
+      multiAction: {
+        steps: [
+          { id: 'step-1', kind: 'action', actionId: 'open-site' },
+          { id: 'step-2', kind: 'delay', delayMs: 1_000 },
+        ],
+      },
+    });
+
+    expect(() => validateDeck([valid, referenced], 'darwin')).not.toThrow();
+    expect(() => validateActionTarget(action({
+      ...valid,
+      multiAction: { steps: [] },
+    }), 'darwin')).toThrow(/단계/);
+    expect(() => validateDeck([
+      { ...valid, multiAction: { steps: [{ id: 'step-1', kind: 'action', actionId: 'missing' }] } },
+      referenced,
+    ], 'darwin')).toThrow(/찾을 수/);
+    expect(() => validateDeck([
+      valid,
+      { ...valid, id: 'nested', position: 2, multiAction: {
+        steps: [{ id: 'nested-step', kind: 'action', actionId: 'morning' }],
+      } },
+      referenced,
+    ], 'darwin')).toThrow(/다른 멀티 액션/);
+    expect(() => validateDeck([
+      { ...valid, multiAction: { steps: Array.from({ length: 21 }, (_, index) => ({
+        id: `step-${index}`,
+        kind: 'delay' as const,
+        delayMs: 0,
+      })) } },
+      referenced,
+    ], 'darwin')).toThrow(/20/);
+    expect(() => validateDeck([
+      { ...valid, multiAction: { steps: [
+        { id: 'step-1', kind: 'delay', delayMs: 30_000 },
+        { id: 'step-2', kind: 'delay', delayMs: 30_001 },
+      ] } },
+      referenced,
+    ], 'darwin')).toThrow(/60초/);
+  });
+
   it('enforces layer, depth, and total item limits', () => {
     const layer = Array.from({ length: 121 }, (_, index) => action({ id: `id-${index}`, position: index }));
     expect(() => validateDeck(layer)).toThrow(/120/);
@@ -292,6 +341,14 @@ describe('security validation', () => {
     expect(() => assertNoInput({})).toThrow(/입력/);
     expect(() => assertBrowsersListInput({ refresh: true })).not.toThrow();
     expect(() => assertBrowsersListInput({ refresh: 'yes' })).toThrow(/브라우저/);
+  });
+
+  it('validates multi-action cancellation input', () => {
+    expect(() => assertMultiActionCancelInput({ itemId: 'multi-id' })).not.toThrow();
+    expect(() => assertMultiActionCancelInput({ itemId: '' })).toThrow(/멀티 액션/);
+    expect(() => assertMultiActionCancelInput({ itemId: 'multi-id', force: true })).toThrow(
+      /멀티 액션/,
+    );
   });
 
   it('validates every web connector IPC payload before handling it', () => {

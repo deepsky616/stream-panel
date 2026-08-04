@@ -172,6 +172,20 @@ export function assertLaunchInput(
   }
 }
 
+export function assertMultiActionCancelInput(
+  value: unknown,
+): asserts value is { itemId: string } {
+  assertRecord(value, '멀티 액션 취소');
+  if (
+    Object.keys(value).some((key) => key !== 'itemId') ||
+    typeof value.itemId !== 'string' ||
+    value.itemId.length < 1 ||
+    value.itemId.length > 100
+  ) {
+    throw new TypeError('멀티 액션 취소 요청이 올바르지 않습니다. 패널을 다시 열어 주세요.');
+  }
+}
+
 export function assertDeckUpsertInput(
   value: unknown,
 ): asserts value is { path: string[]; item: DeckItem } {

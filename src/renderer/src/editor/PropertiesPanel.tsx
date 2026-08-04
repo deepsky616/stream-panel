@@ -4,9 +4,11 @@ import type { AppConfig, DeckItem, DetectedBrowser } from '../../../shared/types
 import { getWebWorkflowDefinition } from '../../../shared/webWorkflows';
 import { ColorPicker } from '../common/ColorPicker';
 import { IconPicker } from '../common/IconPicker';
+import { MultiActionEditor } from './MultiActionEditor';
 
 interface PropertiesPanelProps {
   item: DeckItem | null;
+  root: readonly DeckItem[];
   platform: AppConfig['platform'];
   path: string[];
   focusField: 'label' | 'target' | null;
@@ -36,10 +38,12 @@ const ACTION_TYPE_LABELS = {
   file: '파일 열기',
   app: '앱 실행',
   uwp: '스토어 앱',
+  multi: '멀티 액션',
 } as const;
 
 export function PropertiesPanel({
   item,
+  root,
   platform,
   path,
   focusField,
@@ -184,7 +188,7 @@ export function PropertiesPanel({
         <div className="property-kind">
           종류 <strong>{draft.kind === 'folder' ? '폴더 키' : workflowDefinition ? '웹 업무' : ACTION_TYPE_LABELS[draft.type]}</strong>
         </div>
-        {draft.kind === 'action' && (
+        {draft.kind === 'action' && draft.type !== 'multi' && (
           <label className="property-target">
             {draft.type === 'url' ? '주소' : draft.type === 'uwp' ? '앱 식별자' : '경로'}
             <span className="input-with-button">
@@ -199,6 +203,13 @@ export function PropertiesPanel({
               )}
             </span>
           </label>
+        )}
+        {draft.kind === 'action' && draft.type === 'multi' && (
+          <MultiActionEditor
+            item={draft}
+            root={root}
+            onChange={(next) => setDraft(next)}
+          />
         )}
         {draft.kind === 'action' && draft.type === 'app' && (
           <>

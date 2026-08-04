@@ -38,6 +38,7 @@ function dependencies(): LauncherDependencies {
     ),
     notifyWarning: vi.fn(),
     queueWebWorkflow: vi.fn(() => ({ queued: true })),
+    startMultiAction: vi.fn(() => ({ ok: true as const })),
   };
 }
 
@@ -102,6 +103,31 @@ describe('launcher', () => {
     expect(deps.openExternal).not.toHaveBeenCalled();
     expect(deps.openPath).not.toHaveBeenCalled();
     expect(deps.spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it('delegates a multi action without opening a shell target', async () => {
+    const deps = dependencies();
+    const target = action({ id: 'target', label: '문서 열기' });
+    const multi = action({
+      id: 'multi',
+      type: 'multi',
+      target: '',
+      label: '업무 시작',
+      multiAction: {
+        steps: [{ id: 'step-1', kind: 'action', actionId: target.id }],
+      },
+    });
+
+    expect(await launchDeckItem([multi, target], [], multi.id, deps)).toEqual({ ok: true });
+    expect(deps.startMultiAction).toHaveBeenCalledOnce();
+    expect(deps.openExternal).not.toHaveBeenCalled();
+    expect(deps.openPath).not.toHaveBeenCalled();
+    expect(deps.spawnProcess).not.toHaveBeenCalled();
+
+    const [, root, launch] = vi.mocked(deps.startMultiAction).mock.calls[0];
+    expect(root).toEqual([multi, target]);
+    await expect(launch(target)).resolves.toEqual({ ok: true });
+    expect(deps.openExternal).toHaveBeenCalledWith(target.target);
   });
 
   it('blocks dangerous URL schemes', async () => {

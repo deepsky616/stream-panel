@@ -7,6 +7,7 @@ export const IPC_CHANNELS = {
   DECK_MOVE: 'deck:move',
   DECK_DUPLICATE: 'deck:duplicate',
   BUTTON_LAUNCH: 'button:launch',
+  MULTI_ACTION_CANCEL: 'multi-action:cancel',
   PICKER_FOLDER: 'picker:folder',
   PICKER_FILE: 'picker:file',
   PICKER_EXECUTABLE: 'picker:executable',
@@ -37,6 +38,7 @@ export const IPC_CHANNELS = {
   PANEL_VISIBILITY: 'panel:visibility',
   EDITOR_FOCUS_SLOT: 'editor:focus-slot',
   TOAST: 'toast',
+  MULTI_ACTION_PROGRESS: 'multi-action:progress',
 } as const;
 
 export type RendererEvent =
@@ -44,7 +46,8 @@ export type RendererEvent =
   | 'update:status'
   | 'panel:visibility'
   | 'editor:focus-slot'
-  | 'toast';
+  | 'toast'
+  | 'multi-action:progress';
 
 export const RENDERER_EVENTS = new Set<RendererEvent>([
   IPC_CHANNELS.CONFIG_CHANGED,
@@ -52,4 +55,5 @@ export const RENDERER_EVENTS = new Set<RendererEvent>([
   IPC_CHANNELS.PANEL_VISIBILITY,
   IPC_CHANNELS.EDITOR_FOCUS_SLOT,
   IPC_CHANNELS.TOAST,
+  IPC_CHANNELS.MULTI_ACTION_PROGRESS,
 ]);

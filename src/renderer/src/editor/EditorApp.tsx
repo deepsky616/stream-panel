@@ -173,6 +173,7 @@ export function EditorApp() {
         color: '#5B8CFF',
         position,
         webWorkflow: entry.webWorkflow,
+        multiAction: entry.type === 'multi' ? { steps: [] } : undefined,
       };
     } else {
       const app = entry.app;
@@ -525,7 +526,11 @@ export function EditorApp() {
         { label: '아이콘 변경', onSelect: () => selectItem(menu.item!.id, menu.position) },
         {
           label: '위치 열기',
-          disabled: menu.item.kind === 'folder' || menu.item.type === 'url' || menu.item.type === 'uwp',
+          disabled:
+            menu.item.kind === 'folder' ||
+            menu.item.type === 'url' ||
+            menu.item.type === 'uwp' ||
+            menu.item.type === 'multi',
           onSelect: () => menu.item?.kind === 'action' && void window.api.shell.reveal(menu.item.target),
         },
         { separator: true },
@@ -607,6 +612,7 @@ export function EditorApp() {
         <PropertiesPanel
           key={selectedItem?.id ?? 'no-selection'}
           item={selectedItem}
+          root={config.root}
           platform={config.platform}
           path={location.path}
           focusField={focusField}

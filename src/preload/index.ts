@@ -24,6 +24,10 @@ const api = {
     launch: (input: { path: string[]; id: string; keepOpen?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.BUTTON_LAUNCH, input),
   },
+  multiAction: {
+    cancel: (input: { itemId: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.MULTI_ACTION_CANCEL, input),
+  },
   picker: {
     folder: () => ipcRenderer.invoke(IPC_CHANNELS.PICKER_FOLDER),
     file: () => ipcRenderer.invoke(IPC_CHANNELS.PICKER_FILE),

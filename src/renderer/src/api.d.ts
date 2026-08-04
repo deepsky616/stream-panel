@@ -29,6 +29,9 @@ interface StreamPanelApi {
   button: {
     launch(input: { path: string[]; id: string; keepOpen?: boolean }): Promise<LaunchResult>;
   };
+  multiAction: {
+    cancel(input: { itemId: string }): Promise<{ ok: true } | { ok: false; message: string }>;
+  };
   picker: {
     folder(): Promise<string | null>;
     file(): Promise<string | null>;

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { BrowserWindow, shell } from 'electron';
 import { IPC_CHANNELS } from '../../../shared/ipcChannels';
-import type { DeckItem, LaunchResult } from '../../../shared/types';
+import type { ActionItem, DeckItem, LaunchResult } from '../../../shared/types';
 import { findItemAtPath, TreeError } from '../../../shared/tree';
 import { validateActionTarget, ValidationError } from '../../security/validate';
 import {
@@ -16,6 +16,7 @@ import { launchWindowsBrowser } from '../browserService/windows';
 import { launchMacosBrowser, resolveMacBrowserExecutable } from '../browserService/macos';
 import { queueActiveWebWorkflow } from '../webConnector';
 import { isWebConnectorSupportedPlatform } from '../../../shared/webWorkflows';
+import { startActiveMultiAction } from '../multiAction';
 
 export type { LauncherDependencies } from './common';
 
@@ -31,31 +32,14 @@ const defaultDependencies: LauncherDependencies = {
     }
   },
   queueWebWorkflow: queueActiveWebWorkflow,
+  startMultiAction: startActiveMultiAction,
 };
 
-export async function launchDeckItem(
-  root: readonly DeckItem[],
-  path: readonly string[],
-  id: string,
-  dependencies: LauncherDependencies = defaultDependencies,
-  platform: NodeJS.Platform = process.platform,
+async function launchResolvedAction(
+  item: ActionItem,
+  dependencies: LauncherDependencies,
+  platform: NodeJS.Platform,
 ): Promise<LaunchResult> {
-  let item: DeckItem | undefined;
-  try {
-    item = findItemAtPath(root, path, id);
-  } catch (error) {
-    if (!(error instanceof TreeError)) throw error;
-  }
-  if (!item) {
-    return launchFailure('NOT_FOUND', '실행할 키를 찾을 수 없습니다. 편집기에서 다시 확인해 주세요.');
-  }
-  if (item.kind === 'folder') {
-    return launchFailure('BLOCKED', '폴더 키는 실행 대상이 아닙니다. 키를 눌러 폴더 안으로 들어가세요.');
-  }
-  if (platform !== 'win32' && platform !== 'darwin') {
-    return launchFailure('BLOCKED', '이 운영체제에서는 항목을 실행할 수 없습니다.');
-  }
-
   try {
     validateActionTarget(item, platform);
   } catch (error) {
@@ -107,4 +91,35 @@ export async function launchDeckItem(
     const detail = error instanceof Error ? error.message : '알 수 없는 오류';
     return launchFailure('FAILED', `대상을 실행하지 못했습니다. 설정을 확인해 주세요: ${detail}`);
   }
+}
+
+export async function launchDeckItem(
+  root: readonly DeckItem[],
+  path: readonly string[],
+  id: string,
+  dependencies: LauncherDependencies = defaultDependencies,
+  platform: NodeJS.Platform = process.platform,
+): Promise<LaunchResult> {
+  let item: DeckItem | undefined;
+  try {
+    item = findItemAtPath(root, path, id);
+  } catch (error) {
+    if (!(error instanceof TreeError)) throw error;
+  }
+  if (!item) {
+    return launchFailure('NOT_FOUND', '실행할 키를 찾을 수 없습니다. 편집기에서 다시 확인해 주세요.');
+  }
+  if (item.kind === 'folder') {
+    return launchFailure('BLOCKED', '폴더 키는 실행 대상이 아닙니다. 키를 눌러 폴더 안으로 들어가세요.');
+  }
+  if (platform !== 'win32' && platform !== 'darwin') {
+    return launchFailure('BLOCKED', '이 운영체제에서는 항목을 실행할 수 없습니다.');
+  }
+
+  if (item.type === 'multi') {
+    return dependencies.startMultiAction(item, root, (target) =>
+      launchResolvedAction(target, dependencies, platform),
+    );
+  }
+  return launchResolvedAction(item, dependencies, platform);
 }

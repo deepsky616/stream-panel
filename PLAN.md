@@ -122,7 +122,7 @@ ESLint + Prettier      — 린트/포맷
 이 타입 정의를 **그대로** 사용한다. 필드를 임의로 바꾸지 않는다.
 
 ```ts
-export type ActionType = 'url' | 'folder' | 'file' | 'app' | 'uwp';
+export type ActionType = 'url' | 'folder' | 'file' | 'app' | 'uwp' | 'multi';
 /** 'folder'는 "폴더 열기" 액션. 계층 구조를 만드는 폴더 키는 FolderItem이다 — 혼동 주의. */
 /** 'uwp'는 Windows 전용. Microsoft Store 앱이며 target에 AppUserModelID가 들어간다.
  *  macOS에서는 이 타입을 생성할 수 없고, 설정에 남아 있으면 키에 '이 플랫폼에서
@@ -155,6 +155,25 @@ export interface ActionItem extends DeckItemBase {
   workingDir?: string; // type==='app'
   browser?: BrowserSpec; // type==='url' 일 때만. 미지정이면 OS 기본 브라우저 (§6.13)
   webWorkflow?: WebWorkflowSpec; // type==='url' 일 때만. 브라우저 확장 기능이 정해진 업무 화면까지 이동 (§6.14)
+  multiAction?: MultiActionSpec; // type==='multi' 일 때만. 기존 실행 키와 기다리기를 순서대로 실행 (§6.15)
+}
+
+export type MultiActionStep =
+  | { id: string; kind: 'action'; actionId: string }
+  | { id: string; kind: 'delay'; delayMs: number };
+
+export interface MultiActionSpec {
+  steps: MultiActionStep[];
+}
+
+export interface MultiActionProgress {
+  runId: string;
+  itemId: string;
+  label: string;
+  currentStep: number;
+  totalSteps: number;
+  state: 'running' | 'completed' | 'failed' | 'cancelled';
+  message?: string;
 }
 
 export type WebWorkflowId =
@@ -436,6 +455,7 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `web-connector:status` | `{}` | `WebConnectorStatus[]` | Windows 전용. 엣지·크롬 확장 기능 연결 상태 (§6.14) |
 | `web-connector:test` | `{ browserId: 'chrome'\|'edge' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 로컬 연결 시험 페이지를 열고 확장 기능 응답을 확인 |
 | `web-connector:open-setup` | `{ browserId: 'chrome'\|'edge'; target:'pair'\|'folder'\|'extensions' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 연결 페이지·포함된 확장 기능 폴더·브라우저 확장 관리 화면 열기 |
+| `multi-action:cancel` | `{ itemId: string }` | `{ok:true} \| {ok:false; message:string}` | 실행 중인 멀티 액션 취소 (§6.15) |
 | `icon:resolve` | `{ type: ActionType; target: string }` | `string \| null` | 아이콘 data URL (캐시 사용) |
 | `drop:classify` | `{ paths: string[]; text?: string }` | `Partial<ActionItem>[]` | OS 드롭 대상을 액션으로 변환 (§9.6) |
 | `window:hide` | — | `void` | 패널 숨기기 (피크 스트립이 켜져 있으면 스트립으로 전환) |
@@ -461,6 +481,7 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `panel:visibility` | `boolean` | 단축키/트레이로 표시 상태 변경됨 |
 | `editor:focus-slot` | `{ path: string[]; slot: number }` | 패널의 `+` 클릭으로 편집기가 열릴 때 |
 | `toast` | `{ level:'info'\|'error', message:string }` | 실행 실패 등 한국어 알림 |
+| `multi-action:progress` | `MultiActionProgress` | 실행 단계·완료·실패·취소 상태 (§6.15) |
 
 ### 5.3 preload 노출 형태
 
@@ -476,6 +497,7 @@ contextBridge.exposeInMainWorld('api', {
   apps:   { list },
   browsers: { list },
   webConnector: { status, test, openSetup },
+  multiAction: { cancel },
   drop:   { classify },
   window: { hide, show, relayout, setIdle },
   editor: { open },
@@ -1249,6 +1271,24 @@ spawn(exe, flags, { detached: true, stdio: 'ignore' }).unref();
 포함된 폴더를 개발자 모드에서 불러올 수 있고, 정식 배포 뒤에는 크롬 웹 스토어와 엣지
 추가 기능 페이지로 `open-setup`의 설치 주소만 교체한다.
 
+### 6.15 멀티 액션 (`services/multiAction/`)
+
+하나의 키에서 기존 실행 키와 기다리기 단계를 위에서 아래로 차례대로 실행한다. 실행 단계는
+대상 키의 `id`만 참조하며 복사본을 저장하지 않는다. 따라서 원본 키의 주소나 브라우저를
+바꾸면 멀티 액션에도 바로 반영된다.
+
+- 단계는 1개부터 20개까지 실행할 수 있다. 편집 중에는 0개도 저장할 수 있지만 실행은 막는다.
+- 기다리기는 단계당 0~60초, 전체 합계 60초 이하로 제한한다.
+- 참조 대상은 `kind==='action'`이면서 `type!=='multi'`인 키만 허용한다.
+- 자기 자신, 폴더 키, 없는 키, 다른 멀티 액션을 참조하면 저장을 거부한다.
+- 단계 하나가 실패하면 뒤 단계를 실행하지 않고 원인과 실패한 순서를 알린다.
+- 한 번에 멀티 액션 하나만 실행한다. 실행 중 다시 누르면 중복 실행을 거부한다.
+- 실행 요청이 받아들여지면 `button:launch`는 즉시 성공을 반환해 패널 자동 숨김이 동작한다.
+- 패널을 다시 열면 현재 순서와 취소 단추가 보인다. 취소하면 기다리기와 뒤 단계를 멈춘다.
+- 웹 업무 단계는 브라우저 열기와 고정 명령 등록까지만 성공으로 본다. 저장·제출·결재를
+  기다리거나 자동 실행하지 않는다.
+- 임의 셸 명령, 키 입력 흉내, 임의 자바스크립트와 조건 분기는 지원하지 않는다.
+
 ---
 
 ## 7. 액션 실행 엔진 (`launcher.ts`)
@@ -1268,6 +1308,7 @@ spawn(exe, flags, { detached: true, stdio: 'ignore' }).unref();
 | `file` | `await shell.openPath(target)` — 동일 | 동일 |
 | `app` | `spawn(target, args, { detached: true, stdio: 'ignore', cwd: workingDir ?? path.dirname(target), windowsHide: false })` 후 `child.unref()` | **`.app` 번들은 실행 파일이 아니므로 spawn 할 수 없다.** `args`가 비었으면 `await shell.openPath(target)`, `args`가 있으면 `spawn('open', ['-a', target, '--args', ...args], { detached: true, stdio: 'ignore' })` 후 `unref()` |
 | `uwp` | `spawn('explorer.exe', ['shell:AppsFolder\\' + target], { detached: true, stdio: 'ignore' })` 후 `unref()` | **해당 없음.** `{ok:false, code:'BLOCKED', message:'이 항목은 Windows에서만 실행할 수 있습니다'}` 반환 |
+| `multi` | §6.15의 실행 관리자가 참조 키와 기다리기를 순서대로 실행 | 동일 |
 
 `launcher/`도 §6.0 원칙에 따라 `index.ts` / `windows.ts` / `macos.ts`로 나눈다.
 `url` · `folder` · `file`은 공통 구현을 공유하고, `app` · `uwp`만 플랫폼별로 구현한다.
@@ -2035,6 +2076,8 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
   결과 중복 처리 거부, 연결 상태 계산
 - `webWorkflowEngine.test.ts` — 확장 기능의 메뉴 후보 우선순위, 숨김·비활성 요소 제외,
   저장·제출·결재 단추를 절대 선택하지 않음
+- `multiAction.test.ts` — 순차 실행, 기다리기 순서, 실패 즉시 중단, 중복 실행 거부,
+  취소 뒤 재실행, 최대 단계·전체 기다리기 제한, 없는 키와 중첩 멀티 액션 참조 거부
 
 **수동 QA 체크리스트 (Windows 실기, §15).** E2E 자동화는 v1.0 범위 밖.
 
@@ -2330,6 +2373,18 @@ URL 키에 Chrome + 업무용 프로필 + 전용 창을 지정하면 **기본 �
 저장·제출·결재 단추를 누르지 않는다. 확장 기능이 없거나 로컬 연결부가 실패해도 웹사이트는
 열리며 해결 방법이 한국어로 표시된다. macOS에서는 연결 화면·연결 서버·확장 기능 묶음이
 없고 기존 웹 업무 키도 사이트만 연다. 관련 단위 테스트와 전체 기존 테스트가 통과한다.
+
+### M6.7 — 멀티 액션
+
+`MultiActionSpec`과 `MultiActionStep`, `services/multiAction/` 실행 관리자,
+`multi-action:cancel`과 `multi-action:progress`, 액션 라이브러리의 멀티 액션 틀,
+속성 패널의 단계 추가·순서 변경·삭제, 패널의 진행 상태와 취소 단추를 구현한다.
+
+**수용 기준:** 기존 URL·폴더·파일·앱·웹 업무 키를 최대 20단계로 묶어 순서대로 실행한다.
+기다리기 뒤 다음 단계가 실행되고, 실패하면 즉시 멈추며, 실행 중 다시 누르면 중복되지 않는다.
+패널에서 취소할 수 있고 취소 뒤 다시 실행할 수 있다. 중첩 멀티 액션과 없는 키 참조는
+저장 단계에서 거부된다. 임의 셸 명령과 스크립트 실행 경로가 없고 양쪽 운영체제에서
+`multiAction.test.ts`와 전체 기존 테스트가 통과한다.
 
 ### M7 — 트레이 · 키별 단축키 · 가장자리 피크 · 설정 · 자동 시작 · 마감
 `tray.ts`, `shortcuts.ts`, `autoLaunch.ts`,

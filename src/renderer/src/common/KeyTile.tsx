@@ -17,6 +17,7 @@ function iconText(item: DeckItem): string {
   if (item.type === 'url') return '🔗';
   if (item.type === 'folder') return '📁';
   if (item.type === 'file') return '📄';
+  if (item.type === 'multi') return '⏩';
   return '🖥️';
 }
 

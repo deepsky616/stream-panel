@@ -1,4 +1,4 @@
-export type ActionType = 'url' | 'folder' | 'file' | 'app' | 'uwp';
+export type ActionType = 'url' | 'folder' | 'file' | 'app' | 'uwp' | 'multi';
 
 export type IconSpec =
   | { kind: 'auto' }
@@ -23,6 +23,25 @@ export interface ActionItem extends DeckItemBase {
   workingDir?: string;
   browser?: BrowserSpec;
   webWorkflow?: WebWorkflowSpec;
+  multiAction?: MultiActionSpec;
+}
+
+export type MultiActionStep =
+  | { id: string; kind: 'action'; actionId: string }
+  | { id: string; kind: 'delay'; delayMs: number };
+
+export interface MultiActionSpec {
+  steps: MultiActionStep[];
+}
+
+export interface MultiActionProgress {
+  runId: string;
+  itemId: string;
+  label: string;
+  currentStep: number;
+  totalSteps: number;
+  state: 'running' | 'completed' | 'failed' | 'cancelled';
+  message?: string;
 }
 
 export type WebWorkflowId =
