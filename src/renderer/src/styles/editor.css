@@ -1012,6 +1012,12 @@
   color: var(--text-dim);
 }
 
+.connector-address {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 .connector-ok,
 .connector-waiting,
 .connector-missing {

@@ -1,10 +1,8 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { app, ipcMain, shell } from 'electron';
+import { app, clipboard, ipcMain, shell } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type { ActionItem, DetectedBrowser, WebConnectorBrowserId } from '../../shared/types';
-import { getBrowserExtensionManagementUrl } from '../../shared/webWorkflows';
 import {
   assertWebConnectorBrowserInput,
   assertWebConnectorSetupInput,
@@ -13,7 +11,7 @@ import {
 import { createBrowserService } from '../services/browserService';
 import { launchDeckItem } from '../services/launcher';
 import {
-  resolveWebConnectorBrowserExecutable,
+  copyExtensionManagementAddress,
   type WebConnectorService,
 } from '../services/webConnector';
 
@@ -54,31 +52,6 @@ export function registerWebConnectorHandlers(service: WebConnectorService): void
     };
     const result = await launchDeckItem([item], [], item.id);
     return result.ok ? { ok: true } : { ok: false, message: result.message };
-  };
-
-  const openFixedInternalPage = async (
-    browser: DetectedBrowser,
-    browserId: WebConnectorBrowserId,
-  ): Promise<ConnectorReply> => {
-    try {
-      const target = getBrowserExtensionManagementUrl(browserId);
-      const executable = await resolveWebConnectorBrowserExecutable(browser.path);
-      if (!executable) {
-        return {
-          ok: false,
-          message: '선택한 브라우저 실행 파일을 찾을 수 없습니다. 브라우저를 다시 설치하거나 목록을 새로고침해 주세요.',
-        };
-      }
-      const child = spawn(executable, [target], { detached: true, stdio: 'ignore' });
-      child.unref();
-      return { ok: true };
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : '알 수 없는 오류';
-      return {
-        ok: false,
-        message: `브라우저 확장 관리 화면을 열지 못했습니다. 브라우저 설정에서 직접 열어 주세요: ${detail}`,
-      };
-    }
   };
 
   const openPairPage = async (
@@ -139,6 +112,9 @@ export function registerWebConnectorHandlers(service: WebConnectorService): void
       shell.showItemInFolder(manifestPath);
       return { ok: true } as const;
     }
+    if (input.target === 'extensions') {
+      return copyExtensionManagementAddress(input.browserId, (address) => clipboard.writeText(address));
+    }
     const browser = await findBrowser(input.browserId);
     if (!browser) {
       const name = input.browserId === 'edge' ? '엣지' : '크롬';
@@ -147,8 +123,6 @@ export function registerWebConnectorHandlers(service: WebConnectorService): void
         message: `${name}를 찾을 수 없습니다. 브라우저를 설치한 뒤 다시 시도해 주세요.`,
       } as const;
     }
-    return input.target === 'extensions'
-      ? openFixedInternalPage(browser, input.browserId)
-      : openPairPage(input.browserId);
+    return openPairPage(input.browserId);
   });
 }

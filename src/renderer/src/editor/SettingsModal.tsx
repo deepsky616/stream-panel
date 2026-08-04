@@ -6,6 +6,7 @@ import {
 } from '../../../shared/accelerator';
 import { searchDeckItems } from '../../../shared/search';
 import type { AppConfig, DeckItem, WebConnectorStatus } from '../../../shared/types';
+import { getBrowserExtensionManagementUrl } from '../../../shared/webWorkflows';
 
 type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'web-work' | 'about';
 
@@ -241,7 +242,7 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
           ? target === 'folder'
             ? '확장 기능 폴더를 열었습니다. 브라우저의 확장 관리 화면에서 이 폴더를 불러오세요.'
             : target === 'extensions'
-              ? '브라우저 확장 관리 화면을 열었습니다.'
+              ? `${browserId === 'edge' ? '엣지' : '크롬'} 확장 관리 주소를 복사했습니다. 해당 브라우저 주소창에 붙여넣고 엔터 키를 누르세요.`
               : '브라우저 연결 페이지를 열었습니다.'
           : result.message,
       );
@@ -400,13 +401,16 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                             {stateLabel}
                           </span>
                           {status?.extensionVersion && <small>확장 기능 {status.extensionVersion}</small>}
+                          <code className="connector-address">
+                            {getBrowserExtensionManagementUrl(browserId)}
+                          </code>
                         </div>
                         <div className="connector-actions">
                           <button
                             type="button"
                             disabled={connectorBusy !== null}
                             onClick={() => void openConnectorSetup(browserId, 'extensions')}
-                          >확장 관리 열기</button>
+                          >확장 주소 복사</button>
                           <button
                             className="primary-action"
                             type="button"
@@ -421,7 +425,8 @@ export function SettingsModal({ open, config, onClose }: SettingsModalProps) {
                 <div className="connector-guide">
                   <h3>처음 연결하는 순서</h3>
                   <ol>
-                    <li>확장 관리 화면에서 개발자 모드를 켭니다.</li>
+                    <li>사용할 브라우저의 확장 주소 복사를 누릅니다.</li>
+                    <li>해당 브라우저 주소창에 붙여넣고 엔터 키를 누른 뒤 개발자 모드를 켭니다.</li>
                     <li>압축 해제된 확장 기능을 불러오고 위에서 연 폴더를 선택합니다.</li>
                     <li>사용할 브라우저의 연결 시험을 누릅니다.</li>
                     <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓습니다.</li>

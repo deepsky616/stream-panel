@@ -454,7 +454,7 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `browsers:list` | `{ refresh?: boolean }` | `DetectedBrowser[]` | 설치된 브라우저와 프로필 목록 (§6.13) |
 | `web-connector:status` | `{}` | `WebConnectorStatus[]` | Windows 전용. 엣지·크롬 확장 기능 연결 상태 (§6.14) |
 | `web-connector:test` | `{ browserId: 'chrome'\|'edge' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 로컬 연결 시험 페이지를 열고 확장 기능 응답을 확인 |
-| `web-connector:open-setup` | `{ browserId: 'chrome'\|'edge'; target:'pair'\|'folder'\|'extensions' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 연결 페이지·포함된 확장 기능 폴더·브라우저 확장 관리 화면 열기 |
+| `web-connector:open-setup` | `{ browserId: 'chrome'\|'edge'; target:'pair'\|'folder'\|'extensions' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 연결 페이지·포함된 확장 기능 폴더 열기·브라우저 확장 관리 주소 복사 |
 | `multi-action:cancel` | `{ itemId: string }` | `{ok:true} \| {ok:false; message:string}` | 실행 중인 멀티 액션 취소 (§6.15) |
 | `icon:resolve` | `{ type: ActionType; target: string }` | `string \| null` | 아이콘 data URL (캐시 사용) |
 | `drop:classify` | `{ paths: string[]; text?: string }` | `Partial<ActionItem>[]` | OS 드롭 대상을 액션으로 변환 (§9.6) |
@@ -1271,6 +1271,11 @@ spawn(exe, flags, { detached: true, stdio: 'ignore' }).unref();
 포함된 폴더를 개발자 모드에서 불러올 수 있고, 정식 배포 뒤에는 크롬 웹 스토어와 엣지
 추가 기능 페이지로 `open-setup`의 설치 주소만 교체한다.
 
+`edge://extensions/`와 `chrome://extensions/` 같은 브라우저 내부 화면은 외부 앱이 실행
+인자로 넘겨도 확장 관리 화면이 열리지 않고 빈 새 창으로 바뀔 수 있다. 따라서
+`target:'extensions'`는 창을 열지 않고 해당 브라우저의 고정 주소를 클립보드에 복사한다.
+설정 화면에는 주소를 항상 표시하고, 사용자가 해당 브라우저 주소창에 붙여넣도록 안내한다.
+
 ### 6.15 멀티 액션 (`services/multiAction/`)
 
 하나의 키에서 기존 실행 키와 기다리기 단계를 위에서 아래로 차례대로 실행한다. 실행 단계는
@@ -1676,7 +1681,7 @@ macOS 탭 5개: `일반` / `동작` / `모양` / `단축키` / `정보`. `웹 �
 - **정보**: 버전 · 저장소 링크 · 라이선스 · `업데이트 확인` 버튼 + 진행 상태
 - **웹 업무 연결** (§6.14, Windows에서만 표시):
   - 엣지·크롬별 `연결됨` / `연결 필요` 상태
-  - `확장 기능 폴더 열기` · `확장 관리 열기` · `연결 시험` 단추
+  - `확장 기능 폴더 열기` · `확장 주소 복사` · `연결 시험` 단추
   - 인증 정보는 저장하지 않고 저장·제출·결재 전에 멈춘다는 안내
 
 ### 9.10 문구 언어
