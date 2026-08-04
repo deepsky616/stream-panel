@@ -11,11 +11,6 @@ type TemplateFactory = (
 const createWebWorkflowTemplate = (
   webWorkflows as unknown as { createWebWorkflowTemplate: TemplateFactory }
 ).createWebWorkflowTemplate;
-const getBrowserExtensionManagementUrl = (
-  webWorkflows as unknown as {
-    getBrowserExtensionManagementUrl(browserId: 'chrome' | 'edge'): string;
-  }
-).getBrowserExtensionManagementUrl;
 const isWebConnectorSupportedPlatform = (
   webWorkflows as unknown as {
     isWebConnectorSupportedPlatform(platform: NodeJS.Platform | null): boolean;
@@ -23,7 +18,10 @@ const isWebConnectorSupportedPlatform = (
 ).isWebConnectorSupportedPlatform;
 const createWebWorkflowTemplatesForPlatform = (
   webWorkflows as unknown as {
-    createWebWorkflowTemplatesForPlatform(platform: NodeJS.Platform | null): unknown[];
+    createWebWorkflowTemplatesForPlatform(
+      platform: NodeJS.Platform | null,
+      officeCode?: 'goe' | 'sen' | 'gbe',
+    ): Array<{ target?: string }>;
   }
 ).createWebWorkflowTemplatesForPlatform;
 
@@ -34,6 +32,12 @@ describe('web workflow templates', () => {
     expect(isWebConnectorSupportedPlatform('linux')).toBe(false);
     expect(createWebWorkflowTemplatesForPlatform('darwin')).toEqual([]);
     expect(createWebWorkflowTemplatesForPlatform('win32')).toHaveLength(4);
+    expect(createWebWorkflowTemplatesForPlatform('win32', 'sen').map(({ target }) => target)).toEqual([
+      'https://sen.neis.go.kr/',
+      'https://sen.neis.go.kr/',
+      'https://klef.sen.go.kr/',
+      'https://klef.sen.go.kr/',
+    ]);
   });
 
   it('creates a complete fixed template without arbitrary commands', () => {
@@ -142,10 +146,5 @@ describe('web workflow templates', () => {
       ],
     });
     expect(items[0]).toMatchObject({ target: 'https://goe.neis.go.kr/' });
-  });
-
-  it('uses only fixed internal extension pages for Edge and Chrome setup', () => {
-    expect(getBrowserExtensionManagementUrl('edge')).toBe('edge://extensions/');
-    expect(getBrowserExtensionManagementUrl('chrome')).toBe('chrome://extensions/');
   });
 });

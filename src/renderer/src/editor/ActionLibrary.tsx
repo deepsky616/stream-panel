@@ -1,6 +1,11 @@
 import { useDraggable } from '@dnd-kit/core';
 import { useEffect, useState } from 'react';
-import type { AppConfig, InstalledApp, LibraryEntry } from '../../../shared/types';
+import type {
+  AppConfig,
+  EducationOfficeCode,
+  InstalledApp,
+  LibraryEntry,
+} from '../../../shared/types';
 import { createWebWorkflowTemplatesForPlatform } from '../../../shared/webWorkflows';
 import type { DragData } from './dndTypes';
 
@@ -17,6 +22,7 @@ const ACTION_TEMPLATES: TemplateEntry[] = [
 
 interface ActionLibraryProps {
   platform: AppConfig['platform'];
+  educationOfficeCode: EducationOfficeCode;
   onAdd: (entry: LibraryEntry) => void;
 }
 
@@ -105,12 +111,15 @@ function InstalledAppList({ apps, onAdd }: { apps: InstalledApp[]; onAdd: (app: 
   );
 }
 
-export function ActionLibrary({ platform, onAdd }: ActionLibraryProps) {
+export function ActionLibrary({ platform, educationOfficeCode, onAdd }: ActionLibraryProps) {
   const [query, setQuery] = useState('');
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [loading, setLoading] = useState(true);
   const normalizedQuery = query.trim().toLocaleLowerCase('ko-KR');
-  const workflowTemplates: TemplateEntry[] = createWebWorkflowTemplatesForPlatform(platform);
+  const workflowTemplates: TemplateEntry[] = createWebWorkflowTemplatesForPlatform(
+    platform,
+    educationOfficeCode,
+  );
   const templates = ACTION_TEMPLATES.filter((entry) =>
     entry.label.toLocaleLowerCase('ko-KR').includes(normalizedQuery),
   );
