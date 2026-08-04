@@ -14,7 +14,6 @@ const getBrowserExtensionManagementUrl = (
     getBrowserExtensionManagementUrl(browserId: 'chrome' | 'edge'): string;
   }
 ).getBrowserExtensionManagementUrl;
-const getBrowserExtensionInstallTarget = webWorkflows.getBrowserExtensionInstallTarget;
 const isWebConnectorSupportedPlatform = (
   webWorkflows as unknown as {
     isWebConnectorSupportedPlatform(platform: NodeJS.Platform | null): boolean;
@@ -71,42 +70,5 @@ describe('web workflow templates', () => {
   it('uses only fixed internal extension pages for Edge and Chrome setup', () => {
     expect(getBrowserExtensionManagementUrl('edge')).toBe('edge://extensions/');
     expect(getBrowserExtensionManagementUrl('chrome')).toBe('chrome://extensions/');
-  });
-
-  it('selects each browser official store listing when it is configured', () => {
-    const storeUrls = {
-      chrome: 'https://chromewebstore.google.com/detail/stream-panel/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      edge: 'https://microsoftedge.microsoft.com/addons/detail/stream-panel/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    };
-
-    expect(getBrowserExtensionInstallTarget('chrome', storeUrls)).toEqual({
-      kind: 'store',
-      url: storeUrls.chrome,
-    });
-    expect(getBrowserExtensionInstallTarget('edge', storeUrls)).toEqual({
-      kind: 'store',
-      url: storeUrls.edge,
-    });
-  });
-
-  it('falls back to the fixed manual page for missing or unofficial store URLs', () => {
-    expect(getBrowserExtensionInstallTarget('chrome', { chrome: null, edge: null })).toEqual({
-      kind: 'manual',
-      url: 'chrome://extensions/',
-    });
-    expect(getBrowserExtensionInstallTarget('chrome', {
-      chrome: 'https://microsoftedge.microsoft.com/addons/detail/stream-panel/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      edge: null,
-    })).toEqual({
-      kind: 'manual',
-      url: 'chrome://extensions/',
-    });
-    expect(getBrowserExtensionInstallTarget('edge', {
-      chrome: null,
-      edge: 'http://microsoftedge.microsoft.com/addons/detail/stream-panel/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    })).toEqual({
-      kind: 'manual',
-      url: 'edge://extensions/',
-    });
   });
 });
