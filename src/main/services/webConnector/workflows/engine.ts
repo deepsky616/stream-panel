@@ -32,6 +32,7 @@ async function findCandidate(
   adapter: WorkflowPageAdapter,
   signal: AbortSignal | undefined,
 ): Promise<CandidateSummary> {
+  let stableCandidateKey = '';
   for (let check = 1; check <= step.maxChecks; check += 1) {
     ensureActive(signal);
     const selected = selectSafeCandidate(
@@ -39,7 +40,13 @@ async function findCandidate(
       step.candidateLabels,
       step.navigationOnly,
     );
-    if (selected) return selected;
+    if (selected) {
+      const candidateKey = `${selected.index}:${selected.text}`;
+      if (step.maxChecks === 1 || candidateKey === stableCandidateKey) return selected;
+      stableCandidateKey = candidateKey;
+    } else {
+      stableCandidateKey = '';
+    }
     if (check < step.maxChecks) await adapter.wait(step.checkDelayMs);
   }
   throw new Error(

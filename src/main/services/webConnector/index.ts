@@ -46,6 +46,7 @@ export interface WebConnectorSessionController {
     browserId: WebConnectorBrowserId,
   ): Promise<ManagedBrowserSession>;
   run(request: ManagedWorkflowRequest): Promise<WorkflowRunResult>;
+  focus?(request: ManagedWorkflowRequest): Promise<void>;
   getSession(
     officeCode: EducationOfficeCode,
     browserId: WebConnectorBrowserId,
@@ -131,6 +132,20 @@ function workflowSuccessMessage(workflowSpec: WebWorkflowSpec): string {
   }
 }
 
+function workflowProgressMessage(workflowSpec: WebWorkflowSpec): string {
+  const name = workflowSpec.id === 'custom'
+    ? workflowSpec.custom.name
+    : {
+        'neis-leave': '나이스 복무',
+        'neis-trip': '나이스 출장',
+        'neis-approval-inbox': '나이스 결재함',
+        'edufine-draft': '에듀파인 기안',
+        'edufine-purchase': '에듀파인 품의',
+        'edufine-approval-inbox': '에듀파인 결재함',
+      }[workflowSpec.id];
+  return `${name} 화면을 여는 중입니다. 로그인이 필요하면 표시된 업무용 브라우저에서 진행해 주세요.`;
+}
+
 function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : '알 수 없는 오류';
 }
@@ -166,6 +181,7 @@ export function createWebConnectorService({
   let started = false;
   let persistTail: Promise<void> = Promise.resolve();
   const pending = new Set<Promise<void>>();
+  const inFlightWorkflows = new Map<string, Promise<void>>();
 
   const persist = (): Promise<void> => {
     if (!state) return Promise.resolve();
@@ -252,7 +268,7 @@ export function createWebConnectorService({
         };
       }
       const workflowSpec = item.webWorkflow;
-      const officeCode = currentOffice();
+      const officeCode = workflowSpec.officeCode ?? currentOffice();
       if (!isAllowedWebWorkflowSpecTarget(workflowSpec, item.target, officeCode)) {
         return {
           queued: false,
@@ -265,7 +281,18 @@ export function createWebConnectorService({
         workflowId: workflowSpec.id,
         workflowSpec,
       };
+      const workflowKey = [
+        officeCode,
+        request.browserId,
+        request.workflowId,
+      ].join(':');
+      if (inFlightWorkflows.has(workflowKey)) {
+        notify(workflowProgressMessage(workflowSpec), 'info');
+        void controller.focus?.(request).catch(() => undefined);
+        return { queued: true };
+      }
       const startedAt = now();
+      notify(workflowProgressMessage(workflowSpec), 'info');
       const task = (async () => {
         try {
           await controller.closeOtherOffices(officeCode);
@@ -305,8 +332,14 @@ export function createWebConnectorService({
           }
         }
       })();
+      inFlightWorkflows.set(workflowKey, task);
       pending.add(task);
-      void task.finally(() => pending.delete(task));
+      void task.finally(() => {
+        pending.delete(task);
+        if (inFlightWorkflows.get(workflowKey) === task) {
+          inFlightWorkflows.delete(workflowKey);
+        }
+      });
       return { queued: true };
     },
     getStatuses() {

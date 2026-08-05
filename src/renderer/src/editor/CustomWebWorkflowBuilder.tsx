@@ -1,6 +1,11 @@
 import { useState } from 'react';
-import { createCustomWebWorkflowTemplate } from '../../../shared/webWorkflows';
+import { EDUCATION_OFFICES } from '../../../shared/educationOffices';
+import {
+  createCustomWebWorkflowTemplate,
+  resolveWebWorkflowOfficeCode,
+} from '../../../shared/webWorkflows';
 import type {
+  ActionItem,
   EducationOfficeCode,
   LibraryEntry,
   WebConnectorBrowserId,
@@ -9,18 +14,33 @@ import type {
 
 interface CustomWebWorkflowBuilderProps {
   officeCode: EducationOfficeCode;
-  onCreate: (entry: LibraryEntry) => Promise<void>;
+  initialItem?: ActionItem;
+  onCreate?: (entry: LibraryEntry) => Promise<void>;
+  onSave?: (entry: LibraryEntry) => Promise<void>;
 }
 
 export function CustomWebWorkflowBuilder({
   officeCode,
+  initialItem,
   onCreate,
+  onSave,
 }: CustomWebWorkflowBuilderProps) {
-  const [name, setName] = useState('');
-  const [system, setSystem] = useState<WebWorkflowSystem>('neis');
-  const [browserId, setBrowserId] = useState<WebConnectorBrowserId>('edge');
-  const [stepLabels, setStepLabels] = useState(['']);
-  const [finalText, setFinalText] = useState('');
+  const initialSpec = initialItem?.webWorkflow?.id === 'custom'
+    ? initialItem.webWorkflow
+    : null;
+  const editing = Boolean(initialSpec);
+  const [name, setName] = useState(initialSpec?.custom.name ?? '');
+  const [system, setSystem] = useState<WebWorkflowSystem>(initialSpec?.custom.system ?? 'neis');
+  const [browserId, setBrowserId] = useState<WebConnectorBrowserId>(initialSpec?.browserId ?? 'edge');
+  const [selectedOfficeCode, setSelectedOfficeCode] = useState<EducationOfficeCode>(
+    initialSpec && initialItem
+      ? resolveWebWorkflowOfficeCode(initialSpec, initialItem.target, officeCode)
+      : officeCode,
+  );
+  const [stepLabels, setStepLabels] = useState(
+    initialSpec?.custom.steps.map((step) => step.label) ?? [''],
+  );
+  const [finalText, setFinalText] = useState(initialSpec?.custom.finalText ?? '');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -32,7 +52,7 @@ export function CustomWebWorkflowBuilder({
   const removeStep = (index: number) => {
     setStepLabels((current) => current.filter((_, stepIndex) => stepIndex !== index));
   };
-  const createWorkflow = async (event: React.FormEvent<HTMLFormElement>) => {
+  const saveWorkflow = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaving(true);
     setFeedback(null);
@@ -43,13 +63,19 @@ export function CustomWebWorkflowBuilder({
         browserId,
         stepLabels,
         finalText,
-        officeCode,
+        officeCode: selectedOfficeCode,
       });
-      await onCreate(entry);
-      setName('');
-      setStepLabels(['']);
-      setFinalText('');
-      setFeedback('맨 앞 화면의 첫 빈 위치에 웹 업무 키를 추가했습니다.');
+      const persist = editing ? onSave : onCreate;
+      if (!persist) throw new Error('웹 업무 저장 기능을 준비하지 못했습니다. 편집기를 다시 열어 주세요.');
+      await persist(entry);
+      if (!editing) {
+        setName('');
+        setStepLabels(['']);
+        setFinalText('');
+      }
+      setFeedback(editing
+        ? '선택한 웹 업무 키의 변경 내용을 저장했습니다.'
+        : '맨 앞 화면의 첫 빈 위치에 웹 업무 키를 추가했습니다.');
     } catch (error) {
       setFeedback(error instanceof Error
         ? error.message
@@ -60,13 +86,18 @@ export function CustomWebWorkflowBuilder({
   };
 
   return (
-    <form className="custom-workflow-builder" onSubmit={(event) => void createWorkflow(event)}>
+    <form
+      className={`custom-workflow-builder${editing ? ' custom-workflow-editor' : ''}`}
+      onSubmit={(event) => void saveWorkflow(event)}
+    >
       <div className="custom-workflow-heading">
         <div>
-          <h3>내 웹 업무 만들기</h3>
-          <p>나이스나 에듀파인에서 누를 메뉴 이름을 보이는 순서대로 입력하세요.</p>
+          <h3>{editing ? '내 웹 업무 편집' : '내 웹 업무 만들기'}</h3>
+          <p>{editing
+            ? '선택한 키의 교육청과 이동 경로를 수정한 뒤 저장하세요.'
+            : '나이스나 에듀파인에서 누를 메뉴 이름을 보이는 순서대로 입력하세요.'}</p>
         </div>
-        <span>윈도우 전용</span>
+        <span>{editing ? '선택한 키' : '윈도우 전용'}</span>
       </div>
       <div className="custom-workflow-basics">
         <label>
@@ -90,6 +121,17 @@ export function CustomWebWorkflowBuilder({
           <select value={browserId} onChange={(event) => setBrowserId(event.target.value as WebConnectorBrowserId)}>
             <option value="edge">엣지 — 추천</option>
             <option value="chrome">크롬</option>
+          </select>
+        </label>
+        <label>
+          교육청
+          <select
+            value={selectedOfficeCode}
+            onChange={(event) => setSelectedOfficeCode(event.target.value as EducationOfficeCode)}
+          >
+            {EDUCATION_OFFICES.map((office) => (
+              <option key={office.code} value={office.code}>{office.name}</option>
+            ))}
           </select>
         </label>
       </div>
@@ -132,6 +174,7 @@ export function CustomWebWorkflowBuilder({
         <small>마지막 메뉴를 누른 뒤 이 문구가 보여야 이동을 끝냅니다.</small>
       </label>
       <div className="custom-workflow-route" aria-label="웹 업무 이동 경로 미리보기">
+        <span>{EDUCATION_OFFICES.find((office) => office.code === selectedOfficeCode)?.name}</span>
         <span>{system === 'neis' ? '나이스' : '에듀파인'}</span>
         {stepLabels.filter((label) => label.trim()).map((label, index) => (
           <span key={`${label}-${index}`}>→ {label.trim()}</span>
@@ -140,7 +183,9 @@ export function CustomWebWorkflowBuilder({
       </div>
       <div className="custom-workflow-submit">
         <button className="primary-action" type="submit" disabled={saving}>
-          {saving ? '추가 중…' : '키로 추가'}
+          {saving
+            ? (editing ? '저장 중…' : '추가 중…')
+            : (editing ? '변경 내용 저장' : '키로 추가')}
         </button>
         <small>저장·제출·결재·등록·신청·삭제·확인과 인증 입력 단계는 추가할 수 없습니다.</small>
       </div>

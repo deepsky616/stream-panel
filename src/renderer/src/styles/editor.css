@@ -1237,8 +1237,20 @@
 
 .custom-workflow-basics {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(120px, .7fr) minmax(140px, .8fr);
+  grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(120px, .75fr));
   gap: 9px;
+}
+
+.custom-workflow-editor {
+  margin-top: 2px;
+  padding: 13px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 48%),
+    color-mix(in srgb, var(--bg) 72%, var(--tile));
+}
+
+.properties-panel .custom-workflow-basics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .custom-workflow-basics label,

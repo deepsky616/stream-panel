@@ -28,6 +28,7 @@ export interface ManagedBrowserSessionManagerDependencies<
     browserId: WebConnectorBrowserId,
   ): Promise<Session>;
   executeWorkflow(session: Session, request: ManagedWorkflowRequest): Promise<Result>;
+  focusSession?(session: Session, request: ManagedWorkflowRequest): Promise<void>;
 }
 
 interface SessionEntry<Session extends ManagedBrowserSession> {
@@ -90,6 +91,12 @@ export class ManagedBrowserSessionManager<
     browserId: WebConnectorBrowserId,
   ): Session | undefined {
     return this.entries.get(sessionKey(officeCode, browserId))?.session;
+  }
+
+  async focus(request: ManagedWorkflowRequest): Promise<void> {
+    const session = this.getSession(request.officeCode, request.browserId);
+    if (!session?.isAlive()) return;
+    await this.dependencies.focusSession?.(session, request);
   }
 
   listSessions(): readonly Session[] {

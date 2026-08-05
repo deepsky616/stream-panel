@@ -171,10 +171,14 @@ describe('managed web connector service', () => {
       'win32',
     );
     const controller = createController();
+    let runCount = 0;
+    let focusCount = 0;
     controller.run = async () => {
+      runCount += 1;
       await gate;
       return { workflowId: 'neis-leave', finalState: 'leave-request-form' };
     };
+    controller.focus = async () => { focusCount += 1; };
     const service = createWebConnectorService({
       userDataPath: 'C:\\StreamPanel',
       platform: 'win32',
@@ -192,15 +196,27 @@ describe('managed web connector service', () => {
     await service.start();
 
     expect(service.queue(workflowAction())).toEqual({ queued: true });
-    expect(notifications).toEqual([]);
+    expect(service.queue(workflowAction())).toEqual({ queued: true });
+    expect(notifications).toEqual([
+      {
+        message: '나이스 복무 화면을 여는 중입니다. 로그인이 필요하면 표시된 업무용 브라우저에서 진행해 주세요.',
+        level: 'info',
+      },
+      {
+        message: '나이스 복무 화면을 여는 중입니다. 로그인이 필요하면 표시된 업무용 브라우저에서 진행해 주세요.',
+        level: 'info',
+      },
+    ]);
     finish();
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(notifications).toEqual([{
+    expect(runCount).toBe(1);
+    expect(focusCount).toBe(1);
+    expect(notifications.at(-1)).toEqual({
       message: '나이스 복무 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.',
       level: 'info',
-    }]);
+    });
   });
 
   it('queues a custom Edufine workflow with its validated definition and reports its own name', async () => {
@@ -258,10 +274,16 @@ describe('managed web connector service', () => {
         custom: expect.objectContaining({ name: '에듀파인 문서함', system: 'edufine' }),
       }),
     })]);
-    expect(notifications).toEqual([{
-      message: '에듀파인 문서함 화면을 열었습니다. 내용을 확인한 뒤 필요한 최종 동작은 직접 진행해 주세요.',
-      level: 'info',
-    }]);
+    expect(notifications).toEqual([
+      {
+        message: '에듀파인 문서함 화면을 여는 중입니다. 로그인이 필요하면 표시된 업무용 브라우저에서 진행해 주세요.',
+        level: 'info',
+      },
+      {
+        message: '에듀파인 문서함 화면을 열었습니다. 내용을 확인한 뒤 필요한 최종 동작은 직접 진행해 주세요.',
+        level: 'info',
+      },
+    ]);
   });
 
   it('rejects another office target and never falls back to a personal browser', async () => {
@@ -284,5 +306,40 @@ describe('managed web connector service', () => {
       queued: false,
       message: expect.stringMatching(/교육청/),
     });
+  });
+
+  it('runs a key with the office saved on that key instead of the global office', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const requests: Array<{ officeCode: string }> = [];
+    const controller = createController();
+    controller.run = async (request) => {
+      requests.push(request);
+      return { workflowId: 'neis-leave', finalState: 'leave-request-form' };
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async () => undefined,
+      },
+    });
+    await service.start();
+
+    expect(service.queue(workflowAction({
+      target: 'https://sen.neis.go.kr/',
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'sen' },
+    }))).toEqual({ queued: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(requests).toEqual([expect.objectContaining({ officeCode: 'sen' })]);
   });
 });

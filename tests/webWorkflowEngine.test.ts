@@ -90,7 +90,7 @@ describe('managed web workflow engine', () => {
     );
 
     expect(result).toEqual({ workflowId: 'neis-leave', finalState: 'leave-form' });
-    expect(events).toEqual(['press:0', 'check:1', 'wait', 'check:2']);
+    expect(events).toEqual(['wait', 'press:0', 'check:1', 'wait', 'check:2']);
   });
 
   it('does not press the next step when the current postcondition never succeeds', async () => {

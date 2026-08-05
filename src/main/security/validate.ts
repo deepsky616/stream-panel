@@ -14,6 +14,7 @@ import type {
 import {
   browserIdFromPath,
   getWebWorkflowSystem,
+  inferWebWorkflowOfficeCode,
   isAllowedWebWorkflowSpecTarget,
   isWebWorkflowSpec,
 } from '../../shared/webWorkflows';
@@ -380,9 +381,13 @@ export function validateActionTarget(
         platform,
       );
     }
-    if (item.webWorkflow && !isAllowedWebWorkflowSpecTarget(item.webWorkflow, item.target)) {
-      const systemName = getWebWorkflowSystem(item.webWorkflow) === 'neis' ? '나이스' : '에듀파인';
-      throw new ValidationError(`${systemName} 웹 업무는 허용된 ${systemName} 주소에서만 실행할 수 있습니다.`);
+    if (item.webWorkflow) {
+      const officeCode = item.webWorkflow.officeCode
+        ?? inferWebWorkflowOfficeCode(item.webWorkflow, item.target);
+      if (!officeCode || !isAllowedWebWorkflowSpecTarget(item.webWorkflow, item.target, officeCode)) {
+        const systemName = getWebWorkflowSystem(item.webWorkflow) === 'neis' ? '나이스' : '에듀파인';
+        throw new ValidationError(`${systemName} 웹 업무는 선택한 교육청의 ${systemName} 주소에서만 실행할 수 있습니다.`);
+      }
     }
   } else if (item.type === 'uwp') {
     if (platform !== 'win32') {

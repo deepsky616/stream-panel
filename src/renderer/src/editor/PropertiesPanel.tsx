@@ -1,19 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
 import { normalizeAccelerator } from '../../../shared/accelerator';
-import type { AppConfig, DeckItem, DetectedBrowser } from '../../../shared/types';
+import { EDUCATION_OFFICES } from '../../../shared/educationOffices';
+import { resolveWebWorkflowOfficeCode } from '../../../shared/webWorkflows';
+import type {
+  AppConfig,
+  DeckItem,
+  DetectedBrowser,
+  EducationOfficeCode,
+  LibraryEntry,
+} from '../../../shared/types';
 import { ColorPicker } from '../common/ColorPicker';
 import { IconPicker } from '../common/IconPicker';
 import { MultiActionEditor } from './MultiActionEditor';
+import { CustomWebWorkflowBuilder } from './CustomWebWorkflowBuilder';
 import {
   getWebWorkflowSummary,
   updateCustomWebWorkflowName,
   updateWebWorkflowBrowser,
+  updateWebWorkflowOffice,
 } from './webWorkViewModel';
 
 interface PropertiesPanelProps {
   item: DeckItem | null;
   root: readonly DeckItem[];
   platform: AppConfig['platform'];
+  educationOfficeCode: EducationOfficeCode;
   path: string[];
   focusField: 'label' | 'target' | null;
   onSaved: (item: DeckItem) => void;
@@ -49,6 +60,7 @@ export function PropertiesPanel({
   item,
   root,
   platform,
+  educationOfficeCode,
   path,
   focusField,
   onSaved,
@@ -64,6 +76,7 @@ export function PropertiesPanel({
   const [browsersLoaded, setBrowsersLoaded] = useState(false);
   const labelRef = useRef<HTMLInputElement>(null);
   const targetRef = useRef<HTMLInputElement>(null);
+  const lastPersistedSnapshot = useRef<string | null>(null);
 
   useEffect(() => {
     if (focusField === 'label') labelRef.current?.select();
@@ -83,7 +96,9 @@ export function PropertiesPanel({
     };
   }, []);
   useEffect(() => {
-    if (!draft || !item || JSON.stringify(draft) === JSON.stringify(item)) return;
+    if (!draft || !item) return;
+    const snapshot = JSON.stringify(draft);
+    if (snapshot === JSON.stringify(item) || snapshot === lastPersistedSnapshot.current) return;
     const timer = setTimeout(() => {
       const candidate =
         draft.kind === 'action' && draft.type === 'url'
@@ -94,6 +109,7 @@ export function PropertiesPanel({
         .then(() => {
           setError(null);
           setDraft(candidate);
+          lastPersistedSnapshot.current = JSON.stringify(candidate);
           onSaved(candidate);
         })
         .catch((caught) => setError(errorMessage(caught)));
@@ -118,6 +134,32 @@ export function PropertiesPanel({
     draft.kind === 'action' && draft.webWorkflow
       ? getWebWorkflowSummary(draft)
       : null;
+  const saveCustomWorkflow = async (entry: LibraryEntry): Promise<void> => {
+    if (
+      draft.kind !== 'action' ||
+      entry.kind !== 'action-template' ||
+      entry.webWorkflow?.id !== 'custom'
+    ) {
+      throw new Error('사용자 지정 웹 업무 편집 내용이 올바르지 않습니다.');
+    }
+    const candidate = {
+      ...draft,
+      label: entry.label,
+      target: entry.target ?? draft.target,
+      webWorkflow: entry.webWorkflow,
+    };
+    try {
+      await window.api.deck.upsert({ path, item: candidate });
+      lastPersistedSnapshot.current = JSON.stringify(candidate);
+      setDraft(candidate);
+      setError(null);
+      onSaved(candidate);
+    } catch (caught) {
+      const message = errorMessage(caught);
+      setError(message);
+      throw new Error(message);
+    }
+  };
   const chooseTarget = async () => {
     if (draft.kind !== 'action') return;
     if (draft.type === 'folder') {
@@ -172,6 +214,7 @@ export function PropertiesPanel({
               ref={labelRef}
               value={draft.label}
               maxLength={24}
+              readOnly={draft.kind === 'action' && draft.webWorkflow?.id === 'custom'}
               onChange={(event) => {
                 const label = event.target.value;
                 if (draft.kind === 'action') {
@@ -256,25 +299,47 @@ export function PropertiesPanel({
                   ? `${workflowSummary.systemLabel} 사용자 지정 이동`
                   : '개인 브라우저와 분리된 전용 창에서 정해진 작성 화면까지만 이동합니다.'}</span>
               </div>
-              {workflowSummary.custom && (
-                <div className="workflow-route-summary">
-                  <span>{workflowSummary.route.join(' → ')}</span>
-                  <strong>도착 확인: {workflowSummary.finalText}</strong>
-                </div>
+              {workflowSummary.custom ? (
+                <CustomWebWorkflowBuilder
+                  officeCode={educationOfficeCode}
+                  initialItem={draft}
+                  onSave={saveCustomWorkflow}
+                />
+              ) : (
+                <>
+                  <label>
+                    교육청
+                    <select
+                      value={resolveWebWorkflowOfficeCode(
+                        draft.webWorkflow,
+                        draft.target,
+                        educationOfficeCode,
+                      )}
+                      onChange={(event) => setDraft(updateWebWorkflowOffice(
+                        draft,
+                        event.target.value as EducationOfficeCode,
+                      ))}
+                    >
+                      {EDUCATION_OFFICES.map((office) => (
+                        <option key={office.code} value={office.code}>{office.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    업무용 브라우저
+                    <select
+                      value={draft.webWorkflow.browserId}
+                      onChange={(event) => setDraft(updateWebWorkflowBrowser(
+                        draft,
+                        event.target.value as 'edge' | 'chrome',
+                      ))}
+                    >
+                      <option value="edge">엣지 — 추천</option>
+                      <option value="chrome">크롬</option>
+                    </select>
+                  </label>
+                </>
               )}
-              <label>
-                업무용 브라우저
-                <select
-                  value={draft.webWorkflow.browserId}
-                  onChange={(event) => setDraft(updateWebWorkflowBrowser(
-                    draft,
-                    event.target.value as 'edge' | 'chrome',
-                  ))}
-                >
-                  <option value="edge">엣지 — 추천</option>
-                  <option value="chrome">크롬</option>
-                </select>
-              </label>
               <p className="workflow-safety-note">
                 {platform === 'win32'
                   ? '암호와 인증서 정보는 저장하지 않습니다. 저장·제출·상신·승인·결재 단추도 자동으로 누르지 않습니다.'

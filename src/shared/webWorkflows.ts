@@ -8,7 +8,11 @@ import type {
   WebWorkflowSpec,
   WebWorkflowSystem,
 } from './types';
-import { EDUCATION_OFFICES, getEducationOffice } from './educationOffices';
+import {
+  EDUCATION_OFFICES,
+  getEducationOffice,
+  isEducationOfficeCode,
+} from './educationOffices';
 
 export interface WebWorkflowDefinition {
   id: BuiltInWebWorkflowId;
@@ -157,15 +161,21 @@ export function isWebWorkflowSpec(value: unknown): value is WebWorkflowSpec {
   const record = value as Record<string, unknown>;
   if (record.id === 'custom') {
     return (
-      Object.keys(record).every((key) => key === 'id' || key === 'browserId' || key === 'custom') &&
+      Object.keys(record).every((key) => (
+        key === 'id' || key === 'browserId' || key === 'officeCode' || key === 'custom'
+      )) &&
       isWebConnectorBrowserId(record.browserId) &&
+      (record.officeCode === undefined || isEducationOfficeCode(record.officeCode)) &&
       isCustomWebWorkflowDefinition(record.custom)
     );
   }
   return (
-    Object.keys(record).every((key) => key === 'id' || key === 'browserId') &&
+    Object.keys(record).every((key) => (
+      key === 'id' || key === 'browserId' || key === 'officeCode'
+    )) &&
     isWebWorkflowId(record.id) &&
-    isWebConnectorBrowserId(record.browserId)
+    isWebConnectorBrowserId(record.browserId) &&
+    (record.officeCode === undefined || isEducationOfficeCode(record.officeCode))
   );
 }
 
@@ -199,6 +209,23 @@ export function getWebWorkflowTargetForSpec(
   officeCode: EducationOfficeCode,
 ): string {
   return targetForSystem(getWebWorkflowSystem(spec), officeCode);
+}
+
+export function inferWebWorkflowOfficeCode(
+  spec: WebWorkflowSpec,
+  target: string,
+): EducationOfficeCode | null {
+  return EDUCATION_OFFICES.find((office) => (
+    isAllowedWebWorkflowSpecTarget(spec, target, office.code)
+  ))?.code ?? null;
+}
+
+export function resolveWebWorkflowOfficeCode(
+  spec: WebWorkflowSpec,
+  target: string,
+  fallback: EducationOfficeCode = 'goe',
+): EducationOfficeCode {
+  return spec.officeCode ?? inferWebWorkflowOfficeCode(spec, target) ?? fallback;
 }
 
 export function isAllowedWebWorkflowTarget(
@@ -289,7 +316,7 @@ export function createWebWorkflowTemplate(
     label: definition.label,
     emoji: WORKFLOW_EMOJI[id],
     target: getWebWorkflowTarget(id, officeCode),
-    webWorkflow: { id, browserId },
+    webWorkflow: { id, browserId, officeCode },
   };
 }
 
@@ -354,6 +381,7 @@ export function createCustomWebWorkflowTemplate({
     webWorkflow: {
       id: 'custom',
       browserId,
+      officeCode,
       custom: {
         name: normalizedName,
         system,
@@ -382,10 +410,11 @@ export function retargetWebWorkflowItems(
     if (item.kind === 'folder') {
       return { ...item, children: retargetWebWorkflowItems(item.children, officeCode) };
     }
-    if (!item.webWorkflow) return item;
+    if (!item.webWorkflow || item.webWorkflow.officeCode) return item;
     return {
       ...item,
       target: getWebWorkflowTargetForSpec(item.webWorkflow, officeCode),
+      webWorkflow: { ...item.webWorkflow, officeCode },
     };
   });
 }

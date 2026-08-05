@@ -20,6 +20,15 @@ function safeCandidate(index: number, text: string): CandidateSummary {
     height: 30,
     navigation: true,
     safeNavigation: true,
+    tag: 'A',
+    inputType: '',
+    href: '/safe-navigation',
+    formAssociated: false,
+    inlineHandler: false,
+    visibleText: text,
+    accessibleName: '',
+    titleText: '',
+    valueText: '',
   };
 }
 
@@ -87,23 +96,55 @@ describe('Windows managed web automation', () => {
       profilePath: 'C:\\StreamPanel\\web-browsers\\sen\\edge',
     }]);
     expect(session.isAlive()).toBe(true);
+    expect(session.workflowState).toBe('IDLE');
     await session.close();
     expect(protocol.isClosed).toBe(true);
   });
 
-  it('waits for a newly created target to reach an HTTP origin before returning the page', async () => {
+  it('reuses the bootstrap tab, restores the window, and enters NEIS through the portal SSO link', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
-    let originChecks = 0;
+    let targetChecks = 0;
+    let ssoClicked = false;
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>) {
         commands.push({ method, params });
-        if (method === 'Target.getTargets') return { targetInfos: [] };
-        if (method === 'Target.createTarget') return { targetId: 'target-1' };
+        if (method === 'Target.getTargets') {
+          targetChecks += 1;
+          const url = targetChecks === 1
+            ? 'about:blank'
+            : ssoClicked
+              ? 'https://sen.neis.go.kr/main'
+              : 'https://sen.eduptl.kr/';
+          return { targetInfos: [{ targetId: 'target-1', type: 'page', url }] };
+        }
         if (method === 'Target.attachToTarget') return { sessionId: 'session-1' };
+        if (method === 'Browser.getWindowForTarget') {
+          return { windowId: 7, bounds: { windowState: 'minimized' } };
+        }
         if (method === 'Runtime.evaluate') {
-          originChecks += 1;
-          return { result: { value: originChecks === 1 ? 'null' : 'https://sen.neis.go.kr' } };
+          const expression = String(params.expression ?? '');
+          if (expression === 'location.origin') {
+            return { result: { value: 'https://sen.neis.go.kr' } };
+          }
+          if (expression.includes('loginVisible')) {
+            const href = ssoClicked
+              ? 'https://sen.neis.go.kr/main'
+              : 'https://sen.eduptl.kr/';
+            return { result: { value: {
+              href,
+              origin: new URL(href).origin,
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes('clickable().slice')) {
+            return { result: { value: [safeCandidate(0, '나이스')] } };
+          }
+          if (expression.includes('const item=clickable()')) {
+            ssoClicked = true;
+            return { result: { value: { ok: true, x: 10, y: 20 } } };
+          }
         }
         return {};
       },
@@ -117,16 +158,23 @@ describe('Windows managed web automation', () => {
         transportKind: 'pipe' as const,
         process: { exited: false },
       },
+      workflowState: 'IDLE' as const,
       isAlive: () => true,
       close: async () => undefined,
     };
 
     const workflowPage = await openCdpWindowsWorkflowPage(managedSession as never, 'neis-leave');
 
-    expect(originChecks).toBe(2);
-    expect(commands.find(({ method }) => method === 'Target.createTarget')?.params).toEqual({
-      url: 'https://sen.neis.go.kr/',
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.find(({ method }) => method === 'Page.navigate')?.params).toEqual({
+      url: 'https://sen.eduptl.kr/',
     });
+    expect(commands).toContainEqual({
+      method: 'Browser.setWindowBounds',
+      params: { windowId: 7, bounds: { windowState: 'normal' } },
+    });
+    expect(ssoClicked).toBe(true);
+    expect(managedSession.workflowState).toBe('NAVIGATING_DUTY_MENU');
     await expect(workflowPage.currentOrigin()).resolves.toBe('https://sen.neis.go.kr');
     const releasablePage = workflowPage as WindowsWorkflowPage & {
       release?: () => Promise<void>;
@@ -159,6 +207,14 @@ describe('Windows managed web automation', () => {
         if (method === 'Target.createTarget') return { targetId: 'approval-target' };
         if (method === 'Target.attachToTarget') return { sessionId: 'approval-session' };
         if (method === 'Runtime.evaluate') {
+          if (String(params.expression ?? '').includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://sen.neis.go.kr/',
+              origin: 'https://sen.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
           return { result: { value: 'https://sen.neis.go.kr' } };
         }
         return {};
@@ -210,11 +266,25 @@ describe('Windows managed web automation', () => {
     let sessionCloses = 0;
     const protocol = {
       isClosed: false,
-      async send(method: string) {
-        if (method === 'Target.getTargets') return { targetInfos: [] };
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'target-1',
+            type: 'page',
+            url: 'https://sen.neis.go.kr/',
+          }] };
+        }
         if (method === 'Target.createTarget') return { targetId: 'target-1' };
         if (method === 'Target.attachToTarget') return { sessionId: 'session-1' };
         if (method === 'Runtime.evaluate') {
+          if (String(params.expression ?? '').includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://sen.neis.go.kr/',
+              origin: 'https://sen.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
           return { result: { value: 'https://sen.neis.go.kr' } };
         }
         if (method === 'Target.detachFromTarget') throw new Error('detach failed');
@@ -241,6 +311,67 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
 
     expect(sessionCloses).toBe(1);
+  });
+
+  it('recovers through portal SSO when an existing NEIS tab redirects to the portal', async () => {
+    let firstTargetLookup = true;
+    let ssoClicked = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') {
+          const url = firstTargetLookup
+            ? 'https://goe.neis.go.kr/'
+            : ssoClicked
+              ? 'https://goe.neis.go.kr/main'
+              : 'https://goe.eduptl.kr/';
+          firstTargetLookup = false;
+          return { targetInfos: [{ targetId: 'existing-neis', type: 'page', url }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'session-1' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 3 };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('loginVisible')) {
+            const href = ssoClicked
+              ? 'https://goe.neis.go.kr/main'
+              : 'https://goe.eduptl.kr/';
+            return { result: { value: {
+              href,
+              origin: new URL(href).origin,
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes('clickable().slice')) {
+            return { result: { value: [safeCandidate(0, '나이스')] } };
+          }
+          if (expression.includes('const item=clickable()')) {
+            ssoClicked = true;
+            return { result: { value: { ok: true, x: 1, y: 1 } } };
+          }
+          if (expression === 'location.origin') {
+            return { result: { value: 'https://goe.neis.go.kr' } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await expect(openCdpWindowsWorkflowPage(session as never, 'neis-leave')).resolves.toBeDefined();
+    expect(ssoClicked).toBe(true);
   });
 
   it('stops on a login portal or an unapproved origin before inspecting page content', async () => {
@@ -291,7 +422,7 @@ describe('Windows managed web automation', () => {
         focusWindow: async () => true,
       },
     )).rejects.toThrow(/허용되지 않은/);
-    expect(activated).toBe(0);
+    expect(activated).toBe(2);
   });
 
   it('runs a validated custom Edufine path on the Edufine host', async () => {
@@ -329,7 +460,7 @@ describe('Windows managed web automation', () => {
       },
     )).resolves.toEqual({ workflowId: 'custom', finalState: 'custom-target-ready' });
     expect(pressed).toEqual(['step-1', 'step-2']);
-    expect(activated).toBe(1);
+    expect(activated).toBe(2);
   });
 
   it('rejects a workflow identifier and definition mismatch before opening a page', async () => {

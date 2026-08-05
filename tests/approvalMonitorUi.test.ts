@@ -116,12 +116,12 @@ describe('approval monitor settings UI', () => {
       label: '나이스 결재함',
       emoji: '🔔',
       target: 'https://sen.neis.go.kr/',
-      webWorkflow: { id: 'neis-approval-inbox', browserId: 'edge' },
+      webWorkflow: { id: 'neis-approval-inbox', browserId: 'edge', officeCode: 'sen' },
     });
     expect(createApprovalInboxTemplate('edufine', 'chrome', 'gbe')).toMatchObject({
       label: '에듀파인 결재함',
       target: 'https://klef.gbe.kr/',
-      webWorkflow: { id: 'edufine-approval-inbox', browserId: 'chrome' },
+      webWorkflow: { id: 'edufine-approval-inbox', browserId: 'chrome', officeCode: 'gbe' },
     });
 
     const statuses = [

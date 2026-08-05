@@ -1,5 +1,7 @@
 import {
+  getWebWorkflowTargetForSpec,
   getWebWorkflowDefinition,
+  resolveWebWorkflowOfficeCode,
   retargetWebWorkflowItems,
 } from '../../../shared/webWorkflows';
 import type {
@@ -69,6 +71,7 @@ export function createEducationOfficePatch(
 export function getWebWorkflowEditorModel(item: ActionItem): {
   managed: boolean;
   browserId?: WebConnectorBrowserId;
+  officeCode?: EducationOfficeCode;
   showGeneralBrowserSettings: boolean;
 } {
   if (!item.webWorkflow) {
@@ -77,6 +80,7 @@ export function getWebWorkflowEditorModel(item: ActionItem): {
   return {
     managed: true,
     browserId: item.webWorkflow.browserId,
+    officeCode: resolveWebWorkflowOfficeCode(item.webWorkflow, item.target),
     showGeneralBrowserSettings: false,
   };
 }
@@ -91,6 +95,19 @@ export function updateWebWorkflowBrowser(
   return {
     ...managedItem,
     webWorkflow: { ...item.webWorkflow, browserId },
+  };
+}
+
+export function updateWebWorkflowOffice(
+  item: ActionItem,
+  officeCode: EducationOfficeCode,
+): ActionItem {
+  if (!item.webWorkflow) return item;
+  const webWorkflow = { ...item.webWorkflow, officeCode };
+  return {
+    ...item,
+    target: getWebWorkflowTargetForSpec(webWorkflow, officeCode),
+    webWorkflow,
   };
 }
 

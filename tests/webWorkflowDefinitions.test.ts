@@ -111,8 +111,9 @@ describe('managed web workflow definitions', () => {
     for (const definition of Object.values(allDefinitions)) {
       for (const step of definition.steps) {
         expect(step.candidateLabels.length).toBeGreaterThan(0);
-        expect(step.maxChecks).toBe(3);
-        expect(step.checkDelayMs).toBeGreaterThan(0);
+        const isApprovalInbox = definition.id.endsWith('approval-inbox');
+        expect(step.maxChecks).toBe(isApprovalInbox ? 3 : 20);
+        expect(step.checkDelayMs).toBe(isApprovalInbox ? 250 : 500);
         for (const label of step.candidateLabels) {
           expect(isForbiddenActionText(label), `${definition.id}:${step.id}:${label}`).toBe(false);
         }

@@ -3,6 +3,8 @@ import type { CdpTransport } from './transport';
 
 export type AllowedCdpMethod =
   | 'Browser.getVersion'
+  | 'Browser.getWindowForTarget'
+  | 'Browser.setWindowBounds'
   | 'Browser.close'
   | 'Target.getTargets'
   | 'Target.createTarget'
@@ -19,6 +21,8 @@ export type AllowedCdpMethod =
 
 const ALLOWED_METHODS = new Set<AllowedCdpMethod>([
   'Browser.getVersion',
+  'Browser.getWindowForTarget',
+  'Browser.setWindowBounds',
   'Browser.close',
   'Target.getTargets',
   'Target.createTarget',

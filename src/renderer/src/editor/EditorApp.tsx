@@ -604,6 +604,7 @@ export function EditorApp() {
           item={selectedItem}
           root={config.root}
           platform={config.platform}
+          educationOfficeCode={config.educationOfficeCode}
           path={location.path}
           focusField={focusField}
           onSaved={saved}

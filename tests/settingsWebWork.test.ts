@@ -9,6 +9,7 @@ import {
   getWebWorkflowEditorModel,
   shouldShowWebWorkSettings,
   updateWebWorkflowBrowser,
+  updateWebWorkflowOffice,
 } from '../src/renderer/src/editor/webWorkViewModel';
 import * as settingsComponents from '../src/renderer/src/editor/CustomWebWorkflowBuilder';
 import * as webWorkViewModel from '../src/renderer/src/editor/webWorkViewModel';
@@ -55,6 +56,35 @@ describe('web work settings view model', () => {
     expect(html).toContain('누를 메뉴 이름');
     expect(html).toContain('도착 화면 확인 문구');
     expect(html).toContain('키로 추가');
+  });
+
+  it('renders the full custom workflow editor again for an existing custom key', () => {
+    const custom = {
+      ...workflowAction(),
+      id: 'custom-documents',
+      label: '에듀파인 문서함',
+      target: 'https://klef.sen.go.kr/',
+      webWorkflow: {
+        id: 'custom' as const,
+        browserId: 'edge' as const,
+        officeCode: 'sen' as const,
+        custom: {
+          name: '에듀파인 문서함',
+          system: 'edufine' as const,
+          steps: [{ id: 'step-1', label: '내 문서함' }],
+          finalText: '내 문서함 목록',
+        },
+      },
+    };
+    const html = renderToStaticMarkup(createElement(settingsComponents.CustomWebWorkflowBuilder, {
+      officeCode: 'goe',
+      initialItem: custom,
+      onSave: async () => undefined,
+    }));
+    expect(html).toContain('내 웹 업무 편집');
+    expect(html).toContain('에듀파인 문서함');
+    expect(html).toContain('서울특별시교육청');
+    expect(html).toContain('변경 내용 저장');
   });
 
   it('shows managed web work only on Windows', () => {
@@ -118,6 +148,7 @@ describe('web work settings view model', () => {
     expect(getWebWorkflowEditorModel(item)).toEqual({
       managed: true,
       browserId: 'edge',
+      officeCode: 'goe',
       showGeneralBrowserSettings: false,
     });
     expect(updateWebWorkflowBrowser(item, 'chrome')).toMatchObject({
@@ -125,6 +156,10 @@ describe('web work settings view model', () => {
       webWorkflow: { id: 'neis-leave', browserId: 'chrome' },
     });
     expect(updateWebWorkflowBrowser(item, 'chrome').browser).toBeUndefined();
+    expect(updateWebWorkflowOffice(item, 'sen')).toMatchObject({
+      target: 'https://sen.neis.go.kr/',
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'sen' },
+    });
   });
 
   it('describes a custom workflow route for the key properties panel', () => {

@@ -1,6 +1,6 @@
 import type { ManagedWorkflowDefinition } from './common';
 
-const COMMON_CHECKS = { maxChecks: 3 as const, checkDelayMs: 250 };
+const COMMON_CHECKS = { maxChecks: 20, checkDelayMs: 500 };
 
 export const EDUFINE_WORKFLOWS = {
   'edufine-draft': {

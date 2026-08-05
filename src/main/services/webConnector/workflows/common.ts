@@ -33,7 +33,7 @@ export interface WorkflowStep {
   interaction: 'mouse' | 'dom-click';
   navigationOnly?: boolean;
   postcondition: WorkflowPostcondition;
-  maxChecks: 3;
+  maxChecks: number;
   checkDelayMs: number;
 }
 
@@ -152,8 +152,8 @@ export function createCustomManagedWorkflowDefinition(
         kind: 'visible-any',
         labels: [spec.custom.steps[index + 1]?.label ?? spec.custom.finalText],
       },
-      maxChecks: 3,
-      checkDelayMs: 250,
+      maxChecks: 20,
+      checkDelayMs: 500,
     })),
   };
 }

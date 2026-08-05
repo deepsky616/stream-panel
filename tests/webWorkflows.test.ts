@@ -56,6 +56,7 @@ describe('web workflow templates', () => {
       webWorkflow: {
         id: 'custom',
         browserId: 'edge',
+        officeCode: 'sen',
         custom: {
           name: '에듀파인 문서함',
           system: 'edufine',
@@ -158,7 +159,7 @@ describe('web workflow templates', () => {
       label: '나이스 복무',
       emoji: '🗓️',
       target: 'https://sen.neis.go.kr/',
-      webWorkflow: { id: 'neis-leave', browserId: 'edge' },
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'sen' },
     });
     expect(createWebWorkflowTemplate('edufine-purchase', 'chrome', 'gbe')).toEqual({
       kind: 'action-template',
@@ -166,7 +167,7 @@ describe('web workflow templates', () => {
       label: '에듀파인 품의',
       emoji: '🧾',
       target: 'https://klef.gbe.kr/',
-      webWorkflow: { id: 'edufine-purchase', browserId: 'chrome' },
+      webWorkflow: { id: 'edufine-purchase', browserId: 'chrome', officeCode: 'gbe' },
     });
   });
 
@@ -291,5 +292,22 @@ describe('web workflow templates', () => {
         },
       },
     });
+  });
+
+  it('keeps a key pinned to its saved office when the global office changes', () => {
+    const pinned: DeckItem = {
+      id: 'pinned-leave',
+      kind: 'action',
+      type: 'url',
+      label: '서울 나이스 복무',
+      target: 'https://sen.neis.go.kr/',
+      args: [],
+      icon: { kind: 'auto' },
+      color: '#5B8CFF',
+      position: 0,
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'sen' },
+    };
+
+    expect(webWorkflows.retargetWebWorkflowItems([pinned], 'goe')[0]).toEqual(pinned);
   });
 });

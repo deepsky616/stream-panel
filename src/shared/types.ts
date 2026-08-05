@@ -93,10 +93,14 @@ export type WebWorkflowSpec =
   | {
       id: BuiltInWebWorkflowId;
       browserId: WebConnectorBrowserId;
+      /** The office saved on this key. Missing only on legacy v1 data. */
+      officeCode?: EducationOfficeCode;
     }
   | {
       id: 'custom';
       browserId: WebConnectorBrowserId;
+      /** The office saved on this key. Missing only on legacy v1 data. */
+      officeCode?: EducationOfficeCode;
       custom: CustomWebWorkflowDefinition;
     };
 
