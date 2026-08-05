@@ -7,6 +7,7 @@ import { createApprovalInboxTemplate } from '../src/shared/webWorkflows';
 import { ApprovalMonitorSettings } from '../src/renderer/src/editor/ApprovalMonitorSettings';
 import { getApprovalBadgeForItem } from '../src/renderer/src/panel/approvalBadge';
 import { SettingsModal } from '../src/renderer/src/editor/SettingsModal';
+import { createConfigWriteQueue } from '../src/renderer/src/editor/configWriteQueue';
 import { KeyTile } from '../src/renderer/src/common/KeyTile';
 import type {} from '../src/renderer/src/api';
 
@@ -26,6 +27,39 @@ function approvalAction(id: 'neis-approval-inbox' | 'edufine-approval-inbox'): A
 }
 
 describe('approval monitor settings UI', () => {
+  it('serializes rapid settings writes against the latest saved config', async () => {
+    expect(createConfigWriteQueue).toBeTypeOf('function');
+    let persisted = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const queue = createConfigWriteQueue({
+      initial: persisted,
+      write: async (patch) => {
+        persisted = { ...persisted, ...structuredClone(patch) };
+        return structuredClone(persisted);
+      },
+    });
+
+    const enableNeis = queue.enqueue((current) => ({
+      approvalMonitor: {
+        ...current.approvalMonitor,
+        sources: {
+          ...current.approvalMonitor.sources,
+          neis: { ...current.approvalMonitor.sources.neis, enabled: true },
+        },
+      },
+    }));
+    const shortenInterval = queue.enqueue((current) => ({
+      approvalMonitor: { ...current.approvalMonitor, intervalMinutes: 5 },
+    }));
+    await Promise.all([enableNeis, shortenInterval]);
+
+    expect(persisted.approvalMonitor.sources.neis.enabled).toBe(true);
+    expect(persisted.approvalMonitor.intervalMinutes).toBe(5);
+  });
+
   it('places the monitor inside the Windows web-work settings tab', () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },

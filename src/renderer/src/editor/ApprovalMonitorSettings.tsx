@@ -9,7 +9,9 @@ interface ApprovalMonitorSettingsProps {
   config: ApprovalMonitorConfig;
   statuses: ApprovalMonitorStatus[];
   busySystem: WebWorkflowSystem | null;
-  onChange: (config: ApprovalMonitorConfig) => void;
+  onChange: (
+    update: (current: ApprovalMonitorConfig) => ApprovalMonitorConfig,
+  ) => void;
   onCheck: (system: WebWorkflowSystem) => void;
   onAddKey: (system: WebWorkflowSystem, browserId: WebConnectorBrowserId) => void;
 }
@@ -49,13 +51,13 @@ export function ApprovalMonitorSettings({
     system: WebWorkflowSystem,
     patch: Partial<ApprovalMonitorConfig['sources'][WebWorkflowSystem]>,
   ) => {
-    onChange({
-      ...config,
+    onChange((current) => ({
+      ...current,
       sources: {
-        ...config.sources,
-        [system]: { ...config.sources[system], ...patch },
+        ...current.sources,
+        [system]: { ...current.sources[system], ...patch },
       },
-    });
+    }));
   };
   return (
     <section className="approval-monitor-settings" aria-labelledby="approval-monitor-title">
@@ -69,10 +71,10 @@ export function ApprovalMonitorSettings({
         확인 주기
         <select
           value={config.intervalMinutes}
-          onChange={(event) => onChange({
-            ...config,
+          onChange={(event) => onChange((current) => ({
+            ...current,
             intervalMinutes: Number(event.target.value) as 5 | 10 | 30,
-          })}
+          }))}
         >
           <option value={5}>5분</option>
           <option value={10}>10분</option>
@@ -83,7 +85,10 @@ export function ApprovalMonitorSettings({
         <input
           type="checkbox"
           checked={config.notifyOnlyOnIncrease}
-          onChange={(event) => onChange({ ...config, notifyOnlyOnIncrease: event.target.checked })}
+          onChange={(event) => onChange((current) => ({
+            ...current,
+            notifyOnlyOnIncrease: event.target.checked,
+          }))}
         />
         새 결재가 늘었을 때만 알림
       </label>
@@ -91,23 +96,23 @@ export function ApprovalMonitorSettings({
         <input
           type="checkbox"
           checked={config.workHours.enabled}
-          onChange={(event) => onChange({
-            ...config,
-            workHours: { ...config.workHours, enabled: event.target.checked },
-          })}
+          onChange={(event) => onChange((current) => ({
+            ...current,
+            workHours: { ...current.workHours, enabled: event.target.checked },
+          }))}
         />
         근무 시간에만 확인
       </label>
       {config.workHours.enabled && (
         <div className="approval-work-hours">
-          <label>시작<input type="time" value={config.workHours.start} onChange={(event) => onChange({
-            ...config,
-            workHours: { ...config.workHours, start: event.target.value },
-          })} /></label>
-          <label>끝<input type="time" value={config.workHours.end} onChange={(event) => onChange({
-            ...config,
-            workHours: { ...config.workHours, end: event.target.value },
-          })} /></label>
+          <label>시작<input type="time" value={config.workHours.start} onChange={(event) => onChange((current) => ({
+            ...current,
+            workHours: { ...current.workHours, start: event.target.value },
+          }))} /></label>
+          <label>끝<input type="time" value={config.workHours.end} onChange={(event) => onChange((current) => ({
+            ...current,
+            workHours: { ...current.workHours, end: event.target.value },
+          }))} /></label>
         </div>
       )}
       <div className="approval-source-list">

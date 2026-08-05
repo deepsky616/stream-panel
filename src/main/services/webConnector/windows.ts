@@ -24,7 +24,9 @@ import {
   type ManagedBrowserConnectOptions,
 } from './cdp/transport';
 import {
+  APPROVED_NON_ACTION_LABELS,
   createCustomManagedWorkflowDefinition,
+  FORBIDDEN_ACTION_TOKENS,
   type CandidateSummary,
   type ManagedWorkflowDefinition,
   type WorkflowStep,
@@ -38,6 +40,7 @@ import {
   type ManagedWorkflowRequest,
 } from './sessionManager';
 import {
+  parseApprovalCounterCandidates,
   scanWindowsApprovalCount,
   type WindowsApprovalPage,
 } from '../approvalMonitor/windows';
@@ -354,6 +357,16 @@ const textOf=(element)=>normalize(
   ('value' in element?element.value:'')||
   element.innerText||element.textContent||''
 );
+const visibleTextOf=(element)=>normalize(element.innerText||element.textContent||'');
+const accessibleNameOf=(element)=>normalize(element.getAttribute?.('aria-label'));
+const titleTextOf=(element)=>normalize(element.getAttribute?.('title'));
+const valueTextOf=(element)=>normalize('value' in element?element.value:'');
+const surfaceTextsOf=(element)=>[
+  visibleTextOf(element),
+  accessibleNameOf(element),
+  titleTextOf(element),
+  valueTextOf(element)
+].filter(Boolean);
 const visible=(element)=>{
   if(element.hidden||element.getAttribute?.('aria-hidden')==='true')return false;
   const view=element.ownerDocument?.defaultView;
@@ -419,7 +432,11 @@ return clickable().slice(0,500).map(({element},index)=>{
     inputType:normalize(element.getAttribute?.('type')).toLowerCase(),
     href:normalize(element.getAttribute?.('href')).slice(0,2048),
     formAssociated:formAssociated(element),
-    inlineHandler:element.hasAttribute?.('onclick')===true
+    inlineHandler:element.hasAttribute?.('onclick')===true,
+    visibleText:visibleTextOf(element).slice(0,500),
+    accessibleName:accessibleNameOf(element).slice(0,500),
+    titleText:titleTextOf(element).slice(0,500),
+    valueText:valueTextOf(element).slice(0,500)
   };
 });
 })()`;
@@ -433,7 +450,14 @@ function candidateActionExpression(
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const item=clickable()[${index}];
-if(!item||textOf(item.element)!==${JSON.stringify(expectedText)}||!visible(item.element)||!enabled(item.element)||(${JSON.stringify(navigationOnly)}&&!safeNavigation(item.element)))return {ok:false};
+if(!item)return {ok:false};
+const forbiddenTokens=${JSON.stringify(FORBIDDEN_ACTION_TOKENS)};
+const approvedNonActions=new Set(${JSON.stringify([...APPROVED_NON_ACTION_LABELS])});
+const forbiddenSurface=surfaceTextsOf(item.element).some(text=>{
+  const normalized=normalize(text);
+  return !approvedNonActions.has(normalized)&&forbiddenTokens.some(token=>normalized.includes(token));
+});
+if(textOf(item.element)!==${JSON.stringify(expectedText)}||!visible(item.element)||!enabled(item.element)||forbiddenSurface||(${JSON.stringify(navigationOnly)}&&!safeNavigation(item.element)))return {ok:false};
 const rect=item.element.getBoundingClientRect();
 ${domClick
     ? "item.element.focus?.({preventScroll:false});item.element.click?.();return {ok:true};"
@@ -475,22 +499,30 @@ function approvalCounterExpression(system: WebWorkflowSystem): string {
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const labels=${JSON.stringify(labels)}.map(value=>normalize(value).replace(/\\s+/g,''));
-const counts=[];
+const signal=(element)=>({
+  text:normalize(element?.innerText||element?.textContent||'').slice(0,256),
+  ariaLabel:normalize(element?.getAttribute?.('aria-label')).slice(0,256),
+  title:normalize(element?.getAttribute?.('title')).slice(0,256),
+  className:normalize(element?.className?.baseVal??element?.className).slice(0,256),
+  role:normalize(element?.getAttribute?.('role')).toLowerCase().slice(0,64)
+});
+const candidates=[];
 for(const {document} of documents){
   const elements=Array.from(document.querySelectorAll('[aria-label],[title],span,em,strong,b,a,button,div')).slice(0,2500);
   for(const element of elements){
     if(!visible(element))continue;
-    const text=textOf(element);
-    if(text.length<2||text.length>80)continue;
-    const compact=text.replace(/\\s+/g,'');
-    for(const label of labels){
-      if(!compact.includes(label))continue;
-      const remainder=compact.replace(label,'').replace(/[()\\[\\]{}:·]/g,'').replace(/대기/g,'').replace(/건/g,'');
-      if(/^\\d{1,4}$/.test(remainder))counts.push(Number(remainder));
-    }
+    const candidate=signal(element);
+    const children=Array.from(element.children||[]).slice(0,16).filter(visible).map(signal);
+    const next=element.nextElementSibling&&visible(element.nextElementSibling)
+      ? signal(element.nextElementSibling)
+      : undefined;
+    const values=[candidate.text,candidate.ariaLabel,candidate.title,...children.flatMap(child=>[child.text,child.ariaLabel,child.title]),...(next?[next.text,next.ariaLabel,next.title]:[])];
+    if(!values.some(value=>labels.some(label=>value.replace(/\\s+/g,'').includes(label))))continue;
+    candidates.push({...candidate,children,...(next?{next}:{})});
+    if(candidates.length>=100)return candidates;
   }
 }
-return counts.length?Math.max(...counts):-1;
+return candidates;
 })()`;
 }
 
@@ -534,6 +566,14 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       candidate.href.length > 2_048 ||
       typeof candidate.formAssociated !== 'boolean' ||
       typeof candidate.inlineHandler !== 'boolean'
+      || typeof candidate.visibleText !== 'string'
+      || candidate.visibleText.length > 500
+      || typeof candidate.accessibleName !== 'string'
+      || candidate.accessibleName.length > 500
+      || typeof candidate.titleText !== 'string'
+      || candidate.titleText.length > 500
+      || typeof candidate.valueText !== 'string'
+      || candidate.valueText.length > 500
     ) {
       return [];
     }
@@ -551,6 +591,10 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       href: candidate.href,
       formAssociated: candidate.formAssociated,
       inlineHandler: candidate.inlineHandler,
+      visibleText: candidate.visibleText,
+      accessibleName: candidate.accessibleName,
+      titleText: candidate.titleText,
+      valueText: candidate.valueText,
     }];
   });
 }
@@ -620,18 +664,26 @@ export async function openCdpWindowsWorkflowPage(
   const release = async (): Promise<void> => {
     if (released) return;
     released = true;
+    let cleanupFailed = false;
     if (sessionId) {
       try {
         await protocol.send('Target.detachFromTarget', { sessionId });
       } catch {
-        // A closed browser already released the attached target session.
+        cleanupFailed = true;
       }
     }
     if (createdTarget && options.closeCreatedTargetOnRelease) {
       try {
         await protocol.send('Target.closeTarget', { targetId: target.targetId });
       } catch {
-        // A user or the browser may have closed the app-created background tab first.
+        cleanupFailed = true;
+      }
+    }
+    if (cleanupFailed) {
+      try {
+        await session.close();
+      } catch {
+        // The session manager will create a new browser session on the next request.
       }
     }
   };
@@ -714,10 +766,13 @@ export async function openCdpWindowsWorkflowPage(
     },
     release,
     async readApprovalCount(system) {
-      return evaluateValue<number>(
-        session,
-        pageSessionId,
-        approvalCounterExpression(system),
+      return parseApprovalCounterCandidates(
+        system,
+        await evaluateValue<unknown>(
+          session,
+          pageSessionId,
+          approvalCounterExpression(system),
+        ),
       );
     },
     };

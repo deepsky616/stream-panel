@@ -28,6 +28,106 @@ export function parseApprovalCounterValue(value: unknown): number {
   return Number(value);
 }
 
+interface ApprovalCounterSignal {
+  text: string;
+  ariaLabel: string;
+  title: string;
+  className: string;
+  role: string;
+}
+
+interface ApprovalCounterCandidate extends ApprovalCounterSignal {
+  children: ApprovalCounterSignal[];
+  next?: ApprovalCounterSignal;
+}
+
+const COUNTER_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
+  neis: ['결재 대기', '결재대기', '미결문서', '대기문서', '미결'],
+  edufine: ['결재 대기', '결재대기', '결재할 문서', '미결문서', '대기문서'],
+};
+
+function compactText(value: string): string {
+  return value.replace(/\s+/g, '').trim();
+}
+
+function inlineCount(text: string, label: string): number | null {
+  const compact = compactText(text);
+  const compactLabel = compactText(label);
+  if (compact.startsWith(compactLabel)) {
+    const remainder = compact.slice(compactLabel.length);
+    const match = remainder.match(/^(?:[:：·])?[([{](\d{1,4})[)\]}]$/) ??
+      remainder.match(/^(?:[:：·])?(\d{1,4})건$/);
+    if (match) return Number(match[1]);
+  }
+  if (compact.endsWith(compactLabel)) {
+    const match = compact.slice(0, -compactLabel.length).match(/^(\d{1,4})건$/);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+function bareSignalCount(signal: ApprovalCounterSignal): number | null {
+  const match = compactText(signal.text).match(/^(?:[([{])?(\d{1,4})(?:[)\]}]|건)?$/);
+  if (!match) return null;
+  const markedAsCount = /badge|count|counter|cnt|number|num|alarm|noti/i.test(signal.className) ||
+    signal.role === 'status' ||
+    signal.ariaLabel !== '' ||
+    signal.title !== '';
+  return markedAsCount ? Number(match[1]) : null;
+}
+
+function isCounterSignal(value: unknown): value is ApprovalCounterSignal {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return ['text', 'ariaLabel', 'title', 'className', 'role'].every((key) => (
+    typeof record[key] === 'string' && String(record[key]).length <= 256
+  ));
+}
+
+function isCounterCandidate(value: unknown): value is ApprovalCounterCandidate {
+  if (!isCounterSignal(value)) return false;
+  const record = value as unknown as Record<string, unknown>;
+  return Array.isArray(record.children) &&
+    record.children.length <= 16 &&
+    record.children.every(isCounterSignal) &&
+    (record.next === undefined || isCounterSignal(record.next));
+}
+
+export function parseApprovalCounterCandidates(
+  system: WebWorkflowSystem,
+  value: unknown,
+): number {
+  if (!Array.isArray(value) || value.length > 100 || !value.every(isCounterCandidate)) {
+    throw new Error('결재 대기 수 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
+  }
+  const counts = new Set<number>();
+  for (const candidate of value) {
+    const candidateTexts = [candidate.text, candidate.ariaLabel, candidate.title];
+    for (const label of COUNTER_LABELS[system]) {
+      for (const text of candidateTexts) {
+        const count = inlineCount(text, label);
+        if (count !== null) counts.add(parseApprovalCounterValue(count));
+      }
+      const hasExactLabel = candidateTexts.some((text) => compactText(text) === compactText(label));
+      if (!hasExactLabel) continue;
+      const signals = candidate.next
+        ? [...candidate.children, candidate.next]
+        : candidate.children;
+      for (const signal of signals) {
+        const count = bareSignalCount(signal);
+        if (count !== null) counts.add(parseApprovalCounterValue(count));
+      }
+    }
+  }
+  if (counts.size === 0) {
+    throw new Error('결재 대기 수를 안전하게 읽지 못했습니다. 결재함 화면을 직접 확인해 주세요.');
+  }
+  if (counts.size > 1) {
+    throw new Error('결재 대기 수가 둘 이상 보여 안전하게 고를 수 없습니다. 결재함 화면을 직접 확인해 주세요.');
+  }
+  return [...counts][0];
+}
+
 function approvalWorkflowId(system: WebWorkflowSystem) {
   return system === 'neis' ? 'neis-approval-inbox' as const : 'edufine-approval-inbox' as const;
 }

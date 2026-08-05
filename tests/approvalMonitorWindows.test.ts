@@ -6,6 +6,7 @@ import {
   type WindowsApprovalPage,
 } from '../src/main/services/approvalMonitor/windows';
 import { APPROVAL_INBOX_WORKFLOWS } from '../src/main/services/approvalMonitor/definitions';
+import * as approvalWindows from '../src/main/services/approvalMonitor/windows';
 
 function candidate(index: number, text: string): CandidateSummary {
   return {
@@ -32,6 +33,56 @@ function page(origin: string, count = 3): WindowsApprovalPage {
 }
 
 describe('Windows approval count reader', () => {
+  it('reads one explicit badge count but rejects a year or conflicting counts', () => {
+    const parseApprovalCounterCandidates = (
+      approvalWindows as unknown as {
+        parseApprovalCounterCandidates?: (
+          system: 'neis' | 'edufine',
+          value: unknown,
+        ) => number;
+      }
+    ).parseApprovalCounterCandidates;
+    expect(parseApprovalCounterCandidates).toBeTypeOf('function');
+    expect(parseApprovalCounterCandidates!('neis', [
+      {
+        text: '미결문서 (3)',
+        ariaLabel: '',
+        title: '',
+        className: 'menu-item',
+        role: 'link',
+        children: [],
+      },
+    ])).toBe(3);
+    expect(() => parseApprovalCounterCandidates!('neis', [
+      {
+        text: '미결문서 2026',
+        ariaLabel: '',
+        title: '',
+        className: 'menu-item',
+        role: 'link',
+        children: [],
+      },
+    ])).toThrow(/안전하게 읽지 못했습니다/);
+    expect(() => parseApprovalCounterCandidates!('edufine', [
+      {
+        text: '결재할 문서 (2)',
+        ariaLabel: '',
+        title: '',
+        className: 'menu-item',
+        role: 'link',
+        children: [],
+      },
+      {
+        text: '결재 대기 4건',
+        ariaLabel: '',
+        title: '',
+        className: 'status',
+        role: 'status',
+        children: [],
+      },
+    ])).toThrow(/둘 이상/);
+  });
+
   it('never treats the generic approval action label as an inbox navigation target', () => {
     for (const workflow of Object.values(APPROVAL_INBOX_WORKFLOWS)) {
       expect(workflow.steps.flatMap((step) => step.candidateLabels)).not.toContain('결재');

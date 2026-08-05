@@ -72,6 +72,21 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
     typeof keyboard.globalNumberModifier === 'string'
       ? keyboard.globalNumberModifier
       : defaultConfig.keyboard.globalNumberModifier;
+  const validApprovalTime = (value: unknown): value is string => (
+    typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)
+  );
+  const normalizeApprovalSource = (
+    value: unknown,
+    fallback: ApprovalMonitorConfig['sources']['neis'],
+  ): ApprovalMonitorConfig['sources']['neis'] => {
+    const source = partialObject<ApprovalMonitorConfig['sources']['neis']>(value);
+    return {
+      enabled: typeof source.enabled === 'boolean' ? source.enabled : fallback.enabled,
+      browserId: source.browserId === 'edge' || source.browserId === 'chrome'
+        ? source.browserId
+        : fallback.browserId,
+    };
+  };
 
   return {
     ...defaultConfig,
@@ -96,19 +111,32 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
     approvalMonitor: {
       ...defaultConfig.approvalMonitor,
       ...approvalMonitor,
+      intervalMinutes: [5, 10, 30].includes(Number(approvalMonitor.intervalMinutes))
+        ? Number(approvalMonitor.intervalMinutes) as 5 | 10 | 30
+        : defaultConfig.approvalMonitor.intervalMinutes,
+      notifyOnlyOnIncrease: typeof approvalMonitor.notifyOnlyOnIncrease === 'boolean'
+        ? approvalMonitor.notifyOnlyOnIncrease
+        : defaultConfig.approvalMonitor.notifyOnlyOnIncrease,
       sources: {
-        neis: {
-          ...defaultConfig.approvalMonitor.sources.neis,
-          ...partialObject<ApprovalMonitorConfig['sources']['neis']>(approvalSources.neis),
-        },
-        edufine: {
-          ...defaultConfig.approvalMonitor.sources.edufine,
-          ...partialObject<ApprovalMonitorConfig['sources']['edufine']>(approvalSources.edufine),
-        },
+        neis: normalizeApprovalSource(
+          approvalSources.neis,
+          defaultConfig.approvalMonitor.sources.neis,
+        ),
+        edufine: normalizeApprovalSource(
+          approvalSources.edufine,
+          defaultConfig.approvalMonitor.sources.edufine,
+        ),
       },
       workHours: {
-        ...defaultConfig.approvalMonitor.workHours,
-        ...approvalWorkHours,
+        enabled: typeof approvalWorkHours.enabled === 'boolean'
+          ? approvalWorkHours.enabled
+          : defaultConfig.approvalMonitor.workHours.enabled,
+        start: validApprovalTime(approvalWorkHours.start)
+          ? approvalWorkHours.start
+          : defaultConfig.approvalMonitor.workHours.start,
+        end: validApprovalTime(approvalWorkHours.end)
+          ? approvalWorkHours.end
+          : defaultConfig.approvalMonitor.workHours.end,
       },
     },
     hotkey: normalizeAccelerator(

@@ -58,6 +58,19 @@ describe('managed web workflow engine', () => {
     expect(isForbiddenActionText('품의등록')).toBe(false);
   });
 
+  it('rejects a safe label when another visible or accessible name reveals an action', () => {
+    expect(() => selectSafeCandidate([
+      candidate(0, '결재함', {
+        navigation: true,
+        safeNavigation: true,
+        visibleText: '승인',
+        accessibleName: '결재함',
+        titleText: '',
+        valueText: '',
+      } as Partial<CandidateSummary>),
+    ], ['결재함'], true)).toThrow(/누를 수 없는/);
+  });
+
   it('presses a safe candidate once and advances only after the postcondition succeeds', async () => {
     const events: string[] = [];
     let postconditionChecks = 0;

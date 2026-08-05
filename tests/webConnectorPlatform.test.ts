@@ -206,6 +206,43 @@ describe('Windows managed web automation', () => {
     });
   });
 
+  it('closes a managed browser session when target cleanup fails', async () => {
+    let sessionCloses = 0;
+    const protocol = {
+      isClosed: false,
+      async send(method: string) {
+        if (method === 'Target.getTargets') return { targetInfos: [] };
+        if (method === 'Target.createTarget') return { targetId: 'target-1' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'session-1' };
+        if (method === 'Runtime.evaluate') {
+          return { result: { value: 'https://sen.neis.go.kr' } };
+        }
+        if (method === 'Target.detachFromTarget') throw new Error('detach failed');
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const managedSession = {
+      officeCode: 'sen' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => { sessionCloses += 1; },
+    };
+    const workflowPage = await openCdpWindowsWorkflowPage(
+      managedSession as never,
+      'neis-leave',
+    );
+
+    await workflowPage.release?.();
+
+    expect(sessionCloses).toBe(1);
+  });
+
   it('stops on a login portal or an unapproved origin before inspecting page content', async () => {
     let inspections = 0;
     const loginPage = page('https://goe.eduptl.kr');

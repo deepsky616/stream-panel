@@ -24,6 +24,10 @@ import {
 } from './webWorkViewModel';
 import { CustomWebWorkflowBuilder } from './CustomWebWorkflowBuilder';
 import { ApprovalMonitorSettings } from './ApprovalMonitorSettings';
+import {
+  createConfigWriteQueue,
+  type ConfigPatchFactory,
+} from './configWriteQueue';
 
 type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'web-work' | 'about';
 
@@ -68,6 +72,10 @@ export function SettingsModal({
   const [approvalStatuses, setApprovalStatuses] = useState<ApprovalMonitorStatus[]>([]);
   const [approvalBusy, setApprovalBusy] = useState<WebWorkflowSystem | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [configWriteQueue] = useState(() => createConfigWriteQueue({
+    initial: config,
+    write: (patch) => window.api.config.set(patch),
+  }));
   const hotkeys = useMemo(() => collectHotkeys(config.root), [config.root]);
   const numberPreview = useMemo(() => {
     const mapped = new Map(
@@ -93,6 +101,8 @@ export function SettingsModal({
     () => createWebWorkBrowserCards(connectorStatuses, connectorBusy, connectorError),
     [connectorBusy, connectorError, connectorStatuses],
   );
+
+  useEffect(() => configWriteQueue.updateBase(config), [config, configWriteQueue]);
 
   useEffect(() => {
     if (!open) return;
@@ -207,19 +217,21 @@ export function SettingsModal({
   );
 
   if (!open) return null;
-  const setConfig = (patch: Partial<AppConfig>) => {
-    void window.api.config.set(patch).catch((error) => {
+  const setConfig = (createPatch: ConfigPatchFactory) => {
+    void configWriteQueue.enqueue(createPatch).catch((error) => {
       setMessage(error instanceof Error ? error.message : '설정을 바꾸지 못했습니다. 입력값을 확인해 주세요.');
     });
   };
   const setBehavior = (patch: Partial<AppConfig['behavior']>) => {
-    setConfig({ behavior: { ...config.behavior, ...patch } });
+    setConfig((current) => ({ behavior: { ...current.behavior, ...patch } }));
   };
   const setKeyboard = (patch: Partial<AppConfig['keyboard']>) => {
-    setConfig({ keyboard: { ...config.keyboard, ...patch } });
+    setConfig((current) => ({ keyboard: { ...current.keyboard, ...patch } }));
   };
-  const setApprovalMonitor = (approvalMonitor: AppConfig['approvalMonitor']) => {
-    setConfig({ approvalMonitor });
+  const setApprovalMonitor = (
+    update: (current: AppConfig['approvalMonitor']) => AppConfig['approvalMonitor'],
+  ) => {
+    setConfig((current) => ({ approvalMonitor: update(current.approvalMonitor) }));
   };
   const updateGrid = (patch: Partial<AppConfig['grid']>) => {
     const next = { ...config.grid, ...patch };
@@ -228,7 +240,7 @@ export function SettingsModal({
     if (nextCapacity < config.grid.cols * config.grid.rows) {
       setMessage(moved ? `${moved}개 항목이 다음 페이지로 이동합니다.` : null);
     }
-    setConfig({ grid: next });
+    setConfig((current) => ({ grid: { ...current.grid, ...patch } }));
     void window.api.window.relayout();
   };
   const readCapturedHotkey = (event: React.KeyboardEvent<HTMLInputElement>): string | null => {
@@ -249,7 +261,7 @@ export function SettingsModal({
   const captureHotkey = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const accelerator = readCapturedHotkey(event);
     if (!accelerator) return;
-    setConfig({ hotkey: accelerator });
+    setConfig(() => ({ hotkey: accelerator }));
     setMessage('단축키 등록 결과를 확인하는 중입니다. 충돌하면 이전 값으로 돌아갑니다.');
   };
   const captureLauncherHotkey = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -377,11 +389,11 @@ export function SettingsModal({
             {tab === 'general' && (
               <>
                 <label title={!info?.isPackaged ? '설치 후 사용 가능' : undefined}>
-                  <input type="checkbox" checked={config.launchAtLogin} disabled={!info?.isPackaged} onChange={(event) => setConfig({ launchAtLogin: event.target.checked })} />
+                  <input type="checkbox" checked={config.launchAtLogin} disabled={!info?.isPackaged} onChange={(event) => setConfig(() => ({ launchAtLogin: event.target.checked }))} />
                   로그인 시 자동 시작
                 </label>
-                <label><input type="checkbox" checked={config.window.hideOnLaunch} onChange={(event) => setConfig({ window: { ...config.window, hideOnLaunch: event.target.checked } })} />시작 시 패널 숨기기</label>
-                <label><input type="checkbox" checked={config.autoUpdate} onChange={(event) => setConfig({ autoUpdate: event.target.checked })} />{config.platform === 'darwin' ? '새 버전 알림 받기' : '자동 업데이트 확인'}</label>
+                <label><input type="checkbox" checked={config.window.hideOnLaunch} onChange={(event) => setConfig((current) => ({ window: { ...current.window, hideOnLaunch: event.target.checked } }))} />시작 시 패널 숨기기</label>
+                <label><input type="checkbox" checked={config.autoUpdate} onChange={(event) => setConfig(() => ({ autoUpdate: event.target.checked }))} />{config.platform === 'darwin' ? '새 버전 알림 받기' : '자동 업데이트 확인'}</label>
                 <button className="reset-settings" type="button" onClick={() => {
                   if (!window.confirm('모든 키와 설정을 기본값으로 되돌릴까요?')) return;
                   if (!window.confirm('이 작업은 되돌릴 수 없습니다. 정말 초기화할까요?')) return;
@@ -392,12 +404,12 @@ export function SettingsModal({
             )}
             {tab === 'appearance' && (
               <>
-                <label>테마<select value={config.theme} onChange={(event) => setConfig({ theme: event.target.value as AppConfig['theme'] })}><option value="system">시스템</option><option value="light">라이트</option><option value="dark">다크</option></select></label>
+                <label>테마<select value={config.theme} onChange={(event) => setConfig(() => ({ theme: event.target.value as AppConfig['theme'] }))}><option value="system">시스템</option><option value="light">라이트</option><option value="dark">다크</option></select></label>
                 <label>열 {config.grid.cols}<input type="range" min="2" max="8" value={config.grid.cols} onChange={(event) => updateGrid({ cols: Number(event.target.value) })} /></label>
                 <label>행 {config.grid.rows}<input type="range" min="1" max="6" value={config.grid.rows} onChange={(event) => updateGrid({ rows: Number(event.target.value) })} /></label>
                 <label>버튼 크기 {config.grid.buttonSize}<input type="range" min="64" max="140" value={config.grid.buttonSize} onChange={(event) => updateGrid({ buttonSize: Number(event.target.value) })} /></label>
-                <label>투명도 {Math.round(config.window.opacity * 100)}퍼센트<input type="range" min="0.3" max="1" step="0.05" value={config.window.opacity} onChange={(event) => setConfig({ window: { ...config.window, opacity: Number(event.target.value) } })} /></label>
-                <label><input type="checkbox" checked={config.window.alwaysOnTop} onChange={(event) => setConfig({ window: { ...config.window, alwaysOnTop: event.target.checked } })} />항상 최상위</label>
+                <label>투명도 {Math.round(config.window.opacity * 100)}퍼센트<input type="range" min="0.3" max="1" step="0.05" value={config.window.opacity} onChange={(event) => setConfig((current) => ({ window: { ...current.window, opacity: Number(event.target.value) } }))} /></label>
+                <label><input type="checkbox" checked={config.window.alwaysOnTop} onChange={(event) => setConfig((current) => ({ window: { ...current.window, alwaysOnTop: event.target.checked } }))} />항상 최상위</label>
               </>
             )}
             {tab === 'behavior' && (
@@ -460,8 +472,8 @@ export function SettingsModal({
                   <select
                     value={config.educationOfficeCode}
                     disabled={connectorBusy !== null}
-                    onChange={(event) => setConfig(createEducationOfficePatch(
-                      config,
+                    onChange={(event) => setConfig((current) => createEducationOfficePatch(
+                      current,
                       event.target.value as EducationOfficeCode,
                     ))}
                   >

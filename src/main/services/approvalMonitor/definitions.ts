@@ -30,17 +30,6 @@ export const APPROVAL_INBOX_WORKFLOWS: Record<WebWorkflowSystem, ManagedWorkflow
         },
         ...COMMON_CHECKS,
       },
-      {
-        id: 'open-pending-documents',
-        candidateLabels: ['대기문서', '미결문서', '결재 대기', '결재대기'],
-        interaction: 'dom-click',
-        navigationOnly: true,
-        postcondition: {
-          kind: 'visible-any',
-          labels: ['대기문서', '미결문서', '결재 대기', '결재대기'],
-        },
-        ...COMMON_CHECKS,
-      },
     ],
   },
   edufine: {
@@ -59,17 +48,6 @@ export const APPROVAL_INBOX_WORKFLOWS: Record<WebWorkflowSystem, ManagedWorkflow
       {
         id: 'open-approval-inbox',
         candidateLabels: ['결재함'],
-        interaction: 'dom-click',
-        navigationOnly: true,
-        postcondition: {
-          kind: 'visible-any',
-          labels: ['대기문서', '미결문서', '결재할 문서', '결재 대기'],
-        },
-        ...COMMON_CHECKS,
-      },
-      {
-        id: 'open-pending-documents',
-        candidateLabels: ['대기문서', '미결문서', '결재할 문서', '결재 대기'],
         interaction: 'dom-click',
         navigationOnly: true,
         postcondition: {

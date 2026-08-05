@@ -8,6 +8,7 @@ import {
   isWithinApprovalWorkHours,
   shouldSendApprovalNotification,
 } from '../src/main/services/approvalMonitor';
+import * as approvalMonitorModule from '../src/main/services/approvalMonitor';
 import { createMacosApprovalScanner } from '../src/main/services/approvalMonitor/macos';
 
 function windowsConfig(): AppConfig {
@@ -55,9 +56,70 @@ describe('approval monitor settings', () => {
     invalidTime.approvalMonitor.workHours.start = '25:00';
     expect(() => validateAppConfig(invalidTime)).toThrow(/근무 시간/);
   });
+
+  it('repairs invalid persisted monitor fields before scheduling starts', () => {
+    const defaults = windowsConfig();
+    const damaged = structuredClone(defaults);
+    damaged.approvalMonitor.intervalMinutes = 0 as 10;
+    damaged.approvalMonitor.sources.neis.browserId = 'other' as 'edge';
+    damaged.approvalMonitor.workHours.start = 'invalid';
+
+    const recovered = recoverConfigText(JSON.stringify(damaged), defaults);
+
+    expect(recovered.config.approvalMonitor.intervalMinutes).toBe(10);
+    expect(recovered.config.approvalMonitor.sources.neis.browserId).toBe('edge');
+    expect(recovered.config.approvalMonitor.workHours.start).toBe('08:00');
+  });
 });
 
 describe('approval monitor rules', () => {
+  it('writes the monitor state through a same-folder temporary file and reports read errors', async () => {
+    const createApprovalMonitorStateIo = (
+      approvalMonitorModule as unknown as {
+        createApprovalMonitorStateIo?: (
+          userDataPath: string,
+          fileSystem: {
+            readFile(path: string, encoding: 'utf8'): Promise<string>;
+            mkdir(path: string, options: { recursive: true; mode: number }): Promise<unknown>;
+            writeFile(
+              path: string,
+              text: string,
+              options: { encoding: 'utf8'; mode: number },
+            ): Promise<void>;
+            rename(from: string, to: string): Promise<void>;
+          },
+        ) => {
+          read(): Promise<string | undefined>;
+          write(text: string): Promise<void>;
+        };
+      }
+    ).createApprovalMonitorStateIo;
+    expect(createApprovalMonitorStateIo).toBeTypeOf('function');
+    const operations: string[] = [];
+    const io = createApprovalMonitorStateIo!('/data', {
+      readFile: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+      mkdir: async (path) => { operations.push(`mkdir:${path}`); },
+      writeFile: async (path) => { operations.push(`write:${path}`); },
+      rename: async (from, to) => { operations.push(`rename:${from}->${to}`); },
+    });
+
+    await expect(io.read()).resolves.toBeUndefined();
+    await io.write('{"version":1}');
+    expect(operations).toEqual([
+      'mkdir:/data/approval-monitor',
+      'write:/data/approval-monitor/state.json.tmp',
+      'rename:/data/approval-monitor/state.json.tmp->/data/approval-monitor/state.json',
+    ]);
+
+    const unreadable = createApprovalMonitorStateIo!('/data', {
+      readFile: async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
+      mkdir: async () => undefined,
+      writeFile: async () => undefined,
+      rename: async () => undefined,
+    });
+    await expect(unreadable.read()).rejects.toThrow(/읽지 못했습니다.*권한/);
+  });
+
   it('returns a safe empty result from the macOS platform adapter', async () => {
     await expect(createMacosApprovalScanner().scan({
       system: 'neis',
@@ -100,6 +162,101 @@ describe('approval monitor rules', () => {
 });
 
 describe('approval monitor service', () => {
+  it('shows a recoverable error for a corrupt state file instead of silently resetting it', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => 3 },
+      stateIo: { read: async () => '{broken', write: async () => undefined },
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+
+    await service.start();
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'neis',
+      state: 'error',
+      message: expect.stringMatching(/상태 파일.*손상.*지금 확인/),
+    }));
+
+    await service.check({ system: 'neis' });
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'neis',
+      state: 'ready',
+      pendingCount: 3,
+    }));
+  });
+
+  it('isolates broadcast and notification failures from checks and future scheduling', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    config.approvalMonitor.notifyOnlyOnIncrease = false;
+    const timers: Array<{ handler: () => void; delayMs: number }> = [];
+    const errors: string[] = [];
+    let scans = 0;
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => { scans += 1; return 2; } },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      notify: () => { throw new Error('notification failed'); },
+      broadcast: () => { throw new Error('window closed'); },
+      onError: (error) => { errors.push(error.message); },
+      setTimer: (handler, delayMs) => {
+        const timer = { handler, delayMs };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer: () => undefined,
+    });
+
+    await expect(service.start()).resolves.toBeUndefined();
+    await service.check({ system: 'neis' });
+    await expect(service.check({ system: 'neis' })).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ system: 'neis', state: 'ready' })]),
+    );
+
+    expect(scans).toBe(2);
+    expect(errors).toEqual(expect.arrayContaining([
+      expect.stringMatching(/상태.*전달/),
+      expect.stringMatching(/알림.*표시/),
+    ]));
+    expect(timers.length).toBeGreaterThan(1);
+  });
+
+  it('uses a safe interval fallback and reschedules even after an unexpected check failure', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    config.approvalMonitor.intervalMinutes = 0 as 10;
+    let failConfig = false;
+    const timers: Array<{ handler: () => void; delayMs: number }> = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => {
+        if (failConfig) throw new Error('config unavailable');
+        return config;
+      },
+      scanner: { scan: async () => 1 },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      setTimer: (handler, delayMs) => {
+        const timer = { handler, delayMs };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer: () => undefined,
+    });
+    await service.start();
+    expect(timers.at(-1)?.delayMs).toBe(10 * 60_000);
+
+    failConfig = true;
+    await expect(service.check({ system: 'neis' })).rejects.toThrow(/config unavailable/);
+    failConfig = false;
+    expect(timers.length).toBeGreaterThan(1);
+    expect(timers.at(-1)?.delayMs).toBe(10 * 60_000);
+  });
+
   it('does not publish or notify after stopping while a scan is in flight', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;
@@ -243,6 +400,44 @@ describe('approval monitor service', () => {
 
       expect(notifications).toEqual(scenario.notifications);
     }
+  });
+
+  it('does not notify when a delayed scan finishes after configured work hours', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    let currentTime = new Date(2026, 7, 5, 9, 0).getTime();
+    let scanNumber = 0;
+    let releaseScan!: (count: number) => void;
+    const pendingScan = new Promise<number>((resolve) => { releaseScan = resolve; });
+    const notifications: number[] = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: {
+        scan: async () => {
+          scanNumber += 1;
+          return scanNumber === 1 ? 1 : pendingScan;
+        },
+      },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      notify: (_system, count) => { notifications.push(count); },
+      now: () => currentTime,
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+    await service.start();
+    await service.check({ system: 'neis' });
+
+    const check = service.check({ system: 'neis' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    currentTime = new Date(2026, 7, 5, 20, 0).getTime();
+    releaseScan(2);
+    await check;
+
+    expect(notifications).toEqual([]);
+    expect(service.getStatuses()).toContainEqual(
+      expect.objectContaining({ system: 'neis', pendingCount: 2 }),
+    );
   });
 
   it('coalesces overlapping checks for the same system into one scan', async () => {

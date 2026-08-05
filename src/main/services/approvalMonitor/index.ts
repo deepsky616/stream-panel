@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type {
   AppConfig,
+  ApprovalMonitorConfig,
   ApprovalMonitorStatus,
   ApprovalWorkHoursConfig,
   EducationOfficeCode,
@@ -55,21 +56,44 @@ export interface CreateApprovalMonitorServiceOptions {
   now?: () => number;
   setTimer?: (handler: () => void, delayMs: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  onError?: (error: Error) => void;
 }
 
-function diskStateIo(userDataPath: string): ApprovalMonitorStateIo {
+export interface ApprovalMonitorStateFileSystem {
+  readFile(path: string, encoding: 'utf8'): Promise<string>;
+  mkdir(path: string, options: { recursive: true; mode: number }): Promise<unknown>;
+  writeFile(
+    path: string,
+    text: string,
+    options: { encoding: 'utf8'; mode: number },
+  ): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('code' in error)) return undefined;
+  return typeof error.code === 'string' ? error.code : undefined;
+}
+
+export function createApprovalMonitorStateIo(
+  userDataPath: string,
+  fileSystem: ApprovalMonitorStateFileSystem = { readFile, mkdir, writeFile, rename },
+): ApprovalMonitorStateIo {
   const statePath = join(userDataPath, 'approval-monitor', 'state.json');
+  const temporaryPath = `${statePath}.tmp`;
   return {
     async read() {
       try {
-        return await readFile(statePath, 'utf8');
-      } catch {
-        return undefined;
+        return await fileSystem.readFile(statePath, 'utf8');
+      } catch (error) {
+        if (errorCode(error) === 'ENOENT') return undefined;
+        throw new Error(`결재 알림 상태 파일을 읽지 못했습니다. 스트림 패널 설정 폴더의 읽기 권한을 확인해 주세요: ${errorDetail(error)}`);
       }
     },
     async write(text) {
-      await mkdir(dirname(statePath), { recursive: true, mode: 0o700 });
-      await writeFile(statePath, text, { encoding: 'utf8', mode: 0o600 });
+      await fileSystem.mkdir(dirname(statePath), { recursive: true, mode: 0o700 });
+      await fileSystem.writeFile(temporaryPath, text, { encoding: 'utf8', mode: 0o600 });
+      await fileSystem.rename(temporaryPath, statePath);
     },
   };
 }
@@ -106,24 +130,34 @@ function validPersistedSystem(value: unknown): value is PersistedSystemState {
 
 function parseState(text: string | undefined): ApprovalMonitorState {
   if (!text) return defaultState();
+  let value: unknown;
   try {
-    const value: unknown = JSON.parse(text);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return defaultState();
-    const record = value as Record<string, unknown>;
-    if (record.version !== 1 || !record.systems || typeof record.systems !== 'object') {
-      return defaultState();
-    }
-    const rawSystems = record.systems as Record<string, unknown>;
-    const systems: ApprovalMonitorState['systems'] = {};
-    for (const system of SYSTEMS) {
-      if (validPersistedSystem(rawSystems[system])) {
-        systems[system] = { ...rawSystems[system] };
-      }
-    }
-    return { version: 1, systems };
+    value = JSON.parse(text);
   } catch {
-    return defaultState();
+    throw new Error('결재 알림 상태 파일이 손상되었습니다. 설정의 지금 확인을 눌러 새 기준을 저장해 주세요.');
   }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('결재 알림 상태 파일이 손상되었습니다. 설정의 지금 확인을 눌러 새 기준을 저장해 주세요.');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== 1 ||
+    !record.systems ||
+    typeof record.systems !== 'object' ||
+    Array.isArray(record.systems)
+  ) {
+    throw new Error('결재 알림 상태 파일이 손상되었습니다. 설정의 지금 확인을 눌러 새 기준을 저장해 주세요.');
+  }
+  const rawSystems = record.systems as Record<string, unknown>;
+  const systems: ApprovalMonitorState['systems'] = {};
+  for (const system of SYSTEMS) {
+    if (rawSystems[system] === undefined) continue;
+    if (!validPersistedSystem(rawSystems[system])) {
+      throw new Error('결재 알림 상태 파일이 손상되었습니다. 설정의 지금 확인을 눌러 새 기준을 저장해 주세요.');
+    }
+    systems[system] = { ...rawSystems[system] };
+  }
+  return { version: 1, systems };
 }
 
 function timeToMinutes(value: string): number {
@@ -162,16 +196,18 @@ export function createApprovalMonitorService({
   userDataPath = '',
   getConfig,
   scanner,
-  stateIo = diskStateIo(userDataPath),
+  stateIo = createApprovalMonitorStateIo(userDataPath),
   notify = () => undefined,
   broadcast = () => undefined,
   now = Date.now,
   setTimer = (handler, delayMs) => setTimeout(handler, delayMs),
   clearTimer = (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  onError = (error) => console.warn(error.message),
 }: CreateApprovalMonitorServiceOptions): ApprovalMonitorService {
   let state = defaultState();
   let statuses: ApprovalMonitorStatus[] = [];
   let started = false;
+  let stateLoadError: string | null = null;
   let timer: unknown = null;
   let tail: Promise<void> = Promise.resolve();
   const inFlightBySystem = new Map<WebWorkflowSystem, Promise<void>>();
@@ -190,6 +226,7 @@ export function createApprovalMonitorService({
     const source = getConfig().approvalMonitor.sources[system];
     const persisted = state.systems[system];
     if (platform !== 'win32' || !source.enabled) return { system, state: 'disabled' };
+    if (stateLoadError) return { system, state: 'error', message: stateLoadError };
     return {
       system,
       state: persisted ? 'ready' : 'idle',
@@ -200,8 +237,16 @@ export function createApprovalMonitorService({
     };
   });
 
+  const reportError = (message: string, error: unknown): void => {
+    onError(new Error(`${message}: ${errorDetail(error)}`));
+  };
+
   const publish = () => {
-    broadcast(statuses.map((status) => ({ ...status })));
+    try {
+      broadcast(statuses.map((status) => ({ ...status })));
+    } catch (error) {
+      reportError('결재 알림 상태를 창에 전달하지 못했습니다. 닫힌 창은 건너뛰고 다음 확인을 계속합니다', error);
+    }
   };
 
   const cancelTimer = () => {
@@ -221,7 +266,13 @@ export function createApprovalMonitorService({
   const service: ApprovalMonitorService = {
     async start() {
       if (started) return;
-      state = parseState(await stateIo.read());
+      try {
+        state = parseState(await stateIo.read());
+        stateLoadError = null;
+      } catch (error) {
+        state = defaultState();
+        stateLoadError = errorDetail(error);
+      }
       const config = getConfig();
       for (const system of SYSTEMS) {
         const persisted = state.systems[system];
@@ -289,6 +340,10 @@ export function createApprovalMonitorService({
             const checkedAt = now();
             const currentConfig = getConfig();
             const sendNotification = establishedBaselines.has(system) &&
+              isWithinApprovalWorkHours(
+                new Date(checkedAt),
+                currentConfig.approvalMonitor.workHours,
+              ) &&
               shouldSendApprovalNotification(
                 previous?.pendingCount,
                 pendingCount,
@@ -320,6 +375,7 @@ export function createApprovalMonitorService({
               return;
             }
             state = nextState;
+            stateLoadError = null;
             statuses[index] = {
               system,
               state: 'ready',
@@ -327,7 +383,13 @@ export function createApprovalMonitorService({
               lastCheckedAt: checkedAt,
             };
             establishedBaselines.add(system);
-            if (sendNotification) notify(system, pendingCount);
+            if (sendNotification) {
+              try {
+                notify(system, pendingCount);
+              } catch (error) {
+                reportError('결재 대기 알림을 표시하지 못했습니다. 윈도우 알림 설정을 확인해 주세요', error);
+              }
+            }
           } catch (error) {
             if (!started) return;
             if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
@@ -358,9 +420,12 @@ export function createApprovalMonitorService({
         inFlightBySystem.set(system, tracked);
         return tracked;
       });
-      await Promise.all(runs);
-      schedule();
-      return service.getStatuses();
+      try {
+        await Promise.all(runs);
+        return service.getStatuses();
+      } finally {
+        schedule();
+      }
     },
     onConfigChanged(config) {
       for (const system of SYSTEMS) {
@@ -381,17 +446,36 @@ export function createApprovalMonitorService({
   function schedule(): void {
     cancelTimer();
     if (!started || platform !== 'win32') return;
-    const config = getConfig().approvalMonitor;
+    let config: ApprovalMonitorConfig;
+    try {
+      config = getConfig().approvalMonitor;
+    } catch (error) {
+      reportError('결재 알림 설정을 읽지 못했습니다. 10분 뒤 다시 확인합니다', error);
+      timer = setTimer(schedule, 10 * 60_000);
+      return;
+    }
     if (!SYSTEMS.some((system) => config.sources[system].enabled)) return;
+    const intervalMinutes = [5, 10, 30].includes(config.intervalMinutes)
+      ? config.intervalMinutes
+      : 10;
     timer = setTimer(() => {
       timer = null;
-      const current = getConfig().approvalMonitor;
+      let current: ApprovalMonitorConfig;
+      try {
+        current = getConfig().approvalMonitor;
+      } catch (error) {
+        reportError('결재 알림 설정을 읽지 못했습니다. 다음 확인을 다시 예약합니다', error);
+        schedule();
+        return;
+      }
       if (isWithinApprovalWorkHours(new Date(now()), current.workHours)) {
-        void service.check({});
+        void service.check({}).catch((error) => {
+          reportError('예약된 결재 대기 확인을 마치지 못했습니다. 다음 주기에 다시 시도합니다', error);
+        });
       } else {
         schedule();
       }
-    }, config.intervalMinutes * 60_000);
+    }, intervalMinutes * 60_000);
   }
 
   statuses = createStatuses();

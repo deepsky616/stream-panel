@@ -120,6 +120,19 @@ describe('managed web workflow definitions', () => {
     }
   });
 
+  it('never accepts the clicked approval menu itself as proof that navigation succeeded', () => {
+    for (const definition of Object.values(APPROVAL_INBOX_WORKFLOWS)) {
+      for (const step of definition.steps) {
+        if (!('labels' in step.postcondition)) continue;
+        const clickedLabels = new Set(step.candidateLabels);
+        expect(
+          step.postcondition.labels.some((label) => clickedLabels.has(label)),
+          `${definition.id}:${step.id}`,
+        ).toBe(false);
+      }
+    }
+  });
+
   it('does not expose a definition for an arbitrary workflow identifier', () => {
     expect((definitions as Partial<Record<BuiltInWebWorkflowId, unknown>>)[
       'run-script' as BuiltInWebWorkflowId
