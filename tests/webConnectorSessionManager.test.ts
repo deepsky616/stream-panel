@@ -25,6 +25,52 @@ function request(
 }
 
 describe('managed browser session manager', () => {
+  it('runs a read-only session operation in the same queue as workflow execution', async () => {
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const events: string[] = [];
+    const manager = new ManagedBrowserSessionManager<FakeSession, string>({
+      createSession: async (officeCode, browserId) => {
+        const session: FakeSession = {
+          id: 1,
+          officeCode,
+          browserId,
+          alive: true,
+          closeCount: 0,
+          isAlive() { return this.alive; },
+          async close() { this.closeCount += 1; this.alive = false; },
+        };
+        return session;
+      },
+      executeWorkflow: async () => {
+        events.push('workflow:start');
+        events.push('workflow:finish');
+        return 'done';
+      },
+    });
+
+    const read = manager.use('goe', 'edge', async (session) => {
+      events.push(`read:start:${session.id}`);
+      await readGate;
+      events.push(`read:finish:${session.id}`);
+      return 5;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const workflow = manager.run(request('goe', 'edge'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(events).toEqual(['read:start:1']);
+    releaseRead();
+    await expect(read).resolves.toBe(5);
+    await expect(workflow).resolves.toBe('done');
+    expect(events).toEqual([
+      'read:start:1',
+      'read:finish:1',
+      'workflow:start',
+      'workflow:finish',
+    ]);
+  });
+
   it('reuses one live session and serializes workflows for the same office and browser', async () => {
     let nextId = 1;
     let releaseFirst!: () => void;

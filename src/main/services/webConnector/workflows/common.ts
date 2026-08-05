@@ -8,6 +8,16 @@ export interface CandidateSummary {
   width: number;
   height: number;
   navigation?: boolean;
+  safeNavigation?: boolean;
+  tag?: string;
+  inputType?: string;
+  href?: string;
+  formAssociated?: boolean;
+  inlineHandler?: boolean;
+  visibleText?: string;
+  accessibleName?: string;
+  titleText?: string;
+  valueText?: string;
 }
 
 export type WorkflowPostcondition =
@@ -34,7 +44,7 @@ export interface ManagedWorkflowDefinition {
   steps: readonly WorkflowStep[];
 }
 
-const FORBIDDEN_ACTION_TOKENS = [
+export const FORBIDDEN_ACTION_TOKENS = [
   '저장',
   '제출',
   '결재',
@@ -61,10 +71,17 @@ const FORBIDDEN_ACTION_TOKENS = [
   '전송',
   '처리',
 ] as const;
-const APPROVED_NON_ACTION_LABELS = new Set([
+export const APPROVED_NON_ACTION_LABELS = new Set([
   '신청',
   '품의등록',
   '표준서식(결재4인,협조4인)',
+  '결재함',
+  '결재 대기',
+  '결재대기',
+  '미결',
+  '미결문서',
+  '대기문서',
+  '결재할 문서',
 ]);
 
 export function normalizeCandidateText(value: unknown): string {
@@ -75,6 +92,16 @@ export function isForbiddenActionText(text: string): boolean {
   const normalized = normalizeCandidateText(text);
   if (APPROVED_NON_ACTION_LABELS.has(normalized)) return false;
   return FORBIDDEN_ACTION_TOKENS.some((token) => normalized.includes(token));
+}
+
+function candidateSurfaceTexts(candidate: CandidateSummary): string[] {
+  return [
+    candidate.text,
+    candidate.visibleText,
+    candidate.accessibleName,
+    candidate.titleText,
+    candidate.valueText,
+  ].filter((text): text is string => typeof text === 'string' && text.trim() !== '');
 }
 
 export function selectSafeCandidate(
@@ -88,10 +115,15 @@ export function selectSafeCandidate(
     candidate.enabled &&
     candidate.width > 0 &&
     candidate.height > 0 &&
-    (!navigationOnly || candidate.navigation === true) &&
+    (!navigationOnly || (
+      candidate.navigation === true &&
+      candidate.safeNavigation === true
+    )) &&
     approved.has(normalizeCandidateText(candidate.text))
   ));
-  const forbidden = exact.filter((candidate) => isForbiddenActionText(candidate.text));
+  const forbidden = exact.filter((candidate) => (
+    candidateSurfaceTexts(candidate).some(isForbiddenActionText)
+  ));
   if (forbidden.length > 0) {
     throw new Error('저장·제출·상신·승인·결재·확정·삭제·취소·확인·지급·송금·이체·발송·등록·신청·요청·완료·반려·서명·동의·전송·처리와 인증 입력은 자동으로 누를 수 없는 안전 제한 대상입니다. 화면에서 직접 진행해 주세요.');
   }

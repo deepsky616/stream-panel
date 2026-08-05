@@ -50,6 +50,47 @@ function createController(): WebConnectorSessionController {
 }
 
 describe('managed web connector service', () => {
+  it('serializes an approval count read through the current managed office session', async () => {
+    const inputs: unknown[] = [];
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      (() => { let id = 0; return () => `id-${id++}`; })(),
+      'win32',
+    );
+    const controller = createController() as WebConnectorSessionController & {
+      checkApproval(input: unknown): Promise<number>;
+    };
+    controller.checkApproval = async (input) => {
+      inputs.push(input);
+      return 6;
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+    });
+    await service.start();
+
+    await expect(service.scanApproval({
+      system: 'neis',
+      officeCode: 'goe',
+      browserId: 'edge',
+    })).resolves.toBe(6);
+    expect(inputs).toEqual([{
+      system: 'neis',
+      officeCode: 'goe',
+      browserId: 'edge',
+    }]);
+    await expect(service.scanApproval({
+      system: 'neis',
+      officeCode: 'sen',
+      browserId: 'edge',
+    })).rejects.toThrow(/교육청/);
+  });
+
   it('loads non-sensitive state without starting a loopback extension server', async () => {
     const writes: string[] = [];
     const config = createDefaultConfig(

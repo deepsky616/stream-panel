@@ -139,9 +139,21 @@ describe('managed browser CDP transport', () => {
     await expect(protocol.send('Browser.getVersion', {})).resolves.toMatchObject({
       product: 'Chrome/140.0.0.0',
     });
+    await expect(protocol.send('Target.detachFromTarget' as never, {
+      sessionId: 'session-1',
+    })).resolves.toMatchObject({
+      product: 'Chrome/140.0.0.0',
+    });
+    await expect(protocol.send('Target.closeTarget' as never, {
+      targetId: 'target-1',
+    })).resolves.toMatchObject({
+      product: 'Chrome/140.0.0.0',
+    });
     expect(sent).toEqual([
       { id: 1, method: 'Target.getTargets', params: {} },
       { id: 2, method: 'Browser.getVersion', params: {} },
+      { id: 3, method: 'Target.detachFromTarget', params: { sessionId: 'session-1' } },
+      { id: 4, method: 'Target.closeTarget', params: { targetId: 'target-1' } },
     ]);
     expect(() => protocol.send('Network.getAllCookies' as never, {})).toThrow(/허용/);
     protocol.close();

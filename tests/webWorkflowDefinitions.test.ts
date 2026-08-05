@@ -5,8 +5,10 @@ import { NEIS_WORKFLOWS } from '../src/main/services/webConnector/workflows/neis
 import { isForbiddenActionText } from '../src/main/services/webConnector/workflows/common';
 import * as workflowCommon from '../src/main/services/webConnector/workflows/common';
 import type { WebWorkflowSpec } from '../src/shared/types';
+import { APPROVAL_INBOX_WORKFLOWS } from '../src/main/services/approvalMonitor/definitions';
 
 const definitions = { ...NEIS_WORKFLOWS, ...EDUFINE_WORKFLOWS };
+const allDefinitions = { ...definitions, ...APPROVAL_INBOX_WORKFLOWS };
 
 describe('managed web workflow definitions', () => {
   it('turns a custom path into checked navigation steps ending at the requested screen text', () => {
@@ -106,7 +108,7 @@ describe('managed web workflow definitions', () => {
   });
 
   it('never places forbidden action text in a clickable candidate label', () => {
-    for (const definition of Object.values(definitions)) {
+    for (const definition of Object.values(allDefinitions)) {
       for (const step of definition.steps) {
         expect(step.candidateLabels.length).toBeGreaterThan(0);
         expect(step.maxChecks).toBe(3);
@@ -118,7 +120,22 @@ describe('managed web workflow definitions', () => {
     }
   });
 
+  it('never accepts the clicked approval menu itself as proof that navigation succeeded', () => {
+    for (const definition of Object.values(APPROVAL_INBOX_WORKFLOWS)) {
+      for (const step of definition.steps) {
+        if (!('labels' in step.postcondition)) continue;
+        const clickedLabels = new Set(step.candidateLabels);
+        expect(
+          step.postcondition.labels.some((label) => clickedLabels.has(label)),
+          `${definition.id}:${step.id}`,
+        ).toBe(false);
+      }
+    }
+  });
+
   it('does not expose a definition for an arbitrary workflow identifier', () => {
-    expect(definitions['run-script' as BuiltInWebWorkflowId]).toBeUndefined();
+    expect((definitions as Partial<Record<BuiltInWebWorkflowId, unknown>>)[
+      'run-script' as BuiltInWebWorkflowId
+    ]).toBeUndefined();
   });
 });

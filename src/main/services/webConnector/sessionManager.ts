@@ -74,6 +74,17 @@ export class ManagedBrowserSessionManager<
     });
   }
 
+  use<Value>(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+    operation: (session: Session) => Promise<Value>,
+  ): Promise<Value> {
+    return this.enqueue(officeCode, browserId, async (entry) => {
+      const session = await this.ensureSession(entry, officeCode, browserId);
+      return operation(session);
+    });
+  }
+
   getSession(
     officeCode: EducationOfficeCode,
     browserId: WebConnectorBrowserId,

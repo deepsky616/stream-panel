@@ -11,11 +11,12 @@ import {
 import { useEffect, useState } from 'react';
 import { getPageSlots } from '../../../shared/layout';
 import { assignHints } from '../../../shared/hintMap';
-import type { AppConfig, DeckItem } from '../../../shared/types';
+import type { AppConfig, ApprovalMonitorStatus, DeckItem } from '../../../shared/types';
 import { BackTile } from '../common/BackTile';
 import { EmptyTile } from '../common/EmptyTile';
 import { KeyTile } from '../common/KeyTile';
 import { useKeyboardGrid } from '../hooks/useKeyboardGrid';
+import { getApprovalBadgeForItem } from './approvalBadge';
 
 interface PanelGridProps {
   config: AppConfig;
@@ -28,6 +29,7 @@ interface PanelGridProps {
   onContextEmpty: (event: React.MouseEvent, position: number) => void;
   showHints: boolean;
   hintMuted?: boolean;
+  approvalStatuses: ApprovalMonitorStatus[];
 }
 
 function PanelItem({
@@ -37,6 +39,7 @@ function PanelItem({
   failed,
   hint,
   hintMuted,
+  statusBadge,
   onClick,
   onContextMenu,
 }: {
@@ -48,6 +51,7 @@ function PanelItem({
   onContextMenu: (event: React.MouseEvent) => void;
   hint?: string;
   hintMuted?: boolean;
+  statusBadge: ReturnType<typeof getApprovalBadgeForItem>;
 }) {
   const drag = useDraggable({ id: `panel-item:${item.id}`, data: { id: item.id }, disabled: locked });
   const drop = useDroppable({ id: `panel-target:${item.id}`, data: { position: item.position }, disabled: locked });
@@ -65,7 +69,7 @@ function PanelItem({
       {...drag.attributes}
       {...drag.listeners}
     >
-      <KeyTile item={item} buttonSize={size} onClick={onClick} failed={failed} hint={hint} hintMuted={hintMuted} />
+      <KeyTile item={item} buttonSize={size} onClick={onClick} failed={failed} hint={hint} hintMuted={hintMuted} statusBadge={statusBadge ?? undefined} />
     </div>
   );
 }
@@ -111,6 +115,7 @@ export function PanelGrid({
   onContextEmpty,
   showHints,
   hintMuted = false,
+  approvalStatuses,
 }: PanelGridProps) {
   const slots = getPageSlots(items, config.grid, page, path.length > 0);
   const hints = new Map(
@@ -185,6 +190,7 @@ export function PanelGrid({
               failed={failedId === slot.item.id}
               hint={showHints ? hints.get(slot.item.id) : undefined}
               hintMuted={hintMuted}
+              statusBadge={getApprovalBadgeForItem(slot.item, approvalStatuses)}
               onClick={(event) => void onClick(event.shiftKey)}
               onContextMenu={(event) => onContextItem(event, slot.item)}
             />

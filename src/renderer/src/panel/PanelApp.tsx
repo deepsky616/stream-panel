@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assignHints, findHintByCode } from '../../../shared/hintMap';
 import { findFirstEmptyPosition, getPageCount, getPageSlots } from '../../../shared/layout';
 import { cloneItemWithNewIds, countDeckItems, getItemsAtPath } from '../../../shared/tree';
-import type { DeckItem, MultiActionProgress } from '../../../shared/types';
+import type { ApprovalMonitorStatus, DeckItem, MultiActionProgress } from '../../../shared/types';
 import { ContextMenu, type ContextMenuItem } from '../common/ContextMenu';
 import { Toast } from '../common/Toast';
 import { useConfig } from '../hooks/useConfig';
@@ -45,6 +45,7 @@ export function PanelApp() {
   const [panelFocused, setPanelFocused] = useState(() => document.hasFocus());
   const [focusUnavailable, setFocusUnavailable] = useState(false);
   const [multiActionProgress, setMultiActionProgress] = useState<MultiActionProgress | null>(null);
+  const [approvalStatuses, setApprovalStatuses] = useState<ApprovalMonitorStatus[]>([]);
   const [showNumberIntro, setShowNumberIntro] = useState(
     () => localStorage.getItem('global-number-intro-seen') !== '1',
   );
@@ -116,6 +117,24 @@ export function PanelApp() {
       unsubscribe();
     };
   }, []);
+  useEffect(() => {
+    if (config?.platform !== 'win32') {
+      return;
+    }
+    let active = true;
+    void window.api.approvalMonitor.status().then((statuses) => {
+      if (active) setApprovalStatuses(statuses);
+    }).catch(() => {
+      if (active) setApprovalStatuses([]);
+    });
+    const unsubscribe = window.api.on('web-approval:changed', (payload) => {
+      if (active && Array.isArray(payload)) setApprovalStatuses(payload as ApprovalMonitorStatus[]);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [config?.platform]);
   useEffect(() => {
     document.title = showFooter ? 'Stream Panel [footer]' : 'Stream Panel';
     void window.api.window.relayout();
@@ -308,6 +327,7 @@ export function PanelApp() {
         }}
         showHints={showHints}
         hintMuted={focusUnavailable}
+        approvalStatuses={approvalStatuses}
       />
       {focusUnavailable && (
         <div className="focus-guidance" role="status">

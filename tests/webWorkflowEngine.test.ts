@@ -51,11 +51,24 @@ describe('managed web workflow engine', () => {
   });
 
   it('never selects save, submit, approval, payment, or confirmation actions', () => {
-    for (const text of ['저장', '제출', '결재 요청', '상신', '승인', '최종 확정']) {
+    for (const text of ['저장', '제출', '결재', '결재 요청', '상신', '승인', '최종 확정']) {
       expect(isForbiddenActionText(text)).toBe(true);
       expect(() => selectSafeCandidate([candidate(0, text)], [text])).toThrow(/누를 수 없는/);
     }
     expect(isForbiddenActionText('품의등록')).toBe(false);
+  });
+
+  it('rejects a safe label when another visible or accessible name reveals an action', () => {
+    expect(() => selectSafeCandidate([
+      candidate(0, '결재함', {
+        navigation: true,
+        safeNavigation: true,
+        visibleText: '승인',
+        accessibleName: '결재함',
+        titleText: '',
+        valueText: '',
+      } as Partial<CandidateSummary>),
+    ], ['결재함'], true)).toThrow(/누를 수 없는/);
   });
 
   it('presses a safe candidate once and advances only after the postcondition succeeds', async () => {
@@ -137,13 +150,16 @@ describe('managed web workflow engine', () => {
     expect(inspections).toBe(1);
   });
 
-  it('allows custom steps to press navigation elements but not ordinary action buttons', async () => {
+  it('allows custom steps to press verified navigation elements but not action-like navigation candidates', async () => {
     const navigationStep = {
       ...step,
       navigationOnly: true,
     } as WorkflowStep;
-    const adapter = (navigation: boolean) => ({
-      inspectCandidates: async () => [candidate(0, '복무', { navigation } as Partial<CandidateSummary>)],
+    const adapter = (navigation: boolean, safeNavigation = false) => ({
+      inspectCandidates: async () => [candidate(0, '복무', {
+        navigation,
+        safeNavigation,
+      } as Partial<CandidateSummary>)],
       pressCandidate: async () => undefined,
       checkPostcondition: async () => true,
       wait: async () => undefined,
@@ -155,7 +171,11 @@ describe('managed web workflow engine', () => {
     )).rejects.toThrow(/찾지 못했습니다/);
     await expect(runWorkflow(
       { id: 'custom', label: '사용자 지정 업무', finalState: 'ready', steps: [navigationStep] },
-      adapter(true),
+      adapter(true, false),
+    )).rejects.toThrow(/찾지 못했습니다/);
+    await expect(runWorkflow(
+      { id: 'custom', label: '사용자 지정 업무', finalState: 'ready', steps: [navigationStep] },
+      adapter(true, true),
     )).resolves.toEqual({ workflowId: 'custom', finalState: 'ready' });
   });
 });

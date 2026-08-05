@@ -32,6 +32,7 @@ import {
   type WindowsManagedBrowserSession,
 } from './windows';
 import type { WorkflowRunResult } from './workflows/engine';
+import type { ApprovalScanInput } from '../approvalMonitor/definitions';
 
 export type ConnectorReply = { ok: true } | { ok: false; message: string };
 
@@ -51,6 +52,7 @@ export interface WebConnectorSessionController {
   ): ManagedBrowserSession | undefined;
   closeOtherOffices(officeCode: EducationOfficeCode): Promise<void>;
   closeAll(): Promise<void>;
+  checkApproval?(input: ApprovalScanInput): Promise<number>;
 }
 
 export interface WebConnectorService {
@@ -64,6 +66,7 @@ export interface WebConnectorService {
     target: 'pair' | 'extensions',
   ): Promise<ConnectorReply>;
   ensureDiagnosticsDirectory(): Promise<string>;
+  scanApproval(input: ApprovalScanInput): Promise<number>;
   onConfigChanged(config: AppConfig): Promise<void>;
 }
 
@@ -115,10 +118,14 @@ function workflowSuccessMessage(workflowSpec: WebWorkflowSpec): string {
       return '나이스 복무 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.';
     case 'neis-trip':
       return '나이스 출장 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.';
+    case 'neis-approval-inbox':
+      return '나이스 결재함을 열었습니다. 승인, 반려와 서명은 화면에서 직접 진행해 주세요.';
     case 'edufine-draft':
       return '에듀파인 기안 화면을 열었습니다. 내용을 확인한 뒤 직접 상신해 주세요.';
     case 'edufine-purchase':
       return '에듀파인 품의 화면을 열었습니다. 내용을 확인한 뒤 직접 상신해 주세요.';
+    case 'edufine-approval-inbox':
+      return '에듀파인 결재함을 열었습니다. 승인, 반려와 서명은 화면에서 직접 진행해 주세요.';
     case 'custom':
       return `${workflowSpec.custom.name} 화면을 열었습니다. 내용을 확인한 뒤 필요한 최종 동작은 직접 진행해 주세요.`;
   }
@@ -341,6 +348,21 @@ export function createWebConnectorService({
     async ensureDiagnosticsDirectory() {
       await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 });
       return diagnostics.directory;
+    },
+    async scanApproval(input) {
+      if (!started || !state) {
+        throw new Error('결재 대기 알림 연결부가 준비되지 않았습니다. 앱을 다시 시작해 주세요.');
+      }
+      if (platform !== 'win32') {
+        throw new Error('결재 대기 알림은 윈도우에서만 사용할 수 있습니다. 윈도우에서 다시 시도해 주세요.');
+      }
+      if (input.officeCode !== currentOffice()) {
+        throw new Error('현재 소속 교육청과 결재 대기 확인 요청의 교육청이 다릅니다. 설정을 다시 확인해 주세요.');
+      }
+      if (!controller.checkApproval) {
+        throw new Error('결재 대기 확인 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
+      }
+      return controller.checkApproval(input);
     },
     async onConfigChanged(config) {
       await controller.closeOtherOffices(config.educationOfficeCode);

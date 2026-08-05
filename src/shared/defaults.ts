@@ -44,6 +44,16 @@ export const DEFAULT_KEYBOARD = {
   quickLauncherHotkey: 'CommandOrControl+Alt+Space',
 } as const;
 
+export const DEFAULT_APPROVAL_MONITOR = {
+  sources: {
+    neis: { enabled: false, browserId: 'edge' },
+    edufine: { enabled: false, browserId: 'edge' },
+  },
+  intervalMinutes: 10,
+  notifyOnlyOnIncrease: true,
+  workHours: { enabled: true, start: '08:00', end: '18:00' },
+} as const;
+
 function getRuntimePlatform(): string {
   return (globalThis as { process?: { platform?: string } }).process?.platform ?? 'win32';
 }
@@ -111,6 +121,7 @@ export function createDefaultConfig(
       ...DEFAULT_KEYBOARD,
       globalNumberModifier: configPlatform === 'darwin' ? 'Control+Alt' : 'Alt+Shift',
     },
+    approvalMonitor: structuredClone(DEFAULT_APPROVAL_MONITOR),
     theme: 'system',
     hotkey: 'CommandOrControl+Alt+D',
     launchAtLogin: false,

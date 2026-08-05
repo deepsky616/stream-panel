@@ -18,6 +18,8 @@ export const IPC_CHANNELS = {
   WEB_CONNECTOR_STATUS: 'web-connector:status',
   WEB_CONNECTOR_TEST: 'web-connector:test',
   WEB_CONNECTOR_OPEN_SETUP: 'web-connector:open-setup',
+  WEB_APPROVAL_STATUS: 'web-approval:status',
+  WEB_APPROVAL_CHECK: 'web-approval:check',
   ICON_RESOLVE: 'icon:resolve',
   DROP_CLASSIFY: 'drop:classify',
   WINDOW_HIDE: 'window:hide',
@@ -39,6 +41,7 @@ export const IPC_CHANNELS = {
   EDITOR_FOCUS_SLOT: 'editor:focus-slot',
   TOAST: 'toast',
   MULTI_ACTION_PROGRESS: 'multi-action:progress',
+  WEB_APPROVAL_CHANGED: 'web-approval:changed',
 } as const;
 
 export type RendererEvent =
@@ -47,7 +50,8 @@ export type RendererEvent =
   | 'panel:visibility'
   | 'editor:focus-slot'
   | 'toast'
-  | 'multi-action:progress';
+  | 'multi-action:progress'
+  | 'web-approval:changed';
 
 export const RENDERER_EVENTS = new Set<RendererEvent>([
   IPC_CHANNELS.CONFIG_CHANGED,
@@ -56,4 +60,5 @@ export const RENDERER_EVENTS = new Set<RendererEvent>([
   IPC_CHANNELS.EDITOR_FOCUS_SLOT,
   IPC_CHANNELS.TOAST,
   IPC_CHANNELS.MULTI_ACTION_PROGRESS,
+  IPC_CHANNELS.WEB_APPROVAL_CHANGED,
 ]);

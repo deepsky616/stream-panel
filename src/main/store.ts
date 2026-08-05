@@ -7,6 +7,7 @@ import { normalizeHintKeys } from '../shared/hintMap';
 import { normalizeDeckPositions } from '../shared/layout';
 import type {
   AppConfig,
+  ApprovalMonitorConfig,
   BehaviorConfig,
   DeckItem,
   GridConfig,
@@ -60,6 +61,9 @@ function normalizeItemHotkeys(items: readonly DeckItem[]): DeckItem[] {
 function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppConfig {
   const behavior = partialObject<BehaviorConfig>(parsed.behavior);
   const keyboard = partialObject<KeyboardConfig>(parsed.keyboard);
+  const approvalMonitor = partialObject<ApprovalMonitorConfig>(parsed.approvalMonitor);
+  const approvalSources = partialObject<ApprovalMonitorConfig['sources']>(approvalMonitor.sources);
+  const approvalWorkHours = partialObject<ApprovalMonitorConfig['workHours']>(approvalMonitor.workHours);
   const grid = partialObject<GridConfig>(parsed.grid);
   const window = partialObject<WindowConfig>(parsed.window);
   const normalized = normalizeDeckPositions(parsed.root);
@@ -68,6 +72,21 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
     typeof keyboard.globalNumberModifier === 'string'
       ? keyboard.globalNumberModifier
       : defaultConfig.keyboard.globalNumberModifier;
+  const validApprovalTime = (value: unknown): value is string => (
+    typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)
+  );
+  const normalizeApprovalSource = (
+    value: unknown,
+    fallback: ApprovalMonitorConfig['sources']['neis'],
+  ): ApprovalMonitorConfig['sources']['neis'] => {
+    const source = partialObject<ApprovalMonitorConfig['sources']['neis']>(value);
+    return {
+      enabled: typeof source.enabled === 'boolean' ? source.enabled : fallback.enabled,
+      browserId: source.browserId === 'edge' || source.browserId === 'chrome'
+        ? source.browserId
+        : fallback.browserId,
+    };
+  };
 
   return {
     ...defaultConfig,
@@ -88,6 +107,37 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
       ...keyboard,
       hintKeys: normalizeHintKeys(hintKeys),
       globalNumberModifier,
+    },
+    approvalMonitor: {
+      ...defaultConfig.approvalMonitor,
+      ...approvalMonitor,
+      intervalMinutes: [5, 10, 30].includes(Number(approvalMonitor.intervalMinutes))
+        ? Number(approvalMonitor.intervalMinutes) as 5 | 10 | 30
+        : defaultConfig.approvalMonitor.intervalMinutes,
+      notifyOnlyOnIncrease: typeof approvalMonitor.notifyOnlyOnIncrease === 'boolean'
+        ? approvalMonitor.notifyOnlyOnIncrease
+        : defaultConfig.approvalMonitor.notifyOnlyOnIncrease,
+      sources: {
+        neis: normalizeApprovalSource(
+          approvalSources.neis,
+          defaultConfig.approvalMonitor.sources.neis,
+        ),
+        edufine: normalizeApprovalSource(
+          approvalSources.edufine,
+          defaultConfig.approvalMonitor.sources.edufine,
+        ),
+      },
+      workHours: {
+        enabled: typeof approvalWorkHours.enabled === 'boolean'
+          ? approvalWorkHours.enabled
+          : defaultConfig.approvalMonitor.workHours.enabled,
+        start: validApprovalTime(approvalWorkHours.start)
+          ? approvalWorkHours.start
+          : defaultConfig.approvalMonitor.workHours.start,
+        end: validApprovalTime(approvalWorkHours.end)
+          ? approvalWorkHours.end
+          : defaultConfig.approvalMonitor.workHours.end,
+      },
     },
     hotkey: normalizeAccelerator(
       typeof parsed.hotkey === 'string' ? parsed.hotkey : defaultConfig.hotkey,

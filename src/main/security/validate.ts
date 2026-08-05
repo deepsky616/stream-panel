@@ -469,6 +469,31 @@ export function validateAppConfig(config: AppConfig): void {
   if (!isEducationOfficeCode(config.educationOfficeCode)) {
     throw new ValidationError('소속 교육청 설정이 올바르지 않습니다. 목록에서 다시 선택해 주세요.');
   }
+  const approvalMonitor = config.approvalMonitor;
+  const validTime = (value: unknown): value is string => (
+    typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)
+  );
+  if (
+    !approvalMonitor ||
+    !approvalMonitor.sources ||
+    ![5, 10, 30].includes(approvalMonitor.intervalMinutes)
+  ) {
+    throw new ValidationError('결재 대기 확인 주기는 5분, 10분 또는 30분으로 선택해 주세요.');
+  }
+  for (const source of [approvalMonitor.sources.neis, approvalMonitor.sources.edufine]) {
+    if (!source || typeof source.enabled !== 'boolean' || !['edge', 'chrome'].includes(source.browserId)) {
+      throw new ValidationError('결재 대기 알림 브라우저는 엣지나 크롬으로 선택해 주세요.');
+    }
+  }
+  if (
+    typeof approvalMonitor.notifyOnlyOnIncrease !== 'boolean' ||
+    !approvalMonitor.workHours ||
+    typeof approvalMonitor.workHours.enabled !== 'boolean' ||
+    !validTime(approvalMonitor.workHours.start) ||
+    !validTime(approvalMonitor.workHours.end)
+  ) {
+    throw new ValidationError('결재 대기 알림 근무 시간을 시와 분 형식으로 다시 입력해 주세요.');
+  }
   if (
     !Number.isInteger(config.grid.cols) ||
     config.grid.cols < 2 ||

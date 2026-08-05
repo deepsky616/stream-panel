@@ -4,6 +4,7 @@ import type { WindowsWorkflowPage } from '../src/main/services/webConnector/wind
 import {
   createWindowsManagedBrowserSession,
   executeWindowsWorkflow,
+  openCdpWindowsApprovalPage,
   openCdpWindowsWorkflowPage,
   selectWindowsWorkflowTarget,
 } from '../src/main/services/webConnector/windows';
@@ -18,6 +19,7 @@ function safeCandidate(index: number, text: string): CandidateSummary {
     width: 100,
     height: 30,
     navigation: true,
+    safeNavigation: true,
   };
 }
 
@@ -126,6 +128,119 @@ describe('Windows managed web automation', () => {
       url: 'https://sen.neis.go.kr/',
     });
     await expect(workflowPage.currentOrigin()).resolves.toBe('https://sen.neis.go.kr');
+    const releasablePage = workflowPage as WindowsWorkflowPage & {
+      release?: () => Promise<void>;
+    };
+    expect(releasablePage.release).toBeTypeOf('function');
+    await releasablePage.release?.();
+    expect(commands).toContainEqual({
+      method: 'Target.detachFromTarget',
+      params: { sessionId: 'session-1' },
+    });
+    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
+  });
+
+  it('ignores an existing work tab and closes only the background approval target created by the app', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') {
+          return {
+            targetInfos: [{
+              targetId: 'user-work-target',
+              type: 'page',
+              url: 'https://sen.neis.go.kr/working-document',
+              title: '작성 중인 문서',
+            }],
+          };
+        }
+        if (method === 'Target.createTarget') return { targetId: 'approval-target' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'approval-session' };
+        if (method === 'Runtime.evaluate') {
+          return { result: { value: 'https://sen.neis.go.kr' } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const managedSession = {
+      officeCode: 'sen' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    const approvalPage = await openCdpWindowsApprovalPage(managedSession as never, {
+      system: 'neis',
+      officeCode: 'sen',
+      browserId: 'edge',
+    });
+    const releasablePage = approvalPage as typeof approvalPage & {
+      release?: () => Promise<void>;
+    };
+    expect(releasablePage.release).toBeTypeOf('function');
+    await releasablePage.release?.();
+
+    expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://sen.neis.go.kr/', background: true },
+    });
+    expect(commands).toContainEqual({
+      method: 'Target.attachToTarget',
+      params: { targetId: 'approval-target', flatten: true },
+    });
+    expect(commands).toContainEqual({
+      method: 'Target.detachFromTarget',
+      params: { sessionId: 'approval-session' },
+    });
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'approval-target' },
+    });
+  });
+
+  it('closes a managed browser session when target cleanup fails', async () => {
+    let sessionCloses = 0;
+    const protocol = {
+      isClosed: false,
+      async send(method: string) {
+        if (method === 'Target.getTargets') return { targetInfos: [] };
+        if (method === 'Target.createTarget') return { targetId: 'target-1' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'session-1' };
+        if (method === 'Runtime.evaluate') {
+          return { result: { value: 'https://sen.neis.go.kr' } };
+        }
+        if (method === 'Target.detachFromTarget') throw new Error('detach failed');
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const managedSession = {
+      officeCode: 'sen' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => { sessionCloses += 1; },
+    };
+    const workflowPage = await openCdpWindowsWorkflowPage(
+      managedSession as never,
+      'neis-leave',
+    );
+
+    await workflowPage.release?.();
+
+    expect(sessionCloses).toBe(1);
   });
 
   it('stops on a login portal or an unapproved origin before inspecting page content', async () => {
