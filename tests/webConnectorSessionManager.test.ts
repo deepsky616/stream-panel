@@ -25,6 +25,35 @@ function request(
 }
 
 describe('managed browser session manager', () => {
+  it('runs a read-only session operation in the same queue as workflow execution', async () => {
+    const events: string[] = [];
+    const manager = new ManagedBrowserSessionManager<FakeSession, string>({
+      createSession: async (officeCode, browserId) => {
+        const session: FakeSession = {
+          id: 1,
+          officeCode,
+          browserId,
+          alive: true,
+          closeCount: 0,
+          isAlive() { return this.alive; },
+          async close() { this.closeCount += 1; this.alive = false; },
+        };
+        return session;
+      },
+      executeWorkflow: async () => {
+        events.push('workflow');
+        return 'done';
+      },
+    });
+
+    await expect(manager.use('goe', 'edge', async (session) => {
+      events.push(`read:${session.id}`);
+      return 5;
+    })).resolves.toBe(5);
+    await expect(manager.run(request('goe', 'edge'))).resolves.toBe('done');
+    expect(events).toEqual(['read:1', 'workflow']);
+  });
+
   it('reuses one live session and serializes workflows for the same office and browser', async () => {
     let nextId = 1;
     let releaseFirst!: () => void;

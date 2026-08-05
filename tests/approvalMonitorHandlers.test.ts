@@ -5,8 +5,16 @@ import {
   assertApprovalMonitorStatusInput,
 } from '../src/main/security/inputValidation';
 import type { ApprovalMonitorService } from '../src/main/services/approvalMonitor';
+import { IPC_CHANNELS, RENDERER_EVENTS } from '../src/shared/ipcChannels';
 
 describe('approval monitor IPC actions', () => {
+  it('uses fixed request channels and an allowed renderer event', () => {
+    expect(IPC_CHANNELS.WEB_APPROVAL_STATUS).toBe('web-approval:status');
+    expect(IPC_CHANNELS.WEB_APPROVAL_CHECK).toBe('web-approval:check');
+    expect(IPC_CHANNELS.WEB_APPROVAL_CHANGED).toBe('web-approval:changed');
+    expect(RENDERER_EVENTS.has('web-approval:changed')).toBe(true);
+  });
+
   it('returns status and checks only an optional known system', async () => {
     const calls: unknown[] = [];
     const statuses = [

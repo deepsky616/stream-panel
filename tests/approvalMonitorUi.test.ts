@@ -6,6 +6,8 @@ import type { ActionItem } from '../src/shared/types';
 import { createApprovalInboxTemplate } from '../src/shared/webWorkflows';
 import { ApprovalMonitorSettings } from '../src/renderer/src/editor/ApprovalMonitorSettings';
 import { getApprovalBadgeForItem } from '../src/renderer/src/panel/approvalBadge';
+import { SettingsModal } from '../src/renderer/src/editor/SettingsModal';
+import { KeyTile } from '../src/renderer/src/common/KeyTile';
 
 function approvalAction(id: 'neis-approval-inbox' | 'edufine-approval-inbox'): ActionItem {
   return {
@@ -23,6 +25,24 @@ function approvalAction(id: 'neis-approval-inbox' | 'edufine-approval-inbox'): A
 }
 
 describe('approval monitor settings UI', () => {
+  it('places the monitor inside the Windows web-work settings tab', () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      (() => { let id = 0; return () => `id-${id++}`; })(),
+      'win32',
+    );
+    const html = renderToStaticMarkup(createElement(SettingsModal, {
+      open: true,
+      config,
+      initialTab: 'web-work',
+      onClose: () => undefined,
+      onAddWebWorkflow: async () => undefined,
+    }));
+    expect(html).toContain('웹 업무 연결');
+    expect(html).toContain('업무 알림');
+    expect(html).toContain('결재함 키 추가');
+  });
+
   it('shows read-only NEIS and Edufine monitor controls without approval actions', () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
@@ -86,5 +106,21 @@ describe('approval monitor settings UI', () => {
       ...approvalAction('neis-approval-inbox'),
       webWorkflow: { id: 'neis-leave', browserId: 'edge' },
     }, statuses)).toBeNull();
+  });
+
+  it('renders the pending count as an accessible key badge', () => {
+    const html = renderToStaticMarkup(createElement(KeyTile, {
+      item: approvalAction('neis-approval-inbox'),
+      buttonSize: 88,
+      onClick: () => undefined,
+      statusBadge: {
+        label: '3',
+        title: '나이스 결재 대기 3건',
+        state: 'ready',
+      },
+    }));
+    expect(html).toContain('key-status-badge');
+    expect(html).toContain('나이스 결재 대기 3건');
+    expect(html).toContain('>3<');
   });
 });
