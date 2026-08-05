@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
 import { createDefaultConfig } from '../src/shared/defaults';
 import type { AppConfig } from '../src/shared/types';
 import { recoverConfigText } from '../src/main/store';
@@ -19,6 +20,8 @@ function windowsConfig(): AppConfig {
     'win32',
   );
 }
+
+const FIXED_WORK_TIME = new Date(2026, 7, 5, 9, 30).getTime();
 
 describe('approval monitor settings', () => {
   it('adds safe disabled defaults and restores them for an existing version-one config', () => {
@@ -106,9 +109,9 @@ describe('approval monitor rules', () => {
     await expect(io.read()).resolves.toBeUndefined();
     await io.write('{"version":1}');
     expect(operations).toEqual([
-      'mkdir:/data/approval-monitor',
-      'write:/data/approval-monitor/state.json.tmp',
-      'rename:/data/approval-monitor/state.json.tmp->/data/approval-monitor/state.json',
+      `mkdir:${join('/data', 'approval-monitor')}`,
+      `write:${join('/data', 'approval-monitor', 'state.json.tmp')}`,
+      `rename:${join('/data', 'approval-monitor', 'state.json.tmp')}->${join('/data', 'approval-monitor', 'state.json')}`,
     ]);
 
     const unreadable = createApprovalMonitorStateIo!('/data', {
@@ -204,6 +207,7 @@ describe('approval monitor service', () => {
       notify: () => { throw new Error('notification failed'); },
       broadcast: () => { throw new Error('window closed'); },
       onError: (error) => { errors.push(error.message); },
+      now: () => FIXED_WORK_TIME,
       setTimer: (handler, delayMs) => {
         const timer = { handler, delayMs };
         timers.push(timer);
@@ -312,6 +316,7 @@ describe('approval monitor service', () => {
         },
       },
       notify: (_system, count) => { notifications.push(count); },
+      now: () => FIXED_WORK_TIME,
       setTimer: () => 1,
       clearTimer: () => undefined,
     });
@@ -384,6 +389,7 @@ describe('approval monitor service', () => {
         },
         stateIo: { read: async () => undefined, write: async () => undefined },
         notify: (_system, count) => { notifications.push(count); },
+        now: () => FIXED_WORK_TIME,
         setTimer: () => 1,
         clearTimer: () => undefined,
       });
@@ -491,6 +497,8 @@ describe('approval monitor service', () => {
           version: 1,
           systems: {
             neis: {
+              officeCode: 'goe',
+              browserId: 'edge',
               pendingCount: 2,
               lastCheckedAt: 1_799_000_000_000,
               lastNotifiedCount: 2,
@@ -500,6 +508,7 @@ describe('approval monitor service', () => {
         write: async () => undefined,
       },
       notify: (_system, count) => { notifications.push(count); },
+      now: () => FIXED_WORK_TIME,
       setTimer: (handler) => handler,
       clearTimer: () => undefined,
     });
@@ -541,6 +550,7 @@ describe('approval monitor service', () => {
       },
       stateIo: { read: async () => undefined, write: async () => undefined },
       notify: (_system, count) => { notifications.push(count); },
+      now: () => FIXED_WORK_TIME,
       setTimer: (handler) => handler,
       clearTimer: () => undefined,
     });
@@ -584,7 +594,7 @@ describe('approval monitor service', () => {
       },
       notify: (system, count) => { notifications.push({ system, count }); },
       broadcast: (statuses) => { broadcasts.push(statuses); },
-      now: () => new Date(2026, 7, 5, 9, 30).getTime(),
+      now: () => FIXED_WORK_TIME,
       setTimer: (handler) => { timers.push(handler); return handler; },
       clearTimer: () => undefined,
     });
@@ -612,7 +622,7 @@ describe('approval monitor service', () => {
           officeCode: 'goe',
           browserId: 'edge',
           pendingCount: 4,
-          lastCheckedAt: new Date(2026, 7, 5, 9, 30).getTime(),
+          lastCheckedAt: FIXED_WORK_TIME,
           lastNotifiedCount: 4,
         },
       },
