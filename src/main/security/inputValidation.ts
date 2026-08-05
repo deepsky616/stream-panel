@@ -135,6 +135,40 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
   }
   if ('approvalMonitor' in value) {
     assertRecord(value.approvalMonitor, '결재 대기 알림');
+    const monitor = value.approvalMonitor;
+    if (Object.keys(monitor).some((key) => ![
+      'sources',
+      'intervalMinutes',
+      'notifyOnlyOnIncrease',
+      'workHours',
+    ].includes(key))) {
+      throw new TypeError('결재 대기 알림 설정에 허용되지 않은 항목이 있습니다. 설정 화면에서 다시 저장해 주세요.');
+    }
+    assertRecord(monitor.sources, '결재 대기 알림 업무');
+    if (Object.keys(monitor.sources).some((key) => key !== 'neis' && key !== 'edufine')) {
+      throw new TypeError('결재 대기 알림 업무 시스템이 올바르지 않습니다. 나이스나 에듀파인을 선택해 주세요.');
+    }
+    for (const source of [monitor.sources.neis, monitor.sources.edufine]) {
+      assertRecord(source, '결재 대기 알림 업무');
+      if (
+        Object.keys(source).some((key) => key !== 'enabled' && key !== 'browserId') ||
+        typeof source.enabled !== 'boolean' ||
+        (source.browserId !== 'edge' && source.browserId !== 'chrome')
+      ) {
+        throw new TypeError('결재 대기 알림 브라우저 설정이 올바르지 않습니다. 엣지나 크롬을 선택해 주세요.');
+      }
+    }
+    assertRecord(monitor.workHours, '결재 대기 알림 근무 시간');
+    if (
+      Object.keys(monitor.workHours).some((key) => !['enabled', 'start', 'end'].includes(key)) ||
+      typeof monitor.workHours.enabled !== 'boolean' ||
+      typeof monitor.workHours.start !== 'string' ||
+      typeof monitor.workHours.end !== 'string' ||
+      ![5, 10, 30].includes(Number(monitor.intervalMinutes)) ||
+      typeof monitor.notifyOnlyOnIncrease !== 'boolean'
+    ) {
+      throw new TypeError('결재 대기 알림 설정 값이 올바르지 않습니다. 확인 주기와 근무 시간을 다시 선택해 주세요.');
+    }
   }
   if ('root' in value && !Array.isArray(value.root)) throw new TypeError('키 목록이 올바르지 않습니다.');
 }
