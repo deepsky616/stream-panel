@@ -363,6 +363,22 @@ const visible=(element)=>{
   return rect.width>0&&rect.height>0;
 };
 const enabled=(element)=>!(element.disabled===true||element.getAttribute?.('aria-disabled')==='true');
+const formAssociated=(element)=>Boolean(element.form||element.hasAttribute?.('form')||element.closest?.('form'));
+const safeNavigation=(element)=>{
+  const role=normalize(element.getAttribute?.('role')).toLowerCase();
+  const tag=String(element.tagName||'').toUpperCase();
+  const inputType=normalize(element.getAttribute?.('type')).toLowerCase();
+  if(formAssociated(element)||element.hasAttribute?.('onclick')||element.hasAttribute?.('download'))return false;
+  if(inputType==='submit'||inputType==='image')return false;
+  if(role==='tab')return true;
+  if(tag!=='A'&&role!=='link')return false;
+  const rawHref=normalize(element.getAttribute?.('href'));
+  if(!rawHref||rawHref.toLowerCase().startsWith('javascript:'))return false;
+  try{
+    const url=new URL(rawHref,element.ownerDocument?.baseURI||location.href);
+    return url.protocol==='https:'&&url.origin===location.origin;
+  }catch{return false;}
+};
 const documents=[];
 const visit=(view,offsetX=0,offsetY=0)=>{
   try{
@@ -390,7 +406,21 @@ return clickable().slice(0,500).map(({element},index)=>{
   const role=normalize(element.getAttribute?.('role')).toLowerCase();
   const tag=String(element.tagName||'').toUpperCase();
   const navigation=tag==='A'||role==='link'||role==='menuitem'||role==='tab'||element.getAttribute?.('aria-haspopup')==='menu';
-  return {index,text:textOf(element),visible:visible(element),enabled:enabled(element),width:rect.width,height:rect.height,navigation};
+  return {
+    index,
+    text:textOf(element),
+    visible:visible(element),
+    enabled:enabled(element),
+    width:rect.width,
+    height:rect.height,
+    navigation,
+    safeNavigation:safeNavigation(element),
+    tag,
+    inputType:normalize(element.getAttribute?.('type')).toLowerCase(),
+    href:normalize(element.getAttribute?.('href')).slice(0,2048),
+    formAssociated:formAssociated(element),
+    inlineHandler:element.hasAttribute?.('onclick')===true
+  };
 });
 })()`;
 
@@ -398,11 +428,12 @@ function candidateActionExpression(
   index: number,
   expectedText: string,
   domClick: boolean,
+  navigationOnly: boolean,
 ): string {
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const item=clickable()[${index}];
-if(!item||textOf(item.element)!==${JSON.stringify(expectedText)}||!visible(item.element)||!enabled(item.element))return {ok:false};
+if(!item||textOf(item.element)!==${JSON.stringify(expectedText)}||!visible(item.element)||!enabled(item.element)||(${JSON.stringify(navigationOnly)}&&!safeNavigation(item.element)))return {ok:false};
 const rect=item.element.getBoundingClientRect();
 ${domClick
     ? "item.element.focus?.({preventScroll:false});item.element.click?.();return {ok:true};"
@@ -493,7 +524,16 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       typeof candidate.enabled !== 'boolean' ||
       typeof candidate.width !== 'number' ||
       typeof candidate.height !== 'number' ||
-      typeof candidate.navigation !== 'boolean'
+      typeof candidate.navigation !== 'boolean' ||
+      typeof candidate.safeNavigation !== 'boolean' ||
+      typeof candidate.tag !== 'string' ||
+      candidate.tag.length > 32 ||
+      typeof candidate.inputType !== 'string' ||
+      candidate.inputType.length > 64 ||
+      typeof candidate.href !== 'string' ||
+      candidate.href.length > 2_048 ||
+      typeof candidate.formAssociated !== 'boolean' ||
+      typeof candidate.inlineHandler !== 'boolean'
     ) {
       return [];
     }
@@ -505,6 +545,12 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       width: candidate.width,
       height: candidate.height,
       navigation: candidate.navigation,
+      safeNavigation: candidate.safeNavigation,
+      tag: candidate.tag,
+      inputType: candidate.inputType,
+      href: candidate.href,
+      formAssociated: candidate.formAssociated,
+      inlineHandler: candidate.inlineHandler,
     }];
   });
 }
@@ -536,17 +582,23 @@ export async function openCdpWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   workflowId: WebWorkflowId,
   workflowSpec?: WebWorkflowSpec,
-  options: { background?: boolean; closeCreatedTargetOnRelease?: boolean } = {},
+  options: {
+    background?: boolean;
+    closeCreatedTargetOnRelease?: boolean;
+    forceNewTarget?: boolean;
+  } = {},
 ): Promise<WindowsWorkflowPage> {
   const protocol = session.connection.protocol;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
   let createdTarget = false;
-  let target = selectWindowsWorkflowTarget(
-    targets,
-    session.officeCode,
-    workflowId,
-    workflowSpec,
-  );
+  let target = options.forceNewTarget
+    ? null
+    : selectWindowsWorkflowTarget(
+      targets,
+      session.officeCode,
+      workflowId,
+      workflowSpec,
+    );
   if (!target) {
     const targetUrl = requestTarget(workflowId, session.officeCode, workflowSpec);
     const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
@@ -621,7 +673,12 @@ export async function openCdpWindowsWorkflowPage(
       const action = await evaluateValue<{ ok?: unknown; x?: unknown; y?: unknown }>(
         session,
         pageSessionId,
-        candidateActionExpression(candidate.index, normalizedText, step.interaction === 'dom-click'),
+        candidateActionExpression(
+          candidate.index,
+          normalizedText,
+          step.interaction === 'dom-click',
+          Boolean(step.navigationOnly),
+        ),
         step.interaction === 'dom-click',
       );
       if (!action?.ok) {
@@ -678,7 +735,11 @@ export async function openCdpWindowsApprovalPage(
     session,
     input.system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
     undefined,
-    { background: true, closeCreatedTargetOnRelease: true },
+    {
+      background: true,
+      closeCreatedTargetOnRelease: true,
+      forceNewTarget: true,
+    },
   );
   if (!page.readApprovalCount) {
     throw new Error('결재 대기 수 읽기 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');

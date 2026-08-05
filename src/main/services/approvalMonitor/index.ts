@@ -4,13 +4,19 @@ import type {
   AppConfig,
   ApprovalMonitorStatus,
   ApprovalWorkHoursConfig,
+  EducationOfficeCode,
+  WebConnectorBrowserId,
   WebWorkflowSystem,
 } from '../../../shared/types';
+import { isEducationOfficeCode } from '../../../shared/educationOffices';
+import { isWebConnectorBrowserId } from '../../../shared/webWorkflows';
 import type { ApprovalScanInput } from './definitions';
 
 const SYSTEMS = ['neis', 'edufine'] as const;
 
 interface PersistedSystemState {
+  officeCode: EducationOfficeCode;
+  browserId: WebConnectorBrowserId;
   pendingCount: number;
   lastCheckedAt: number;
   lastNotifiedCount?: number;
@@ -77,10 +83,14 @@ function validPersistedSystem(value: unknown): value is PersistedSystemState {
   const record = value as Record<string, unknown>;
   return (
     Object.keys(record).every((key) => [
+      'officeCode',
+      'browserId',
       'pendingCount',
       'lastCheckedAt',
       'lastNotifiedCount',
     ].includes(key)) &&
+    isEducationOfficeCode(record.officeCode) &&
+    isWebConnectorBrowserId(record.browserId) &&
     Number.isSafeInteger(record.pendingCount) &&
     Number(record.pendingCount) >= 0 &&
     Number(record.pendingCount) <= 9_999 &&
@@ -200,13 +210,32 @@ export function createApprovalMonitorService({
     timer = null;
   };
 
-  const persist = () => stateIo.write(JSON.stringify(state, null, 2));
+  const persist = async (nextState: ApprovalMonitorState = state): Promise<void> => {
+    try {
+      await stateIo.write(JSON.stringify(nextState, null, 2));
+    } catch (error) {
+      throw new Error(`결재 알림 상태를 저장하지 못했습니다. 스트림 패널 설정 폴더의 쓰기 권한과 남은 저장 공간을 확인해 주세요: ${errorDetail(error)}`);
+    }
+  };
 
   const service: ApprovalMonitorService = {
     async start() {
       if (started) return;
       state = parseState(await stateIo.read());
       const config = getConfig();
+      for (const system of SYSTEMS) {
+        const persisted = state.systems[system];
+        const source = config.approvalMonitor.sources[system];
+        if (
+          persisted &&
+          (
+            persisted.officeCode !== config.educationOfficeCode ||
+            persisted.browserId !== source.browserId
+          )
+        ) {
+          delete state.systems[system];
+        }
+      }
       sourceSignatures = new Map(
         SYSTEMS.map((system) => [system, sourceSignature(config, system)]),
       );
@@ -251,36 +280,46 @@ export function createApprovalMonitorService({
               browserId: source.browserId,
               officeCode: config.educationOfficeCode,
             });
+            if (!started) return;
             if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
               statuses = createStatuses();
               publish();
               return;
             }
             const checkedAt = now();
+            const currentConfig = getConfig();
             const sendNotification = establishedBaselines.has(system) &&
               shouldSendApprovalNotification(
                 previous?.pendingCount,
                 pendingCount,
-                config.approvalMonitor.notifyOnlyOnIncrease,
+                currentConfig.approvalMonitor.notifyOnlyOnIncrease,
               );
-            state.systems[system] = {
-              pendingCount,
-              lastCheckedAt: checkedAt,
-              ...(sendNotification
-                ? { lastNotifiedCount: pendingCount }
-                : previous?.lastNotifiedCount === undefined
-                  ? {}
-                  : { lastNotifiedCount: previous.lastNotifiedCount }),
+            const nextState: ApprovalMonitorState = {
+              version: 1,
+              systems: {
+                ...state.systems,
+                [system]: {
+                  officeCode: currentConfig.educationOfficeCode,
+                  browserId: currentConfig.approvalMonitor.sources[system].browserId,
+                  pendingCount,
+                  lastCheckedAt: checkedAt,
+                  ...(sendNotification
+                    ? { lastNotifiedCount: pendingCount }
+                    : previous?.lastNotifiedCount === undefined
+                      ? {}
+                      : { lastNotifiedCount: previous.lastNotifiedCount }),
+                },
+              },
             };
-            await persist();
+            await persist(nextState);
+            if (!started) return;
             if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
-              if (previous) state.systems[system] = previous;
-              else delete state.systems[system];
               await persist();
               statuses = createStatuses();
               publish();
               return;
             }
+            state = nextState;
             statuses[index] = {
               system,
               state: 'ready',
@@ -290,6 +329,12 @@ export function createApprovalMonitorService({
             establishedBaselines.add(system);
             if (sendNotification) notify(system, pendingCount);
           } catch (error) {
+            if (!started) return;
+            if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
+              statuses = createStatuses();
+              publish();
+              return;
+            }
             const message = errorDetail(error);
             statuses[index] = {
               system,
@@ -323,6 +368,7 @@ export function createApprovalMonitorService({
         if (sourceSignatures.get(system) !== nextSignature) {
           establishedBaselines.delete(system);
           sourceRevisions.set(system, (sourceRevisions.get(system) ?? 0) + 1);
+          delete state.systems[system];
         }
         sourceSignatures.set(system, nextSignature);
       }

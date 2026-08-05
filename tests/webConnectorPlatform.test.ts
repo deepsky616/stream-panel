@@ -19,6 +19,7 @@ function safeCandidate(index: number, text: string): CandidateSummary {
     width: 100,
     height: 30,
     navigation: true,
+    safeNavigation: true,
   };
 }
 
@@ -139,13 +140,22 @@ describe('Windows managed web automation', () => {
     expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
   });
 
-  it('closes only the background approval target created by the app', async () => {
+  it('ignores an existing work tab and closes only the background approval target created by the app', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>) {
         commands.push({ method, params });
-        if (method === 'Target.getTargets') return { targetInfos: [] };
+        if (method === 'Target.getTargets') {
+          return {
+            targetInfos: [{
+              targetId: 'user-work-target',
+              type: 'page',
+              url: 'https://sen.neis.go.kr/working-document',
+              title: '작성 중인 문서',
+            }],
+          };
+        }
         if (method === 'Target.createTarget') return { targetId: 'approval-target' };
         if (method === 'Target.attachToTarget') return { sessionId: 'approval-session' };
         if (method === 'Runtime.evaluate') {
@@ -178,6 +188,14 @@ describe('Windows managed web automation', () => {
     expect(releasablePage.release).toBeTypeOf('function');
     await releasablePage.release?.();
 
+    expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://sen.neis.go.kr/', background: true },
+    });
+    expect(commands).toContainEqual({
+      method: 'Target.attachToTarget',
+      params: { targetId: 'approval-target', flatten: true },
+    });
     expect(commands).toContainEqual({
       method: 'Target.detachFromTarget',
       params: { sessionId: 'approval-session' },

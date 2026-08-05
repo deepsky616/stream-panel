@@ -100,6 +100,151 @@ describe('approval monitor rules', () => {
 });
 
 describe('approval monitor service', () => {
+  it('does not publish or notify after stopping while a scan is in flight', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    let scanNumber = 0;
+    let releaseScan!: (count: number) => void;
+    const pendingScan = new Promise<number>((resolve) => { releaseScan = resolve; });
+    const notifications: number[] = [];
+    const broadcasts: unknown[] = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: {
+        scan: async () => {
+          scanNumber += 1;
+          return scanNumber === 1 ? 1 : pendingScan;
+        },
+      },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      notify: (_system, count) => { notifications.push(count); },
+      broadcast: (statuses) => { broadcasts.push(statuses); },
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+    await service.start();
+    await service.check({ system: 'neis' });
+
+    const check = service.check({ system: 'neis' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const broadcastsBeforeStop = broadcasts.length;
+    const stop = service.stop();
+    releaseScan(2);
+    await Promise.all([check, stop]);
+
+    expect(notifications).toEqual([]);
+    expect(broadcasts).toHaveLength(broadcastsBeforeStop);
+  });
+
+  it('keeps the previous baseline when saving a new count fails', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    const counts = [2, 4, 4];
+    let writes = 0;
+    const notifications: number[] = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => counts.shift() ?? 0 },
+      stateIo: {
+        read: async () => undefined,
+        write: async () => {
+          writes += 1;
+          if (writes === 2) throw new Error('permission denied');
+        },
+      },
+      notify: (_system, count) => { notifications.push(count); },
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+    await service.start();
+
+    await service.check({ system: 'neis' });
+    await service.check({ system: 'neis' });
+    expect(service.getStatuses()).toContainEqual(
+      expect.objectContaining({ system: 'neis', state: 'error', pendingCount: 2 }),
+    );
+    await service.check({ system: 'neis' });
+
+    expect(notifications).toEqual([4]);
+  });
+
+  it('discards a late scan error after the source settings change', async () => {
+    for (const change of ['disable', 'browser', 'office'] as const) {
+      const config = windowsConfig();
+      config.approvalMonitor.sources.neis.enabled = true;
+      let rejectScan!: (error: Error) => void;
+      const pendingScan = new Promise<number>((_resolve, reject) => { rejectScan = reject; });
+      const service = createApprovalMonitorService({
+        platform: 'win32',
+        getConfig: () => config,
+        scanner: { scan: async () => pendingScan },
+        stateIo: { read: async () => undefined, write: async () => undefined },
+        setTimer: () => 1,
+        clearTimer: () => undefined,
+      });
+      await service.start();
+
+      const check = service.check({ system: 'neis' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (change === 'disable') config.approvalMonitor.sources.neis.enabled = false;
+      if (change === 'browser') config.approvalMonitor.sources.neis.browserId = 'chrome';
+      if (change === 'office') config.educationOfficeCode = 'sen';
+      service.onConfigChanged(config);
+      rejectScan(new Error('old connection failed'));
+      await check;
+
+      expect(service.getStatuses()).toContainEqual(
+        expect.objectContaining({
+          system: 'neis',
+          state: change === 'disable' ? 'disabled' : 'idle',
+        }),
+      );
+    }
+  });
+
+  it('uses the current notification policy when a delayed scan finishes', async () => {
+    for (const scenario of [
+      { initialOnlyOnIncrease: false, changedOnlyOnIncrease: true, notifications: [] },
+      { initialOnlyOnIncrease: true, changedOnlyOnIncrease: false, notifications: [2] },
+    ]) {
+      let config = windowsConfig();
+      config.approvalMonitor.sources.neis.enabled = true;
+      config.approvalMonitor.notifyOnlyOnIncrease = scenario.initialOnlyOnIncrease;
+      let scanNumber = 0;
+      let releaseScan!: (count: number) => void;
+      const pendingScan = new Promise<number>((resolve) => { releaseScan = resolve; });
+      const notifications: number[] = [];
+      const service = createApprovalMonitorService({
+        platform: 'win32',
+        getConfig: () => config,
+        scanner: {
+          scan: async () => {
+            scanNumber += 1;
+            return scanNumber === 1 ? 2 : pendingScan;
+          },
+        },
+        stateIo: { read: async () => undefined, write: async () => undefined },
+        notify: (_system, count) => { notifications.push(count); },
+        setTimer: () => 1,
+        clearTimer: () => undefined,
+      });
+      await service.start();
+      await service.check({ system: 'neis' });
+
+      const check = service.check({ system: 'neis' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      config = structuredClone(config);
+      config.approvalMonitor.notifyOnlyOnIncrease = scenario.changedOnlyOnIncrease;
+      service.onConfigChanged(config);
+      releaseScan(2);
+      await check;
+
+      expect(notifications).toEqual(scenario.notifications);
+    }
+  });
+
   it('coalesces overlapping checks for the same system into one scan', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;
@@ -120,6 +265,9 @@ describe('approval monitor service', () => {
       clearTimer: () => undefined,
     });
     await service.start();
+    expect(service.getStatuses()).toContainEqual(
+      expect.objectContaining({ system: 'neis', state: 'idle' }),
+    );
 
     const first = service.check({ system: 'neis' });
     const second = service.check({ system: 'neis' });
@@ -169,6 +317,9 @@ describe('approval monitor service', () => {
 
     config.approvalMonitor.sources.neis.browserId = 'chrome';
     service.onConfigChanged(config);
+    expect(service.getStatuses()).toContainEqual(
+      expect.objectContaining({ system: 'neis', state: 'idle' }),
+    );
     await service.check({ system: 'neis' });
     expect(notifications).toEqual([6]);
     await service.check({ system: 'neis' });
@@ -263,6 +414,8 @@ describe('approval monitor service', () => {
       version: 1,
       systems: {
         neis: {
+          officeCode: 'goe',
+          browserId: 'edge',
           pendingCount: 4,
           lastCheckedAt: new Date(2026, 7, 5, 9, 30).getTime(),
           lastNotifiedCount: 4,

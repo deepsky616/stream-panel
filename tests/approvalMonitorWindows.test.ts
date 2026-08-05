@@ -16,6 +16,7 @@ function candidate(index: number, text: string): CandidateSummary {
     width: 100,
     height: 30,
     navigation: true,
+    safeNavigation: true,
   };
 }
 

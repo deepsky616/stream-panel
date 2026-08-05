@@ -8,6 +8,12 @@ export interface CandidateSummary {
   width: number;
   height: number;
   navigation?: boolean;
+  safeNavigation?: boolean;
+  tag?: string;
+  inputType?: string;
+  href?: string;
+  formAssociated?: boolean;
+  inlineHandler?: boolean;
 }
 
 export type WorkflowPostcondition =
@@ -95,7 +101,10 @@ export function selectSafeCandidate(
     candidate.enabled &&
     candidate.width > 0 &&
     candidate.height > 0 &&
-    (!navigationOnly || candidate.navigation === true) &&
+    (!navigationOnly || (
+      candidate.navigation === true &&
+      candidate.safeNavigation === true
+    )) &&
     approved.has(normalizeCandidateText(candidate.text))
   ));
   const forbidden = exact.filter((candidate) => isForbiddenActionText(candidate.text));

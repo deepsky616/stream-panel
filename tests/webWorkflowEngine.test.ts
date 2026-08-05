@@ -137,13 +137,16 @@ describe('managed web workflow engine', () => {
     expect(inspections).toBe(1);
   });
 
-  it('allows custom steps to press navigation elements but not ordinary action buttons', async () => {
+  it('allows custom steps to press verified navigation elements but not action-like navigation candidates', async () => {
     const navigationStep = {
       ...step,
       navigationOnly: true,
     } as WorkflowStep;
-    const adapter = (navigation: boolean) => ({
-      inspectCandidates: async () => [candidate(0, '복무', { navigation } as Partial<CandidateSummary>)],
+    const adapter = (navigation: boolean, safeNavigation = false) => ({
+      inspectCandidates: async () => [candidate(0, '복무', {
+        navigation,
+        safeNavigation,
+      } as Partial<CandidateSummary>)],
       pressCandidate: async () => undefined,
       checkPostcondition: async () => true,
       wait: async () => undefined,
@@ -155,7 +158,11 @@ describe('managed web workflow engine', () => {
     )).rejects.toThrow(/찾지 못했습니다/);
     await expect(runWorkflow(
       { id: 'custom', label: '사용자 지정 업무', finalState: 'ready', steps: [navigationStep] },
-      adapter(true),
+      adapter(true, false),
+    )).rejects.toThrow(/찾지 못했습니다/);
+    await expect(runWorkflow(
+      { id: 'custom', label: '사용자 지정 업무', finalState: 'ready', steps: [navigationStep] },
+      adapter(true, true),
     )).resolves.toEqual({ workflowId: 'custom', finalState: 'ready' });
   });
 });
