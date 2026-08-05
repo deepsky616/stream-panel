@@ -3,7 +3,9 @@ import { createApprovalMonitorHandlerActions } from '../src/main/ipc/approvalMon
 import {
   assertApprovalMonitorCheckInput,
   assertApprovalMonitorStatusInput,
+  assertConfigPatch,
 } from '../src/main/security/inputValidation';
+import { createDefaultConfig } from '../src/shared/defaults';
 import type { ApprovalMonitorService } from '../src/main/services/approvalMonitor';
 import { IPC_CHANNELS, RENDERER_EVENTS } from '../src/shared/ipcChannels';
 
@@ -40,5 +42,34 @@ describe('approval monitor IPC actions', () => {
     expect(() => assertApprovalMonitorCheckInput({ system: 'edufine' })).not.toThrow();
     expect(() => assertApprovalMonitorCheckInput({ system: 'other' })).toThrow(/업무 시스템/);
     expect(() => assertApprovalMonitorCheckInput({ system: 'neis', script: 'run()' })).toThrow(/확인 요청/);
+  });
+
+  it('allows only the documented nested approval settings in the first config input check', () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      (() => { let id = 0; return () => `id-${id++}`; })(),
+      'win32',
+    );
+    expect(() => assertConfigPatch({
+      approvalMonitor: config.approvalMonitor,
+    })).not.toThrow();
+    expect(() => assertConfigPatch({
+      approvalMonitor: {
+        ...config.approvalMonitor,
+        script: 'run()',
+      },
+    })).toThrow(/결재 대기 알림/);
+    expect(() => assertConfigPatch({
+      approvalMonitor: {
+        ...config.approvalMonitor,
+        sources: {
+          ...config.approvalMonitor.sources,
+          neis: {
+            ...config.approvalMonitor.sources.neis,
+            selector: '#approval',
+          },
+        },
+      },
+    })).toThrow(/결재 대기 알림/);
   });
 });
