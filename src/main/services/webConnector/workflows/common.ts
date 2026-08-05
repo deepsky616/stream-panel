@@ -65,7 +65,6 @@ const APPROVED_NON_ACTION_LABELS = new Set([
   '신청',
   '품의등록',
   '표준서식(결재4인,협조4인)',
-  '결재',
   '결재함',
   '결재 대기',
   '결재대기',

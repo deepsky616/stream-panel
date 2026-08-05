@@ -11,7 +11,7 @@ export const APPROVAL_INBOX_WORKFLOWS: Record<WebWorkflowSystem, ManagedWorkflow
     steps: [
       {
         id: 'open-approval-inbox',
-        candidateLabels: ['결재함', '결재'],
+        candidateLabels: ['결재함'],
         interaction: 'dom-click',
         navigationOnly: true,
         postcondition: {
@@ -43,12 +43,12 @@ export const APPROVAL_INBOX_WORKFLOWS: Record<WebWorkflowSystem, ManagedWorkflow
         candidateLabels: ['업무관리'],
         interaction: 'dom-click',
         navigationOnly: true,
-        postcondition: { kind: 'visible-any', labels: ['결재함', '결재'] },
+        postcondition: { kind: 'visible-any', labels: ['결재함'] },
         ...COMMON_CHECKS,
       },
       {
         id: 'open-approval-inbox',
-        candidateLabels: ['결재함', '결재'],
+        candidateLabels: ['결재함'],
         interaction: 'dom-click',
         navigationOnly: true,
         postcondition: {

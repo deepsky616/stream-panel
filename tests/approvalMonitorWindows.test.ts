@@ -5,6 +5,7 @@ import {
   scanWindowsApprovalCount,
   type WindowsApprovalPage,
 } from '../src/main/services/approvalMonitor/windows';
+import { APPROVAL_INBOX_WORKFLOWS } from '../src/main/services/approvalMonitor/definitions';
 
 function candidate(index: number, text: string): CandidateSummary {
   return {
@@ -30,6 +31,12 @@ function page(origin: string, count = 3): WindowsApprovalPage {
 }
 
 describe('Windows approval count reader', () => {
+  it('never treats the generic approval action label as an inbox navigation target', () => {
+    for (const workflow of Object.values(APPROVAL_INBOX_WORKFLOWS)) {
+      expect(workflow.steps.flatMap((step) => step.candidateLabels)).not.toContain('결재');
+    }
+  });
+
   it('accepts only a bounded non-negative integer returned by the page', () => {
     expect(parseApprovalCounterValue(0)).toBe(0);
     expect(parseApprovalCounterValue(9999)).toBe(9999);
@@ -80,6 +87,39 @@ describe('Windows approval count reader', () => {
 
     expect(inspections).toBe(0);
     expect(reads).toBe(0);
+  });
+
+  it('rechecks the allowed host immediately after a click and after reading the count', async () => {
+    for (const input of [
+      { system: 'neis' as const, officeCode: 'goe' as const, browserId: 'edge' as const, origin: 'https://goe.neis.go.kr' },
+      { system: 'edufine' as const, officeCode: 'goe' as const, browserId: 'edge' as const, origin: 'https://klef.goe.go.kr' },
+    ]) {
+      let clicked = false;
+      let reads = 0;
+      const redirectAfterClick = page(input.origin);
+      redirectAfterClick.currentOrigin = async () => clicked ? 'https://evil.example' : input.origin;
+      redirectAfterClick.pressCandidate = async () => { clicked = true; };
+      redirectAfterClick.readApprovalCount = async () => { reads += 1; return 3; };
+
+      await expect(scanWindowsApprovalCount(
+        { officeCode: input.officeCode, browserId: input.browserId, isAlive: () => true, close: async () => undefined },
+        input,
+        { openPage: async () => redirectAfterClick },
+      )).rejects.toThrow(/허용되지 않은/);
+      expect(reads).toBe(0);
+
+      let countRead = false;
+      const redirectAfterRead = page(input.origin);
+      redirectAfterRead.currentOrigin = async () => countRead ? 'https://evil.example' : input.origin;
+      redirectAfterRead.readApprovalCount = async () => { countRead = true; return 3; };
+
+      await expect(scanWindowsApprovalCount(
+        { officeCode: input.officeCode, browserId: input.browserId, isAlive: () => true, close: async () => undefined },
+        input,
+        { openPage: async () => redirectAfterRead },
+      )).rejects.toThrow(/허용되지 않은/);
+      expect(countRead).toBe(true);
+    }
   });
 
   it('rejects a session that belongs to another office or browser', async () => {
