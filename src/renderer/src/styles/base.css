@@ -321,6 +321,10 @@ button {
   font-weight: 700;
 }
 
+.key-status-empty {
+  background: var(--text-dim);
+}
+
 .back-tile {
   background: var(--tile-hover);
 }

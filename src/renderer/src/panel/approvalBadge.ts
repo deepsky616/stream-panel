@@ -22,6 +22,6 @@ export function getApprovalBadgeForItem(
   return {
     label: status.pendingCount > 99 ? '99+' : String(status.pendingCount),
     title: `${systemLabel} 결재 대기 ${status.pendingCount}건`,
-    state: status.state,
+    state: status.pendingCount === 0 ? 'empty' : status.state,
   };
 }

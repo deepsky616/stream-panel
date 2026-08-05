@@ -116,7 +116,7 @@ export function ApprovalMonitorSettings({
           const status = statuses.find((candidate) => candidate.system === system);
           return (
             <article className={`approval-source approval-source-${status?.state ?? 'idle'}`} key={system}>
-              <div>
+              <div role="status" aria-live="polite">
                 <label>
                   <input
                     type="checkbox"
@@ -129,7 +129,7 @@ export function ApprovalMonitorSettings({
                 {status?.lastCheckedAt !== undefined && (
                   <small>마지막 확인: {formatLastCheckedAt(status.lastCheckedAt)}</small>
                 )}
-                {status?.message && <small title={status.message}>{status.message}</small>}
+                {status?.message && <small className="approval-source-message">{status.message}</small>}
               </div>
               <label>
                 브라우저
@@ -145,8 +145,10 @@ export function ApprovalMonitorSettings({
               </label>
               <div className="approval-source-actions">
                 <button
+                  className="primary-action"
                   type="button"
                   disabled={!source.enabled || busySystem !== null}
+                  aria-busy={busySystem === system}
                   onClick={() => onCheck(system)}
                 >{busySystem === system ? '확인 중…' : '지금 확인'}</button>
                 <button

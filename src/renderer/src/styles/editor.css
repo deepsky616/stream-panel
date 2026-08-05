@@ -907,11 +907,13 @@
 
 .approval-source > div:first-child small {
   grid-column: 1 / -1;
-  overflow: hidden;
   color: var(--text-dim);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+}
+
+.approval-source-message {
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .approval-source-state {
@@ -919,24 +921,37 @@
   color: var(--text-dim);
   border-radius: 999px;
   background: var(--tile-hover);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .approval-source-ready .approval-source-state {
-  color: #65c88b;
+  color: var(--status-success);
   background: rgb(45 166 91 / 14%);
 }
 
 .approval-source-login-required .approval-source-state,
 .approval-source-error .approval-source-state {
-  color: #ef7777;
+  color: var(--status-error);
   background: rgb(239 68 68 / 12%);
 }
 
 .approval-source-actions {
   display: flex;
   gap: 7px;
+}
+
+.approval-source-actions button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.approval-source-actions button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.approval-source-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .browser-warning,
@@ -1134,8 +1149,12 @@
 }
 
 .settings-content button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: .55;
+}
+
+.settings-content button[aria-busy='true'] {
+  cursor: wait;
 }
 
 .connector-guide {

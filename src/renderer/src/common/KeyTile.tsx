@@ -78,14 +78,16 @@ export function KeyTile({
       }`}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
-      aria-label={item.kind === 'folder' ? `${item.label} 폴더 열기` : `${item.label} 실행`}
+      aria-label={`${item.kind === 'folder' ? `${item.label} 폴더 열기` : `${item.label} 실행`}${
+        statusBadge ? `, ${statusBadge.title}` : ''
+      }`}
     >
       {hint && <span className={`key-hint ${hintMuted ? 'muted' : ''}`}>{hint}</span>}
       {statusBadge && (
         <span
           className={`key-status-badge key-status-${statusBadge.state}`}
           title={statusBadge.title}
-          aria-label={statusBadge.title}
+          aria-hidden="true"
         >{statusBadge.label}</span>
       )}
       <span className="key-icon" aria-hidden="true">

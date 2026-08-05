@@ -123,6 +123,18 @@ describe('approval monitor settings UI', () => {
     }));
     expect(html).toContain('key-status-badge');
     expect(html).toContain('나이스 결재 대기 3건');
+    expect(html).toContain('aria-label="나이스 결재함 실행, 나이스 결재 대기 3건"');
+    expect(html).toContain('aria-hidden="true"');
     expect(html).toContain('>3<');
+  });
+
+  it('shows a zero pending count with a neutral badge state', () => {
+    expect(getApprovalBadgeForItem(approvalAction('neis-approval-inbox'), [
+      { system: 'neis', state: 'ready', pendingCount: 0 },
+    ])).toEqual({
+      label: '0',
+      title: '나이스 결재 대기 0건',
+      state: 'empty',
+    });
   });
 });

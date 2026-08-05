@@ -6,6 +6,8 @@
   --text: #f0f0f3;
   --text-dim: #9a9aa5;
   --accent: #5b8cff;
+  --status-success: #65c88b;
+  --status-error: #ff8a8a;
   --border: rgb(255 255 255 / 8%);
 }
 
@@ -16,6 +18,8 @@
   --text: #1a1a1f;
   --text-dim: #6a6a76;
   --accent: #3b6fe0;
+  --status-success: #146c43;
+  --status-error: #b42318;
   --border: rgb(0 0 0 / 8%);
 }
 
@@ -27,6 +31,8 @@
     --text: #1a1a1f;
     --text-dim: #6a6a76;
     --accent: #3b6fe0;
+    --status-success: #146c43;
+    --status-error: #b42318;
     --border: rgb(0 0 0 / 8%);
   }
 }
