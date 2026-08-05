@@ -164,6 +164,13 @@ export function createApprovalMonitorService({
   let started = false;
   let timer: unknown = null;
   let tail: Promise<void> = Promise.resolve();
+  const establishedBaselines = new Set<WebWorkflowSystem>();
+  let sourceSignatures = new Map<WebWorkflowSystem, string>();
+
+  const sourceSignature = (config: AppConfig, system: WebWorkflowSystem): string => {
+    const source = config.approvalMonitor.sources[system];
+    return `${config.educationOfficeCode}:${source.browserId}:${source.enabled}`;
+  };
 
   const createStatuses = (): ApprovalMonitorStatus[] => SYSTEMS.map((system) => {
     const source = getConfig().approvalMonitor.sources[system];
@@ -195,6 +202,10 @@ export function createApprovalMonitorService({
     async start() {
       if (started) return;
       state = parseState(await stateIo.read());
+      const config = getConfig();
+      sourceSignatures = new Map(
+        SYSTEMS.map((system) => [system, sourceSignature(config, system)]),
+      );
       started = true;
       statuses = createStatuses();
       publish();
@@ -234,11 +245,12 @@ export function createApprovalMonitorService({
               officeCode: config.educationOfficeCode,
             });
             const checkedAt = now();
-            const sendNotification = shouldSendApprovalNotification(
-              previous?.pendingCount,
-              pendingCount,
-              config.approvalMonitor.notifyOnlyOnIncrease,
-            );
+            const sendNotification = establishedBaselines.has(system) &&
+              shouldSendApprovalNotification(
+                previous?.pendingCount,
+                pendingCount,
+                config.approvalMonitor.notifyOnlyOnIncrease,
+              );
             state.systems[system] = {
               pendingCount,
               lastCheckedAt: checkedAt,
@@ -255,6 +267,7 @@ export function createApprovalMonitorService({
               pendingCount,
               lastCheckedAt: checkedAt,
             };
+            establishedBaselines.add(system);
             if (sendNotification) notify(system, pendingCount);
           } catch (error) {
             const message = errorDetail(error);
@@ -277,7 +290,14 @@ export function createApprovalMonitorService({
       schedule();
       return service.getStatuses();
     },
-    onConfigChanged() {
+    onConfigChanged(config) {
+      for (const system of SYSTEMS) {
+        const nextSignature = sourceSignature(config, system);
+        if (sourceSignatures.get(system) !== nextSignature) {
+          establishedBaselines.delete(system);
+        }
+        sourceSignatures.set(system, nextSignature);
+      }
       statuses = createStatuses();
       publish();
       schedule();
