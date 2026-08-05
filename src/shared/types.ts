@@ -47,8 +47,10 @@ export interface MultiActionProgress {
 export type BuiltInWebWorkflowId =
   | 'neis-leave'
   | 'neis-trip'
+  | 'neis-approval-inbox'
   | 'edufine-draft'
-  | 'edufine-purchase';
+  | 'edufine-purchase'
+  | 'edufine-approval-inbox';
 
 export type WebWorkflowId = BuiltInWebWorkflowId | 'custom';
 
@@ -103,6 +105,32 @@ export interface WebConnectorStatus {
   paired: boolean;
   connected: boolean;
   lastSeenAt?: number;
+}
+
+export interface ApprovalMonitorSourceConfig {
+  enabled: boolean;
+  browserId: WebConnectorBrowserId;
+}
+
+export interface ApprovalWorkHoursConfig {
+  enabled: boolean;
+  start: string;
+  end: string;
+}
+
+export interface ApprovalMonitorConfig {
+  sources: Record<WebWorkflowSystem, ApprovalMonitorSourceConfig>;
+  intervalMinutes: 5 | 10 | 30;
+  notifyOnlyOnIncrease: boolean;
+  workHours: ApprovalWorkHoursConfig;
+}
+
+export interface ApprovalMonitorStatus {
+  system: WebWorkflowSystem;
+  state: 'disabled' | 'idle' | 'checking' | 'ready' | 'login-required' | 'error';
+  pendingCount?: number;
+  lastCheckedAt?: number;
+  message?: string;
 }
 
 export interface BrowserSpec {
@@ -181,6 +209,7 @@ export interface AppConfig {
   window: WindowConfig;
   behavior: BehaviorConfig;
   keyboard: KeyboardConfig;
+  approvalMonitor: ApprovalMonitorConfig;
   theme: 'dark' | 'light' | 'system';
   hotkey: string;
   launchAtLogin: boolean;

@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { win32 } from 'node:path';
 import { getEducationOffice, isAllowedOfficeHost } from '../../../shared/educationOffices';
 import type {
+  BuiltInWebWorkflowId,
   EducationOfficeCode,
   WebConnectorBrowserId,
   WebWorkflowId,
@@ -85,7 +86,13 @@ export interface ExecuteWindowsWorkflowDependencies {
   focusWindow(id: number): Promise<boolean>;
 }
 
-const MANAGED_WORKFLOWS = { ...NEIS_WORKFLOWS, ...EDUFINE_WORKFLOWS };
+const MANAGED_WORKFLOWS: Partial<Record<BuiltInWebWorkflowId, WorkflowStepDefinition>> = {
+  ...NEIS_WORKFLOWS,
+  ...EDUFINE_WORKFLOWS,
+};
+
+type WorkflowStepDefinition = (typeof NEIS_WORKFLOWS)[keyof typeof NEIS_WORKFLOWS]
+  | (typeof EDUFINE_WORKFLOWS)[keyof typeof EDUFINE_WORKFLOWS];
 
 function managedWorkflowDefinition(request: ManagedWorkflowRequest) {
   if (request.workflowId === 'custom') {
@@ -94,7 +101,11 @@ function managedWorkflowDefinition(request: ManagedWorkflowRequest) {
     }
     return createCustomManagedWorkflowDefinition(request.workflowSpec);
   }
-  return MANAGED_WORKFLOWS[request.workflowId];
+  const definition = MANAGED_WORKFLOWS[request.workflowId];
+  if (!definition) {
+    throw new Error('웹 업무 이동 경로가 준비되지 않았습니다. 스트림 패널을 업데이트한 뒤 다시 시도해 주세요.');
+  }
+  return definition;
 }
 
 function requestWorkflowSpec(

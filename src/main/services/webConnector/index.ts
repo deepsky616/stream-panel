@@ -115,10 +115,14 @@ function workflowSuccessMessage(workflowSpec: WebWorkflowSpec): string {
       return '나이스 복무 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.';
     case 'neis-trip':
       return '나이스 출장 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.';
+    case 'neis-approval-inbox':
+      return '나이스 결재함을 열었습니다. 승인, 반려와 서명은 화면에서 직접 진행해 주세요.';
     case 'edufine-draft':
       return '에듀파인 기안 화면을 열었습니다. 내용을 확인한 뒤 직접 상신해 주세요.';
     case 'edufine-purchase':
       return '에듀파인 품의 화면을 열었습니다. 내용을 확인한 뒤 직접 상신해 주세요.';
+    case 'edufine-approval-inbox':
+      return '에듀파인 결재함을 열었습니다. 승인, 반려와 서명은 화면에서 직접 진행해 주세요.';
     case 'custom':
       return `${workflowSpec.custom.name} 화면을 열었습니다. 내용을 확인한 뒤 필요한 최종 동작은 직접 진행해 주세요.`;
   }

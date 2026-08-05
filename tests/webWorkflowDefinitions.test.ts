@@ -119,6 +119,8 @@ describe('managed web workflow definitions', () => {
   });
 
   it('does not expose a definition for an arbitrary workflow identifier', () => {
-    expect(definitions['run-script' as BuiltInWebWorkflowId]).toBeUndefined();
+    expect((definitions as Partial<Record<BuiltInWebWorkflowId, unknown>>)[
+      'run-script' as BuiltInWebWorkflowId
+    ]).toBeUndefined();
   });
 });

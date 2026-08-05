@@ -20,6 +20,7 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
     'window',
     'behavior',
     'keyboard',
+    'approvalMonitor',
     'theme',
     'hotkey',
     'launchAtLogin',
@@ -131,6 +132,9 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
     ) {
       throw new TypeError('키보드 설정이 올바르지 않습니다. 힌트 문자는 중복 없이 입력해 주세요.');
     }
+  }
+  if ('approvalMonitor' in value) {
+    assertRecord(value.approvalMonitor, '결재 대기 알림');
   }
   if ('root' in value && !Array.isArray(value.root)) throw new TypeError('키 목록이 올바르지 않습니다.');
 }
@@ -302,6 +306,27 @@ export function assertWebConnectorSetupInput(
     !['pair', 'folder', 'extensions'].includes(String(value.target))
   ) {
     throw new TypeError('웹 업무 연결 설치 요청이 올바르지 않습니다. 브라우저를 다시 선택해 주세요.');
+  }
+}
+
+export function assertApprovalMonitorStatusInput(
+  value: unknown,
+): asserts value is Record<string, never> {
+  assertRecord(value, '결재 대기 알림 상태');
+  if (Object.keys(value).length > 0) {
+    throw new TypeError('결재 대기 알림 상태 요청에는 다른 값을 보낼 수 없습니다.');
+  }
+}
+
+export function assertApprovalMonitorCheckInput(
+  value: unknown,
+): asserts value is { system?: 'neis' | 'edufine' } {
+  assertRecord(value, '결재 대기 확인 요청');
+  if (Object.keys(value).some((key) => key !== 'system')) {
+    throw new TypeError('결재 대기 확인 요청에는 업무 시스템만 지정할 수 있습니다.');
+  }
+  if ('system' in value && value.system !== 'neis' && value.system !== 'edufine') {
+    throw new TypeError('업무 시스템이 올바르지 않습니다. 나이스나 에듀파인을 선택해 주세요.');
   }
 }
 

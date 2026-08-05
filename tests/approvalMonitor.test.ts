@@ -10,9 +10,10 @@ import {
 } from '../src/main/services/approvalMonitor';
 
 function windowsConfig(): AppConfig {
+  let id = 0;
   return createDefaultConfig(
     { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
-    () => 'id',
+    () => `id-${id++}`,
     'win32',
   );
 }

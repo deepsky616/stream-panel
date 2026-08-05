@@ -44,8 +44,28 @@ export const WEB_WORKFLOW_DEFINITIONS: readonly WebWorkflowDefinition[] = [
   },
 ] as const;
 
+export const APPROVAL_INBOX_WORKFLOW_DEFINITIONS: readonly WebWorkflowDefinition[] = [
+  {
+    id: 'neis-approval-inbox',
+    label: '나이스 결재함',
+    defaultTarget: 'https://goe.neis.go.kr/',
+    system: 'neis',
+  },
+  {
+    id: 'edufine-approval-inbox',
+    label: '에듀파인 결재함',
+    defaultTarget: 'https://klef.goe.go.kr/',
+    system: 'edufine',
+  },
+] as const;
+
+const ALL_WEB_WORKFLOW_DEFINITIONS = [
+  ...WEB_WORKFLOW_DEFINITIONS,
+  ...APPROVAL_INBOX_WORKFLOW_DEFINITIONS,
+] as const;
+
 const WORKFLOW_IDS = new Set<BuiltInWebWorkflowId>(
-  WEB_WORKFLOW_DEFINITIONS.map((definition) => definition.id),
+  ALL_WEB_WORKFLOW_DEFINITIONS.map((definition) => definition.id),
 );
 const BROWSER_IDS = new Set<WebConnectorBrowserId>(['chrome', 'edge']);
 const CUSTOM_FORBIDDEN_ACTION_TOKENS = [
@@ -150,7 +170,7 @@ export function isWebWorkflowSpec(value: unknown): value is WebWorkflowSpec {
 }
 
 export function getWebWorkflowDefinition(id: BuiltInWebWorkflowId): WebWorkflowDefinition {
-  return WEB_WORKFLOW_DEFINITIONS.find((definition) => definition.id === id)!;
+  return ALL_WEB_WORKFLOW_DEFINITIONS.find((definition) => definition.id === id)!;
 }
 
 function targetForSystem(
@@ -251,8 +271,10 @@ export function browserIdFromPath(path: string): WebConnectorBrowserId | null {
 const WORKFLOW_EMOJI: Record<BuiltInWebWorkflowId, string> = {
   'neis-leave': '🗓️',
   'neis-trip': '🧳',
+  'neis-approval-inbox': '🔔',
   'edufine-draft': '✍️',
   'edufine-purchase': '🧾',
+  'edufine-approval-inbox': '🔔',
 };
 
 export function createWebWorkflowTemplate(
@@ -269,6 +291,18 @@ export function createWebWorkflowTemplate(
     target: getWebWorkflowTarget(id, officeCode),
     webWorkflow: { id, browserId },
   };
+}
+
+export function createApprovalInboxTemplate(
+  system: WebWorkflowSystem,
+  browserId: WebConnectorBrowserId,
+  officeCode: EducationOfficeCode = 'goe',
+): Extract<LibraryEntry, { kind: 'action-template' }> {
+  return createWebWorkflowTemplate(
+    system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
+    browserId,
+    officeCode,
+  );
 }
 
 export interface CreateCustomWebWorkflowInput {

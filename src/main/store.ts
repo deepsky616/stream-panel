@@ -7,6 +7,7 @@ import { normalizeHintKeys } from '../shared/hintMap';
 import { normalizeDeckPositions } from '../shared/layout';
 import type {
   AppConfig,
+  ApprovalMonitorConfig,
   BehaviorConfig,
   DeckItem,
   GridConfig,
@@ -60,6 +61,9 @@ function normalizeItemHotkeys(items: readonly DeckItem[]): DeckItem[] {
 function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppConfig {
   const behavior = partialObject<BehaviorConfig>(parsed.behavior);
   const keyboard = partialObject<KeyboardConfig>(parsed.keyboard);
+  const approvalMonitor = partialObject<ApprovalMonitorConfig>(parsed.approvalMonitor);
+  const approvalSources = partialObject<ApprovalMonitorConfig['sources']>(approvalMonitor.sources);
+  const approvalWorkHours = partialObject<ApprovalMonitorConfig['workHours']>(approvalMonitor.workHours);
   const grid = partialObject<GridConfig>(parsed.grid);
   const window = partialObject<WindowConfig>(parsed.window);
   const normalized = normalizeDeckPositions(parsed.root);
@@ -88,6 +92,24 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
       ...keyboard,
       hintKeys: normalizeHintKeys(hintKeys),
       globalNumberModifier,
+    },
+    approvalMonitor: {
+      ...defaultConfig.approvalMonitor,
+      ...approvalMonitor,
+      sources: {
+        neis: {
+          ...defaultConfig.approvalMonitor.sources.neis,
+          ...partialObject<ApprovalMonitorConfig['sources']['neis']>(approvalSources.neis),
+        },
+        edufine: {
+          ...defaultConfig.approvalMonitor.sources.edufine,
+          ...partialObject<ApprovalMonitorConfig['sources']['edufine']>(approvalSources.edufine),
+        },
+      },
+      workHours: {
+        ...defaultConfig.approvalMonitor.workHours,
+        ...approvalWorkHours,
+      },
     },
     hotkey: normalizeAccelerator(
       typeof parsed.hotkey === 'string' ? parsed.hotkey : defaultConfig.hotkey,
