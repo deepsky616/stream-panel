@@ -1,5 +1,3 @@
-/// <reference path="../src/renderer/src/api.d.ts" />
-
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +8,7 @@ import { ApprovalMonitorSettings } from '../src/renderer/src/editor/ApprovalMoni
 import { getApprovalBadgeForItem } from '../src/renderer/src/panel/approvalBadge';
 import { SettingsModal } from '../src/renderer/src/editor/SettingsModal';
 import { KeyTile } from '../src/renderer/src/common/KeyTile';
+import type {} from '../src/renderer/src/api';
 
 function approvalAction(id: 'neis-approval-inbox' | 'edufine-approval-inbox'): ActionItem {
   return {
@@ -71,6 +70,7 @@ describe('approval monitor settings UI', () => {
     expect(html).toContain('지금 확인');
     expect(html).toContain('결재함 키 추가');
     expect(html).toContain('대기 3건');
+    expect(html).toContain('마지막 확인');
     expect(html).not.toContain('자동 승인');
     expect(html).not.toContain('자동 반려');
   });
