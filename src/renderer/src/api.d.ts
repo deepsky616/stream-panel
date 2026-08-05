@@ -2,6 +2,7 @@ import type {
   ActionItem,
   ActionType,
   AppConfig,
+  ApprovalMonitorStatus,
   DeckItem,
   DetectedBrowser,
   InstalledApp,
@@ -58,6 +59,10 @@ interface StreamPanelApi {
       browserId: 'chrome' | 'edge';
       target: 'pair' | 'folder' | 'extensions';
     }): Promise<{ ok: true } | { ok: false; message: string }>;
+  };
+  approvalMonitor: {
+    status(): Promise<ApprovalMonitorStatus[]>;
+    check(input?: { system?: 'neis' | 'edufine' }): Promise<ApprovalMonitorStatus[]>;
   };
   drop: {
     classify(input: { paths: string[]; text?: string }): Promise<Partial<ActionItem>[]>;

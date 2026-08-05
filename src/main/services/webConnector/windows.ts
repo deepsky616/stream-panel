@@ -9,6 +9,7 @@ import type {
   WebConnectorBrowserId,
   WebWorkflowId,
   WebWorkflowSpec,
+  WebWorkflowSystem,
 } from '../../../shared/types';
 import {
   getWebWorkflowTarget,
@@ -25,6 +26,7 @@ import {
 import {
   createCustomManagedWorkflowDefinition,
   type CandidateSummary,
+  type ManagedWorkflowDefinition,
   type WorkflowStep,
 } from './workflows/common';
 import { runWorkflow, type WorkflowPageAdapter, type WorkflowRunResult } from './workflows/engine';
@@ -35,6 +37,12 @@ import {
   type ManagedBrowserSession,
   type ManagedWorkflowRequest,
 } from './sessionManager';
+import {
+  scanWindowsApprovalCount,
+  type ApprovalScanInput,
+  type WindowsApprovalPage,
+} from '../approvalMonitor/windows';
+import { APPROVAL_INBOX_WORKFLOWS } from '../approvalMonitor/definitions';
 
 export interface ResolveWindowsManagedBrowserOptions {
   env?: NodeJS.ProcessEnv;
@@ -73,6 +81,7 @@ export interface WxsClientWindow {
 export interface WindowsWorkflowPage extends WorkflowPageAdapter {
   currentOrigin(): Promise<string>;
   activate(): Promise<void>;
+  readApprovalCount?(system: WebWorkflowSystem): Promise<number>;
 }
 
 export interface ExecuteWindowsWorkflowDependencies {
@@ -86,13 +95,12 @@ export interface ExecuteWindowsWorkflowDependencies {
   focusWindow(id: number): Promise<boolean>;
 }
 
-const MANAGED_WORKFLOWS: Partial<Record<BuiltInWebWorkflowId, WorkflowStepDefinition>> = {
+const MANAGED_WORKFLOWS: Partial<Record<BuiltInWebWorkflowId, ManagedWorkflowDefinition>> = {
   ...NEIS_WORKFLOWS,
   ...EDUFINE_WORKFLOWS,
+  'neis-approval-inbox': APPROVAL_INBOX_WORKFLOWS.neis,
+  'edufine-approval-inbox': APPROVAL_INBOX_WORKFLOWS.edufine,
 };
-
-type WorkflowStepDefinition = (typeof NEIS_WORKFLOWS)[keyof typeof NEIS_WORKFLOWS]
-  | (typeof EDUFINE_WORKFLOWS)[keyof typeof EDUFINE_WORKFLOWS];
 
 function managedWorkflowDefinition(request: ManagedWorkflowRequest) {
   if (request.workflowId === 'custom') {
@@ -422,6 +430,32 @@ return ${JSON.stringify(condition.kind)}==='visible-all'
 })()`;
 }
 
+function approvalCounterExpression(system: WebWorkflowSystem): string {
+  const labels = system === 'neis'
+    ? ['결재 대기', '결재대기', '미결문서', '대기문서', '미결']
+    : ['결재 대기', '결재대기', '결재할 문서', '미결문서', '대기문서'];
+  return `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const labels=${JSON.stringify(labels)}.map(value=>normalize(value).replace(/\\s+/g,''));
+const counts=[];
+for(const {document} of documents){
+  const elements=Array.from(document.querySelectorAll('[aria-label],[title],span,em,strong,b,a,button,div')).slice(0,2500);
+  for(const element of elements){
+    if(!visible(element))continue;
+    const text=textOf(element);
+    if(text.length<2||text.length>80)continue;
+    const compact=text.replace(/\\s+/g,'');
+    for(const label of labels){
+      if(!compact.includes(label))continue;
+      const remainder=compact.replace(label,'').replace(/[()\\[\\]{}:·]/g,'').replace(/대기/g,'').replace(/건/g,'');
+      if(/^\\d{1,4}$/.test(remainder))counts.push(Number(remainder));
+    }
+  }
+}
+return counts.length?Math.max(...counts):-1;
+})()`;
+}
+
 async function evaluateValue<T>(
   session: WindowsManagedBrowserSession,
   sessionId: string,
@@ -495,6 +529,7 @@ export async function openCdpWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   workflowId: WebWorkflowId,
   workflowSpec?: WebWorkflowSpec,
+  options: { background?: boolean } = {},
 ): Promise<WindowsWorkflowPage> {
   const protocol = session.connection.protocol;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
@@ -508,6 +543,7 @@ export async function openCdpWindowsWorkflowPage(
     const targetUrl = requestTarget(workflowId, session.officeCode, workflowSpec);
     const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
       url: targetUrl,
+      ...(options.background ? { background: true } : {}),
     });
     if (typeof created.targetId !== 'string') {
       throw new Error('업무용 브라우저 탭을 만들지 못했습니다. 브라우저를 다시 열어 주세요.');
@@ -588,7 +624,30 @@ export async function openCdpWindowsWorkflowPage(
       await protocol.send('Target.activateTarget', { targetId: target.targetId });
       await protocol.send('Page.bringToFront', {}, sessionId);
     },
+    async readApprovalCount(system) {
+      return evaluateValue<number>(
+        session,
+        sessionId,
+        approvalCounterExpression(system),
+      );
+    },
   };
+}
+
+export async function openCdpWindowsApprovalPage(
+  session: WindowsManagedBrowserSession,
+  input: ApprovalScanInput,
+): Promise<WindowsApprovalPage> {
+  const page = await openCdpWindowsWorkflowPage(
+    session,
+    input.system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
+    undefined,
+    { background: true },
+  );
+  if (!page.readApprovalCount) {
+    throw new Error('결재 대기 수 읽기 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
+  }
+  return page as WindowsApprovalPage;
 }
 
 export async function openWindowsOfficePortal(
@@ -687,9 +746,16 @@ export interface CreateWindowsManagedSessionManagerOptions
   workflowDependencies?: Partial<ExecuteWindowsWorkflowDependencies>;
 }
 
+export type WindowsManagedSessionController = ManagedBrowserSessionManager<
+  WindowsManagedBrowserSession,
+  WorkflowRunResult
+> & {
+  checkApproval(input: ApprovalScanInput): Promise<number>;
+};
+
 export function createWindowsManagedSessionManager(
   options: CreateWindowsManagedSessionManagerOptions,
-): ManagedBrowserSessionManager<WindowsManagedBrowserSession, WorkflowRunResult> {
+): WindowsManagedSessionController {
   const workflowDependencies: ExecuteWindowsWorkflowDependencies = {
     openWorkflowPage: async (session, workflowId, workflowSpec) => {
       if (!('connection' in session)) {
@@ -706,7 +772,7 @@ export function createWindowsManagedSessionManager(
     focusWindow: focusWxsClientWindow,
     ...options.workflowDependencies,
   };
-  return new ManagedBrowserSessionManager({
+  const manager = new ManagedBrowserSessionManager({
     createSession: (officeCode, browserId) => createWindowsManagedBrowserSession(
       officeCode,
       browserId,
@@ -717,5 +783,17 @@ export function createWindowsManagedSessionManager(
       request,
       workflowDependencies,
     ),
+  });
+  return Object.assign(manager, {
+    checkApproval(input: ApprovalScanInput) {
+      return manager.use(input.officeCode, input.browserId, (session) => (
+        scanWindowsApprovalCount(session, input, {
+          openPage: (managedSession, scanInput) => openCdpWindowsApprovalPage(
+            managedSession as WindowsManagedBrowserSession,
+            scanInput,
+          ),
+        })
+      ));
+    },
   });
 }

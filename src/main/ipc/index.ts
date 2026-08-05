@@ -12,10 +12,13 @@ import { registerBrowserHandlers } from './browserHandlers';
 import { registerWebConnectorHandlers } from './webConnectorHandlers';
 import type { WebConnectorService } from '../services/webConnector';
 import { registerMultiActionHandlers } from './multiActionHandlers';
+import { registerApprovalMonitorHandlers } from './approvalMonitorHandlers';
+import type { ApprovalMonitorService } from '../services/approvalMonitor';
 
 export function registerIpcHandlers(
   configStore: ConfigStore,
   webConnectorService: WebConnectorService | null,
+  approvalMonitorService: ApprovalMonitorService | null = null,
 ): void {
   registerConfigHandlers(configStore);
   registerDeckHandlers(configStore);
@@ -26,6 +29,7 @@ export function registerIpcHandlers(
   registerAppHandlers();
   registerBrowserHandlers();
   if (webConnectorService) registerWebConnectorHandlers(webConnectorService);
+  if (approvalMonitorService) registerApprovalMonitorHandlers(approvalMonitorService);
   registerIconHandlers();
   registerWindowHandlers(configStore);
   registerLauncherHandlers(configStore);

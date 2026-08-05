@@ -55,6 +55,11 @@ const api = {
       target: 'pair' | 'folder' | 'extensions';
     }) => ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_OPEN_SETUP, input),
   },
+  approvalMonitor: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.WEB_APPROVAL_STATUS, {}),
+    check: (input: { system?: 'neis' | 'edufine' } = {}) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WEB_APPROVAL_CHECK, input),
+  },
   drop: {
     classify: (input: { paths: string[]; text?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.DROP_CLASSIFY, input),

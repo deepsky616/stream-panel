@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification } from 'electron';
 import { createDefaultConfig } from '../shared/defaults';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { isWebConnectorSupportedPlatform } from '../shared/webWorkflows';
@@ -18,14 +18,19 @@ import {
   setActiveWebConnectorService,
   type WebConnectorService,
 } from './services/webConnector';
+import {
+  createApprovalMonitorService,
+  type ApprovalMonitorService,
+} from './services/approvalMonitor';
 
 type QuitAwareApp = typeof app & { isQuitting?: boolean };
 
 app.setName('stream-panel');
 const gotLock = app.requestSingleInstanceLock();
 let webConnectorService: WebConnectorService | null = null;
-let connectorShutdownStarted = false;
-let connectorShutdownComplete = false;
+let approvalMonitorService: ApprovalMonitorService | null = null;
+let serviceShutdownStarted = false;
+let serviceShutdownComplete = false;
 if (!gotLock) {
   console.error('다른 Stream Panel 실행 과정이 이미 단일 실행 잠금을 사용하고 있습니다.');
   app.quit();
@@ -55,7 +60,7 @@ app.whenReady().then(async () => {
     },
   });
   if (isWebConnectorSupportedPlatform(PLATFORM.platform)) {
-    webConnectorService = createWebConnectorService({
+    const connector = createWebConnectorService({
       userDataPath: app.getPath('userData'),
       platform: PLATFORM.platform,
       getConfig: () => configStore.get(),
@@ -65,11 +70,33 @@ app.whenReady().then(async () => {
         }
       },
     });
-    const connectorStart = await webConnectorService.start();
+    webConnectorService = connector;
+    const connectorStart = await connector.start();
     if (!connectorStart.ok) console.warn(connectorStart.message);
-    setActiveWebConnectorService(webConnectorService);
+    setActiveWebConnectorService(connector);
+    approvalMonitorService = createApprovalMonitorService({
+      userDataPath: app.getPath('userData'),
+      platform: PLATFORM.platform,
+      getConfig: () => configStore.get(),
+      scanner: { scan: (input) => connector.scanApproval(input) },
+      notify: (system, count) => {
+        if (!Notification.isSupported()) return;
+        const systemLabel = system === 'neis' ? '나이스' : '에듀파인';
+        new Notification({
+          title: `${systemLabel} 결재 대기 알림`,
+          body: `결재할 문서가 ${count}건 있습니다. 스트림 패널의 결재함 키에서 확인할 수 있습니다.`,
+          silent: false,
+        }).show();
+      },
+      broadcast: (statuses) => {
+        for (const window of createSafeWindowList()) {
+          window.webContents.send(IPC_CHANNELS.WEB_APPROVAL_CHANGED, statuses);
+        }
+      },
+    });
+    await approvalMonitorService.start();
   }
-  registerIpcHandlers(configStore, webConnectorService);
+  registerIpcHandlers(configStore, webConnectorService, approvalMonitorService);
   void cleanupOrphanIcons(configStore.get().root, app.getPath('userData'));
   createPanelWindow(configStore);
   setLauncherEnabled(configStore.get().keyboard.quickLauncher);
@@ -95,6 +122,7 @@ app.whenReady().then(async () => {
       setLauncherEnabled(quickLauncherEnabled);
     }
     void webConnectorService?.onConfigChanged(config);
+    approvalMonitorService?.onConfigChanged(config);
   });
   app.on('second-instance', () => showPanel());
 }).catch((error: unknown) => {
@@ -108,13 +136,16 @@ function createSafeWindowList(): BrowserWindow[] {
 
 app.on('before-quit', (event) => {
   (app as QuitAwareApp).isQuitting = true;
-  if (!webConnectorService || connectorShutdownComplete) return;
+  if ((!webConnectorService && !approvalMonitorService) || serviceShutdownComplete) return;
   event.preventDefault();
-  if (connectorShutdownStarted) return;
-  connectorShutdownStarted = true;
+  if (serviceShutdownStarted) return;
+  serviceShutdownStarted = true;
   setActiveWebConnectorService(null);
-  void webConnectorService.stop().finally(() => {
-    connectorShutdownComplete = true;
+  void (async () => {
+    await approvalMonitorService?.stop();
+    await webConnectorService?.stop();
+  })().finally(() => {
+    serviceShutdownComplete = true;
     app.quit();
   });
 });

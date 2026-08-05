@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DeckItem } from '../../../shared/types';
+import type { ApprovalBadge } from '../panel/approvalBadge';
 
 interface KeyTileProps {
   item: DeckItem;
@@ -9,6 +10,7 @@ interface KeyTileProps {
   failed?: boolean;
   hint?: string;
   hintMuted?: boolean;
+  statusBadge?: ApprovalBadge;
 }
 
 function iconText(item: DeckItem): string {
@@ -29,6 +31,7 @@ export function KeyTile({
   failed = false,
   hint,
   hintMuted = false,
+  statusBadge,
 }: KeyTileProps) {
   const requestType =
     item.icon.kind === 'file'
@@ -65,12 +68,21 @@ export function KeyTile({
         '--button-size': `${buttonSize}px`,
       } as React.CSSProperties}
       type="button"
-      title={item.kind === 'action' ? `${item.label}\nShift+클릭: 패널 유지` : item.label}
+      title={`${item.kind === 'action' ? `${item.label}\nShift+클릭: 패널 유지` : item.label}${
+        statusBadge ? `\n${statusBadge.title}` : ''
+      }`}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       aria-label={item.kind === 'folder' ? `${item.label} 폴더 열기` : `${item.label} 실행`}
     >
       {hint && <span className={`key-hint ${hintMuted ? 'muted' : ''}`}>{hint}</span>}
+      {statusBadge && (
+        <span
+          className={`key-status-badge key-status-${statusBadge.state}`}
+          title={statusBadge.title}
+          aria-label={statusBadge.title}
+        >{statusBadge.label}</span>
+      )}
       <span className="key-icon" aria-hidden="true">
         {resolvedIcon ? <img src={resolvedIcon} alt="" /> : iconText(item)}
       </span>

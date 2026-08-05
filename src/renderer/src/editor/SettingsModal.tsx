@@ -8,18 +8,22 @@ import { searchDeckItems } from '../../../shared/search';
 import { EDUCATION_OFFICES } from '../../../shared/educationOffices';
 import type {
   AppConfig,
+  ApprovalMonitorStatus,
   DeckItem,
   EducationOfficeCode,
   LibraryEntry,
   WebConnectorBrowserId,
   WebConnectorStatus,
+  WebWorkflowSystem,
 } from '../../../shared/types';
+import { createApprovalInboxTemplate } from '../../../shared/webWorkflows';
 import {
   createEducationOfficePatch,
   createWebWorkBrowserCards,
   shouldShowWebWorkSettings,
 } from './webWorkViewModel';
 import { CustomWebWorkflowBuilder } from './CustomWebWorkflowBuilder';
+import { ApprovalMonitorSettings } from './ApprovalMonitorSettings';
 
 type SettingsTab = 'general' | 'appearance' | 'behavior' | 'shortcut' | 'web-work' | 'about';
 
@@ -28,6 +32,7 @@ interface SettingsModalProps {
   config: AppConfig;
   onClose: () => void;
   onAddWebWorkflow: (entry: LibraryEntry) => Promise<void>;
+  initialTab?: SettingsTab;
 }
 
 interface HotkeyRow {
@@ -44,8 +49,14 @@ function collectHotkeys(items: readonly DeckItem[], path: readonly string[] = []
   return rows;
 }
 
-export function SettingsModal({ open, config, onClose, onAddWebWorkflow }: SettingsModalProps) {
-  const [tab, setTab] = useState<SettingsTab>('general');
+export function SettingsModal({
+  open,
+  config,
+  onClose,
+  onAddWebWorkflow,
+  initialTab = 'general',
+}: SettingsModalProps) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [info, setInfo] = useState<{ version: string; platform: string; isPackaged: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [updateReady, setUpdateReady] = useState<string | null>(null);
@@ -54,6 +65,8 @@ export function SettingsModal({ open, config, onClose, onAddWebWorkflow }: Setti
   const [connectorStatuses, setConnectorStatuses] = useState<WebConnectorStatus[]>([]);
   const [connectorBusy, setConnectorBusy] = useState<WebConnectorBrowserId | null>(null);
   const [connectorError, setConnectorError] = useState<WebConnectorBrowserId | null>(null);
+  const [approvalStatuses, setApprovalStatuses] = useState<ApprovalMonitorStatus[]>([]);
+  const [approvalBusy, setApprovalBusy] = useState<WebWorkflowSystem | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const hotkeys = useMemo(() => collectHotkeys(config.root), [config.root]);
   const numberPreview = useMemo(() => {
@@ -123,11 +136,22 @@ export function SettingsModal({ open, config, onClose, onAddWebWorkflow }: Setti
       setConnectorStatuses([]);
       setMessage('웹 업무 연결 상태를 읽지 못했습니다. 스트림 패널을 다시 시작해 주세요.');
     }), []);
+  const refreshApprovalStatuses = useCallback(() =>
+    window.api.approvalMonitor.status().then(setApprovalStatuses).catch(() => {
+      setApprovalStatuses([]);
+      setMessage('결재 대기 알림 상태를 읽지 못했습니다. 스트림 패널을 다시 시작해 주세요.');
+    }), []);
 
   useEffect(() => {
     if (!open || config.platform !== 'win32' || tab !== 'web-work') return;
     void refreshConnectorStatuses();
-  }, [config.platform, open, refreshConnectorStatuses, tab]);
+    void refreshApprovalStatuses();
+  }, [config.platform, open, refreshApprovalStatuses, refreshConnectorStatuses, tab]);
+
+  useEffect(() => window.api.on('web-approval:changed', (payload) => {
+    if (!Array.isArray(payload)) return;
+    setApprovalStatuses(payload as ApprovalMonitorStatus[]);
+  }), []);
 
   useEffect(() => {
     if (!open) return;
@@ -193,6 +217,9 @@ export function SettingsModal({ open, config, onClose, onAddWebWorkflow }: Setti
   };
   const setKeyboard = (patch: Partial<AppConfig['keyboard']>) => {
     setConfig({ keyboard: { ...config.keyboard, ...patch } });
+  };
+  const setApprovalMonitor = (approvalMonitor: AppConfig['approvalMonitor']) => {
+    setConfig({ approvalMonitor });
   };
   const updateGrid = (patch: Partial<AppConfig['grid']>) => {
     const next = { ...config.grid, ...patch };
@@ -294,6 +321,26 @@ export function SettingsModal({ open, config, onClose, onAddWebWorkflow }: Setti
         : '업무용 브라우저 연결을 확인하지 못했습니다. 브라우저 설치 상태를 확인해 주세요.');
     } finally {
       setConnectorBusy(null);
+    }
+  };
+  const checkApprovals = async (system: WebWorkflowSystem) => {
+    setApprovalBusy(system);
+    setMessage(null);
+    try {
+      const statuses = await window.api.approvalMonitor.check({ system });
+      setApprovalStatuses(statuses);
+      const status = statuses.find((candidate) => candidate.system === system);
+      if (status?.state === 'ready') {
+        setMessage(`${system === 'neis' ? '나이스' : '에듀파인'} 결재 대기 ${status.pendingCount ?? 0}건을 확인했습니다.`);
+      } else if (status?.message) {
+        setMessage(status.message);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error
+        ? error.message
+        : '결재 대기 수를 확인하지 못했습니다. 업무용 브라우저에서 로그인 상태를 확인해 주세요.');
+    } finally {
+      setApprovalBusy(null);
     }
   };
 
@@ -469,6 +516,16 @@ export function SettingsModal({ open, config, onClose, onAddWebWorkflow }: Setti
                 <CustomWebWorkflowBuilder
                   officeCode={config.educationOfficeCode}
                   onCreate={onAddWebWorkflow}
+                />
+                <ApprovalMonitorSettings
+                  config={config.approvalMonitor}
+                  statuses={approvalStatuses}
+                  busySystem={approvalBusy}
+                  onChange={setApprovalMonitor}
+                  onCheck={(system) => void checkApprovals(system)}
+                  onAddKey={(system, browserId) => void onAddWebWorkflow(
+                    createApprovalInboxTemplate(system, browserId, config.educationOfficeCode),
+                  ).then(() => setMessage(`${system === 'neis' ? '나이스' : '에듀파인'} 결재함 키를 맨 앞 화면에 추가했습니다.`))}
                 />
                 <p className="connector-legacy-note">
                   예전 확장 기능은 더 이상 필요하지 않습니다. 설치되어 있다면 브라우저에서 직접 제거해도 됩니다.

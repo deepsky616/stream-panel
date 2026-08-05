@@ -32,6 +32,7 @@ import {
   type WindowsManagedBrowserSession,
 } from './windows';
 import type { WorkflowRunResult } from './workflows/engine';
+import type { ApprovalScanInput } from '../approvalMonitor/windows';
 
 export type ConnectorReply = { ok: true } | { ok: false; message: string };
 
@@ -51,6 +52,7 @@ export interface WebConnectorSessionController {
   ): ManagedBrowserSession | undefined;
   closeOtherOffices(officeCode: EducationOfficeCode): Promise<void>;
   closeAll(): Promise<void>;
+  checkApproval?(input: ApprovalScanInput): Promise<number>;
 }
 
 export interface WebConnectorService {
@@ -64,6 +66,7 @@ export interface WebConnectorService {
     target: 'pair' | 'extensions',
   ): Promise<ConnectorReply>;
   ensureDiagnosticsDirectory(): Promise<string>;
+  scanApproval(input: ApprovalScanInput): Promise<number>;
   onConfigChanged(config: AppConfig): Promise<void>;
 }
 
@@ -345,6 +348,21 @@ export function createWebConnectorService({
     async ensureDiagnosticsDirectory() {
       await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 });
       return diagnostics.directory;
+    },
+    async scanApproval(input) {
+      if (!started || !state) {
+        throw new Error('결재 대기 알림 연결부가 준비되지 않았습니다. 앱을 다시 시작해 주세요.');
+      }
+      if (platform !== 'win32') {
+        throw new Error('결재 대기 알림은 윈도우에서만 사용할 수 있습니다. 윈도우에서 다시 시도해 주세요.');
+      }
+      if (input.officeCode !== currentOffice()) {
+        throw new Error('현재 소속 교육청과 결재 대기 확인 요청의 교육청이 다릅니다. 설정을 다시 확인해 주세요.');
+      }
+      if (!controller.checkApproval) {
+        throw new Error('결재 대기 확인 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
+      }
+      return controller.checkApproval(input);
     },
     async onConfigChanged(config) {
       await controller.closeOtherOffices(config.educationOfficeCode);
