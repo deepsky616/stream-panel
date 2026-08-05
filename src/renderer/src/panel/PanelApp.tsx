@@ -119,7 +119,6 @@ export function PanelApp() {
   }, []);
   useEffect(() => {
     if (config?.platform !== 'win32') {
-      setApprovalStatuses([]);
       return;
     }
     let active = true;
