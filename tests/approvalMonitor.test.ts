@@ -91,6 +91,47 @@ describe('approval monitor rules', () => {
 });
 
 describe('approval monitor service', () => {
+  it('uses the first read after restart or a browser change as a fresh baseline', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    const counts = [5, 6, 9, 10];
+    const notifications: number[] = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => counts.shift() ?? 0 },
+      stateIo: {
+        read: async () => JSON.stringify({
+          version: 1,
+          systems: {
+            neis: {
+              pendingCount: 2,
+              lastCheckedAt: 1_799_000_000_000,
+              lastNotifiedCount: 2,
+            },
+          },
+        }),
+        write: async () => undefined,
+      },
+      notify: (_system, count) => { notifications.push(count); },
+      setTimer: (handler) => handler,
+      clearTimer: () => undefined,
+    });
+    await service.start();
+
+    await service.check({ system: 'neis' });
+    expect(notifications).toEqual([]);
+    await service.check({ system: 'neis' });
+    expect(notifications).toEqual([6]);
+
+    config.approvalMonitor.sources.neis.browserId = 'chrome';
+    service.onConfigChanged(config);
+    await service.check({ system: 'neis' });
+    expect(notifications).toEqual([6]);
+    await service.check({ system: 'neis' });
+    expect(notifications).toEqual([6, 10]);
+  });
+
   it('checks only enabled systems, broadcasts counts, and persists counts without document data', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;
