@@ -28,6 +28,15 @@ function statusText(status: ApprovalMonitorStatus | undefined): string {
   return '확인 오류';
 }
 
+function formatLastCheckedAt(value: number): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
 export function ApprovalMonitorSettings({
   config,
   statuses,
@@ -117,6 +126,9 @@ export function ApprovalMonitorSettings({
                   <strong>{SYSTEM_LABELS[system]}</strong>
                 </label>
                 <span className="approval-source-state">{statusText(status)}</span>
+                {status?.lastCheckedAt !== undefined && (
+                  <small>마지막 확인: {formatLastCheckedAt(status.lastCheckedAt)}</small>
+                )}
                 {status?.message && <small title={status.message}>{status.message}</small>}
               </div>
               <label>
