@@ -47,10 +47,14 @@ describe('Windows approval count reader', () => {
 
   it('reads the NEIS inbox count without activating the browser or pressing a decision button', async () => {
     const pressed: string[] = [];
+    let releases = 0;
     const workflowPage = page('https://goe.neis.go.kr', 7);
     workflowPage.pressCandidate = async (selected, step) => {
       pressed.push(`${step.id}:${selected.text}`);
     };
+    Object.assign(workflowPage, {
+      release: async () => { releases += 1; },
+    });
 
     await expect(scanWindowsApprovalCount(
       { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
@@ -61,6 +65,22 @@ describe('Windows approval count reader', () => {
     expect(pressed.length).toBeGreaterThan(0);
     expect(pressed.join(' ')).toMatch(/결재함|대기문서|미결문서/);
     expect(pressed.join(' ')).not.toMatch(/승인|반려|서명|처리/);
+    expect(releases).toBe(1);
+  });
+
+  it('releases the browser page when approval navigation fails', async () => {
+    let releases = 0;
+    const workflowPage = page('https://evil.example');
+    Object.assign(workflowPage, {
+      release: async () => { releases += 1; },
+    });
+
+    await expect(scanWindowsApprovalCount(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { system: 'neis', officeCode: 'goe', browserId: 'edge' },
+      { openPage: async () => workflowPage },
+    )).rejects.toThrow(/허용되지 않은/);
+    expect(releases).toBe(1);
   });
 
   it('rejects a login portal or another host before inspecting or reading page content', async () => {

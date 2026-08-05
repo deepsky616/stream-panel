@@ -7,6 +7,8 @@ export type AllowedCdpMethod =
   | 'Target.getTargets'
   | 'Target.createTarget'
   | 'Target.attachToTarget'
+  | 'Target.detachFromTarget'
+  | 'Target.closeTarget'
   | 'Target.activateTarget'
   | 'Target.setDiscoverTargets'
   | 'Page.enable'
@@ -21,6 +23,8 @@ const ALLOWED_METHODS = new Set<AllowedCdpMethod>([
   'Target.getTargets',
   'Target.createTarget',
   'Target.attachToTarget',
+  'Target.detachFromTarget',
+  'Target.closeTarget',
   'Target.activateTarget',
   'Target.setDiscoverTargets',
   'Page.enable',

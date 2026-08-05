@@ -10,6 +10,7 @@ import { APPROVAL_INBOX_WORKFLOWS, type ApprovalScanInput } from './definitions'
 
 export interface WindowsApprovalPage extends WorkflowPageAdapter {
   currentOrigin(): Promise<string>;
+  release?(): Promise<void>;
   readApprovalCount(system: WebWorkflowSystem): Promise<number>;
 }
 
@@ -58,27 +59,31 @@ export async function scanWindowsApprovalCount(
     throw new Error('결재 대기 확인 요청과 업무용 브라우저 세션이 다릅니다. 브라우저 연결을 다시 시험해 주세요.');
   }
   const page = await dependencies.openPage(session, input);
-  const assertOrigin = async () => assertApprovalOrigin(await page.currentOrigin(), input);
-  await assertOrigin();
-  const guardedPage: WorkflowPageAdapter = {
-    async inspectCandidates(step) {
-      await assertOrigin();
-      return page.inspectCandidates(step);
-    },
-    async pressCandidate(candidate, step) {
-      await assertOrigin();
-      await page.pressCandidate(candidate, step);
-      await assertOrigin();
-    },
-    async checkPostcondition(step) {
-      await assertOrigin();
-      return page.checkPostcondition(step);
-    },
-    wait: (delayMs) => page.wait(delayMs),
-  };
-  await runWorkflow(APPROVAL_INBOX_WORKFLOWS[input.system], guardedPage);
-  await assertOrigin();
-  const count = parseApprovalCounterValue(await page.readApprovalCount(input.system));
-  await assertOrigin();
-  return count;
+  try {
+    const assertOrigin = async () => assertApprovalOrigin(await page.currentOrigin(), input);
+    await assertOrigin();
+    const guardedPage: WorkflowPageAdapter = {
+      async inspectCandidates(step) {
+        await assertOrigin();
+        return page.inspectCandidates(step);
+      },
+      async pressCandidate(candidate, step) {
+        await assertOrigin();
+        await page.pressCandidate(candidate, step);
+        await assertOrigin();
+      },
+      async checkPostcondition(step) {
+        await assertOrigin();
+        return page.checkPostcondition(step);
+      },
+      wait: (delayMs) => page.wait(delayMs),
+    };
+    await runWorkflow(APPROVAL_INBOX_WORKFLOWS[input.system], guardedPage);
+    await assertOrigin();
+    const count = parseApprovalCounterValue(await page.readApprovalCount(input.system));
+    await assertOrigin();
+    return count;
+  } finally {
+    await page.release?.();
+  }
 }

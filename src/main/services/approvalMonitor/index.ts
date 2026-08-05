@@ -164,6 +164,7 @@ export function createApprovalMonitorService({
   let started = false;
   let timer: unknown = null;
   let tail: Promise<void> = Promise.resolve();
+  const inFlightBySystem = new Map<WebWorkflowSystem, Promise<void>>();
   const establishedBaselines = new Set<WebWorkflowSystem>();
   let sourceSignatures = new Map<WebWorkflowSystem, string>();
   const sourceRevisions = new Map<WebWorkflowSystem, number>(
@@ -225,11 +226,13 @@ export function createApprovalMonitorService({
     async check(input) {
       if (!started || platform !== 'win32') return service.getStatuses();
       const selected = input.system ? [input.system] : [...SYSTEMS];
-      const operation = async () => {
-        for (const system of selected) {
+      const runs = selected.map((system) => {
+        const inFlight = inFlightBySystem.get(system);
+        if (inFlight) return inFlight;
+        const operation = async () => {
           const config = getConfig();
           const source = config.approvalMonitor.sources[system];
-          if (!source.enabled) continue;
+          if (!source.enabled) return;
           const sourceRevision = sourceRevisions.get(system) ?? 0;
           const index = statuses.findIndex((status) => status.system === system);
           const previous = state.systems[system];
@@ -251,7 +254,7 @@ export function createApprovalMonitorService({
             if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
               statuses = createStatuses();
               publish();
-              continue;
+              return;
             }
             const checkedAt = now();
             const sendNotification = establishedBaselines.has(system) &&
@@ -276,7 +279,7 @@ export function createApprovalMonitorService({
               await persist();
               statuses = createStatuses();
               publish();
-              continue;
+              return;
             }
             statuses[index] = {
               system,
@@ -299,11 +302,18 @@ export function createApprovalMonitorService({
             };
           }
           publish();
-        }
-      };
-      const run = tail.then(operation, operation);
-      tail = run.then(() => undefined, () => undefined);
-      await run;
+        };
+        const run = tail.then(operation, operation);
+        tail = run.then(() => undefined, () => undefined);
+        const tracked = run.finally(() => {
+          if (inFlightBySystem.get(system) === tracked) {
+            inFlightBySystem.delete(system);
+          }
+        });
+        inFlightBySystem.set(system, tracked);
+        return tracked;
+      });
+      await Promise.all(runs);
       schedule();
       return service.getStatuses();
     },

@@ -83,6 +83,7 @@ export interface WxsClientWindow {
 export interface WindowsWorkflowPage extends WorkflowPageAdapter {
   currentOrigin(): Promise<string>;
   activate(): Promise<void>;
+  release?(): Promise<void>;
   readApprovalCount?(system: WebWorkflowSystem): Promise<number>;
 }
 
@@ -293,47 +294,51 @@ export async function executeWindowsWorkflow(
     request.workflowId,
     request.workflowSpec,
   );
-  const assertOrigin = async (): Promise<void> => validateWorkflowOrigin(
-    await page.currentOrigin(),
-    request.officeCode,
-    request.workflowId,
-    request.workflowSpec,
-  );
-  await assertOrigin();
-  const guardedPage: WorkflowPageAdapter = {
-    async inspectCandidates(step) {
-      await assertOrigin();
-      return page.inspectCandidates(step);
-    },
-    async pressCandidate(candidate, step) {
-      await assertOrigin();
-      await page.pressCandidate(candidate, step);
-      await assertOrigin();
-    },
-    async checkPostcondition(step) {
-      await assertOrigin();
-      const postcondition = step.postcondition;
-      if (postcondition.kind !== 'new-window') {
-        return page.checkPostcondition(step);
+  try {
+    const assertOrigin = async (): Promise<void> => validateWorkflowOrigin(
+      await page.currentOrigin(),
+      request.officeCode,
+      request.workflowId,
+      request.workflowSpec,
+    );
+    await assertOrigin();
+    const guardedPage: WorkflowPageAdapter = {
+      async inspectCandidates(step) {
+        await assertOrigin();
+        return page.inspectCandidates(step);
+      },
+      async pressCandidate(candidate, step) {
+        await assertOrigin();
+        await page.pressCandidate(candidate, step);
+        await assertOrigin();
+      },
+      async checkPostcondition(step) {
+        await assertOrigin();
+        const postcondition = step.postcondition;
+        if (postcondition.kind !== 'new-window') {
+          return page.checkPostcondition(step);
+        }
+        const windows = await dependencies.listWxsClientWindows();
+        newEditorWindow = windows.find((window) => (
+          !existingWindows.has(window.id) &&
+          window.title.includes(postcondition.titleIncludes)
+        ));
+        return Boolean(newEditorWindow);
+      },
+      wait: (delayMs) => page.wait(delayMs),
+    };
+    const result = await runWorkflow(definition, guardedPage);
+    if (request.workflowId === 'edufine-draft') {
+      if (!newEditorWindow || !await dependencies.focusWindow(newEditorWindow.id)) {
+        throw new Error('새 기안 편집기 창을 앞으로 가져오지 못했습니다. 작업 표시줄에서 WXSClient 창을 직접 선택해 주세요.');
       }
-      const windows = await dependencies.listWxsClientWindows();
-      newEditorWindow = windows.find((window) => (
-        !existingWindows.has(window.id) &&
-        window.title.includes(postcondition.titleIncludes)
-      ));
-      return Boolean(newEditorWindow);
-    },
-    wait: (delayMs) => page.wait(delayMs),
-  };
-  const result = await runWorkflow(definition, guardedPage);
-  if (request.workflowId === 'edufine-draft') {
-    if (!newEditorWindow || !await dependencies.focusWindow(newEditorWindow.id)) {
-      throw new Error('새 기안 편집기 창을 앞으로 가져오지 못했습니다. 작업 표시줄에서 WXSClient 창을 직접 선택해 주세요.');
+    } else {
+      await page.activate();
     }
-  } else {
-    await page.activate();
+    return result;
+  } finally {
+    await page.release?.();
   }
-  return result;
 }
 
 interface CdpEvaluationResponse {
@@ -531,10 +536,11 @@ export async function openCdpWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   workflowId: WebWorkflowId,
   workflowSpec?: WebWorkflowSpec,
-  options: { background?: boolean } = {},
+  options: { background?: boolean; closeCreatedTargetOnRelease?: boolean } = {},
 ): Promise<WindowsWorkflowPage> {
   const protocol = session.connection.protocol;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
+  let createdTarget = false;
   let target = selectWindowsWorkflowTarget(
     targets,
     session.officeCode,
@@ -555,43 +561,66 @@ export async function openCdpWindowsWorkflowPage(
       type: 'page',
       url: targetUrl,
     };
+    createdTarget = true;
   }
-  const attached = await protocol.send<{ sessionId?: unknown }>('Target.attachToTarget', {
-    targetId: target.targetId,
-    flatten: true,
-  });
-  if (typeof attached.sessionId !== 'string') {
-    throw new Error('업무용 브라우저 탭에 연결하지 못했습니다. 브라우저를 다시 열어 주세요.');
-  }
-  const sessionId = attached.sessionId;
-  await protocol.send('Page.enable', {}, sessionId);
-  let reachedHttpOrigin = false;
-  for (let check = 0; check < 60; check += 1) {
-    const origin = await evaluateValue<unknown>(session, sessionId, 'location.origin');
-    if (typeof origin === 'string' && /^https?:\/\//.test(origin)) {
-      reachedHttpOrigin = true;
-      break;
+  let sessionId: string | undefined;
+  let released = false;
+  const release = async (): Promise<void> => {
+    if (released) return;
+    released = true;
+    if (sessionId) {
+      try {
+        await protocol.send('Target.detachFromTarget', { sessionId });
+      } catch {
+        // A closed browser already released the attached target session.
+      }
     }
-    if (check < 59) await new Promise<void>((resolve) => setTimeout(resolve, 250));
-  }
-  if (!reachedHttpOrigin) {
-    throw new Error('업무 시스템 화면이 열리는 시간이 지났습니다. 네트워크를 확인한 뒤 업무용 브라우저를 다시 열어 주세요.');
-  }
-  return {
-    async currentOrigin() {
+    if (createdTarget && options.closeCreatedTargetOnRelease) {
+      try {
+        await protocol.send('Target.closeTarget', { targetId: target.targetId });
+      } catch {
+        // A user or the browser may have closed the app-created background tab first.
+      }
+    }
+  };
+  try {
+    const attached = await protocol.send<{ sessionId?: unknown }>('Target.attachToTarget', {
+      targetId: target.targetId,
+      flatten: true,
+    });
+    if (typeof attached.sessionId !== 'string') {
+      throw new Error('업무용 브라우저 탭에 연결하지 못했습니다. 브라우저를 다시 열어 주세요.');
+    }
+    sessionId = attached.sessionId;
+    await protocol.send('Page.enable', {}, sessionId);
+    let reachedHttpOrigin = false;
+    for (let check = 0; check < 60; check += 1) {
       const origin = await evaluateValue<unknown>(session, sessionId, 'location.origin');
+      if (typeof origin === 'string' && /^https?:\/\//.test(origin)) {
+        reachedHttpOrigin = true;
+        break;
+      }
+      if (check < 59) await new Promise<void>((resolve) => setTimeout(resolve, 250));
+    }
+    if (!reachedHttpOrigin) {
+      throw new Error('업무 시스템 화면이 열리는 시간이 지났습니다. 네트워크를 확인한 뒤 업무용 브라우저를 다시 열어 주세요.');
+    }
+    const pageSessionId = sessionId;
+    return {
+    async currentOrigin() {
+      const origin = await evaluateValue<unknown>(session, pageSessionId, 'location.origin');
       return typeof origin === 'string' ? origin : '';
     },
     async inspectCandidates() {
       return readCandidateSummaries(
-        await evaluateValue(session, sessionId, CANDIDATE_SCAN_EXPRESSION),
+        await evaluateValue(session, pageSessionId, CANDIDATE_SCAN_EXPRESSION),
       );
     },
     async pressCandidate(candidate, step) {
       const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
       const action = await evaluateValue<{ ok?: unknown; x?: unknown; y?: unknown }>(
         session,
-        sessionId,
+        pageSessionId,
         candidateActionExpression(candidate.index, normalizedText, step.interaction === 'dom-click'),
         step.interaction === 'dom-click',
       );
@@ -604,18 +633,18 @@ export async function openCdpWindowsWorkflowPage(
       }
       await protocol.send('Input.dispatchMouseEvent', {
         type: 'mouseMoved', x: action.x, y: action.y,
-      }, sessionId);
+      }, pageSessionId);
       await protocol.send('Input.dispatchMouseEvent', {
         type: 'mousePressed', x: action.x, y: action.y, button: 'left', clickCount: 1,
-      }, sessionId);
+      }, pageSessionId);
       await protocol.send('Input.dispatchMouseEvent', {
         type: 'mouseReleased', x: action.x, y: action.y, button: 'left', clickCount: 1,
-      }, sessionId);
+      }, pageSessionId);
     },
     async checkPostcondition(step) {
       return Boolean(await evaluateValue(
         session,
-        sessionId,
+        pageSessionId,
         postconditionExpression(step),
       ));
     },
@@ -624,16 +653,21 @@ export async function openCdpWindowsWorkflowPage(
     },
     async activate() {
       await protocol.send('Target.activateTarget', { targetId: target.targetId });
-      await protocol.send('Page.bringToFront', {}, sessionId);
+      await protocol.send('Page.bringToFront', {}, pageSessionId);
     },
+    release,
     async readApprovalCount(system) {
       return evaluateValue<number>(
         session,
-        sessionId,
+        pageSessionId,
         approvalCounterExpression(system),
       );
     },
-  };
+    };
+  } catch (error) {
+    await release();
+    throw error;
+  }
 }
 
 export async function openCdpWindowsApprovalPage(
@@ -644,7 +678,7 @@ export async function openCdpWindowsApprovalPage(
     session,
     input.system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
     undefined,
-    { background: true },
+    { background: true, closeCreatedTargetOnRelease: true },
   );
   if (!page.readApprovalCount) {
     throw new Error('결재 대기 수 읽기 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');

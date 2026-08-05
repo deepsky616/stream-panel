@@ -100,6 +100,40 @@ describe('approval monitor rules', () => {
 });
 
 describe('approval monitor service', () => {
+  it('coalesces overlapping checks for the same system into one scan', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    let scans = 0;
+    let releaseScan!: (count: number) => void;
+    const pendingScan = new Promise<number>((resolve) => { releaseScan = resolve; });
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: {
+        scan: async () => {
+          scans += 1;
+          return pendingScan;
+        },
+      },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+    await service.start();
+
+    const first = service.check({ system: 'neis' });
+    const second = service.check({ system: 'neis' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(scans).toBe(1);
+    releaseScan(3);
+    await Promise.all([first, second]);
+
+    expect(scans).toBe(1);
+    expect(service.getStatuses()).toContainEqual(
+      expect.objectContaining({ system: 'neis', pendingCount: 3 }),
+    );
+  });
+
   it('uses the first read after restart or a browser change as a fresh baseline', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;
