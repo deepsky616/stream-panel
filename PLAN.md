@@ -179,8 +179,10 @@ export interface MultiActionProgress {
 export type BuiltInWebWorkflowId =
   | 'neis-leave'
   | 'neis-trip'
+  | 'neis-approval-inbox'
   | 'edufine-draft'
-  | 'edufine-purchase';
+  | 'edufine-purchase'
+  | 'edufine-approval-inbox';
 
 export type WebWorkflowId = BuiltInWebWorkflowId | 'custom';
 
@@ -213,6 +215,28 @@ export interface WebConnectorStatus {
   paired: boolean;
   connected: boolean;
   lastSeenAt?: number;
+}
+
+export interface ApprovalMonitorConfig {
+  sources: Record<WebWorkflowSystem, {
+    enabled: boolean;                    // 기본 false
+    browserId: WebConnectorBrowserId;    // 기본 edge
+  }>;
+  intervalMinutes: 5 | 10 | 30;          // 기본 10
+  notifyOnlyOnIncrease: boolean;         // 기본 true
+  workHours: {
+    enabled: boolean;                    // 기본 true
+    start: string;                       // HH:mm, 기본 08:00
+    end: string;                         // HH:mm, 기본 18:00
+  };
+}
+
+export interface ApprovalMonitorStatus {
+  system: WebWorkflowSystem;
+  state: 'disabled' | 'idle' | 'checking' | 'ready' | 'login-required' | 'error';
+  pendingCount?: number;
+  lastCheckedAt?: number;
+  message?: string;
 }
 
 /** URL을 특정 브라우저·프로필·전용 창으로 여는 설정 (§6.13) */
@@ -298,6 +322,7 @@ export interface AppConfig {
   window: WindowConfig;
   behavior: BehaviorConfig;
   keyboard: KeyboardConfig;
+  approvalMonitor: ApprovalMonitorConfig; // Windows 전용 결재 대기 알림 (§6.16)
   theme: 'dark' | 'light' | 'system';   // 기본 'system'
   hotkey: string;                       // Electron accelerator. 기본 'Control+Alt+D'
   launchAtLogin: boolean;               // 기본 false
@@ -473,6 +498,8 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `web-connector:status` | `{}` | `WebConnectorStatus[]` | Windows 전용. 교육청별 업무용 엣지·크롬 준비와 실행 상태 (§6.14) |
 | `web-connector:test` | `{ browserId: 'chrome'\|'edge' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 전용 프로필을 열고 소속 교육청 포털 연결을 확인 |
 | `web-connector:open-setup` | `{ browserId: 'chrome'\|'edge'; target:'pair'\|'folder'\|'extensions' }` | `{ok:true} \| {ok:false; message:string}` | Windows 전용. 전용 업무 포털 또는 정제된 진단 폴더 열기. `extensions`는 예전 호출 호환 안내만 반환 |
+| `web-approval:status` | `{}` | `ApprovalMonitorStatus[]` | Windows 전용. 나이스·에듀파인 결재 대기 수와 마지막 확인 상태 (§6.16) |
+| `web-approval:check` | `{ system?: 'neis'\|'edufine' }` | `ApprovalMonitorStatus[]` | Windows 전용. 켜진 업무의 대기 수를 즉시 읽기 전용으로 확인 |
 | `multi-action:cancel` | `{ itemId: string }` | `{ok:true} \| {ok:false; message:string}` | 실행 중인 멀티 액션 취소 (§6.15) |
 | `icon:resolve` | `{ type: ActionType; target: string }` | `string \| null` | 아이콘 data URL (캐시 사용) |
 | `drop:classify` | `{ paths: string[]; text?: string }` | `Partial<ActionItem>[]` | OS 드롭 대상을 액션으로 변환 (§9.6) |
@@ -500,6 +527,7 @@ JSON이 손상된 경우도 동일하게 처리한다.
 | `editor:focus-slot` | `{ path: string[]; slot: number }` | 패널의 `+` 클릭으로 편집기가 열릴 때 |
 | `toast` | `{ level:'info'\|'error', message:string }` | 실행 실패 등 한국어 알림 |
 | `multi-action:progress` | `MultiActionProgress` | 실행 단계·완료·실패·취소 상태 (§6.15) |
+| `web-approval:changed` | `ApprovalMonitorStatus[]` | 결재 대기 수·로그인 필요·오류 상태 변경 (§6.16) |
 
 ### 5.3 preload 노출 형태
 
@@ -515,6 +543,7 @@ contextBridge.exposeInMainWorld('api', {
   apps:   { list },
   browsers: { list },
   webConnector: { status, test, openSetup },
+  approvalMonitor: { status, check },
   multiAction: { cancel },
   drop:   { classify },
   window: { hide, show, relayout, setIdle },
@@ -1332,6 +1361,26 @@ Windows에 등록된 `WXSClient`가 있어야 하며 새로 생긴 표준 서식
   저장·제출·상신·승인·결재를 자동 실행하지 않는다.
 - 임의 셸 명령, 키 입력 흉내, 임의 자바스크립트와 조건 분기는 지원하지 않는다.
 
+### 6.16 결재 대기 업무 알림 · Windows 전용 (`services/approvalMonitor/`)
+
+나이스와 에듀파인의 결재함 목록까지 읽기 전용으로 이동해 대기 건수만 확인한다. 기능은 기본으로
+꺼져 있으며, 설정에서 시스템별 사용 여부와 업무용 엣지 또는 크롬을 고른 뒤 켠다. macOS에서는
+설정 화면, 통신 처리기와 서비스를 만들지 않는다.
+
+- 확인 주기는 5분, 10분, 30분 중 하나이며 기본 10분이다.
+- 근무 시간 제한은 기본 08:00부터 18:00까지 켜져 있고 자정을 넘기는 범위도 허용한다.
+- 앱 재시작, 교육청 변경, 브라우저 변경 뒤 첫 확인은 기준값만 만들며 알림을 보내지 않는다.
+- 같은 연결에서 대기 수가 늘었을 때만 윈도우 알림을 보낸다. 설정에서 매 확인 알림으로 바꿀 수 있다.
+- 결재함 키에는 해당 시스템의 대기 수 배지를 표시한다. 키를 누르면 결재함 목록을 앞으로 가져온다.
+- 승인, 반려, 서명, 결재 처리, 저장과 제출 요소는 누르지 않는다. 결재함과 대기 문서처럼
+  이동 역할이 확인된 정확한 메뉴만 한 개 보일 때 누른다.
+- 클릭 전후와 수량 읽기 전후에 교육청별 허용 주소를 다시 검사한다. 로그인 포털이나 다른 주소면
+  화면 내용을 읽지 않고 멈춘다.
+- `userData/approval-monitor/state.json`에는 시스템별 대기 수, 마지막 확인 시각과 마지막 알림 수만
+  저장한다. 문서 제목, 작성자, 본문, 인증 정보, 쿠키와 화면 원문은 저장하지 않는다.
+- 예약 확인은 업무용 브라우저의 기존 교육청·브라우저 큐를 함께 써서 작성 화면 이동과 겹치지 않는다.
+- 실제 기관 계정에서 화면 메뉴와 수량 표시가 확인되기 전에는 윈도우 실기 완료로 표시하지 않는다.
+
 ---
 
 ## 7. 액션 실행 엔진 (`launcher.ts`)
@@ -1724,6 +1773,8 @@ macOS 탭 5개: `일반` / `동작` / `모양` / `단축키` / `정보`. `웹 �
   - `업무용 브라우저 열기` · `연결 시험`, 오류일 때만 `문제 해결 폴더 열기`
   - `내 웹 업무 만들기`: 업무 이름 · 나이스/에듀파인 · 엣지/크롬 · 최대 8개 메뉴 이름 · 도착 확인 문구
   - `키로 추가`를 누르면 루트의 첫 빈 위치에 만들고 속성 패널에서 경로를 읽기 전용으로 표시
+  - `업무 알림`: 시스템별 켜기 · 브라우저 · 확인 주기 · 근무 시간 · 지금 확인 · 결재함 키 추가
+  - 결재 대기 수, 마지막 확인 상태와 로그인 필요 원인을 표시하고 대기 수 배지를 패널 키에 연결
   - 개인 프로필 분리, 인증 정보 미저장, 저장·제출·상신·승인·결재 전에 멈춘다는 안내
 
 ### 9.10 문구 언어
@@ -2134,6 +2185,12 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
   다음 메뉴·도착 문구 확인, 숨김·비활성·중복 요소 제외, 위험 단추를 절대 선택하지 않음
 - `webConnectorPlatform.test.ts` — 허용 탭과 주소 재검증, 로그인 포털 중단,
   `WXSClient` 확인과 새 창만 활성화, macOS 안전 기본값
+- `approvalMonitor.test.ts` — 기본 꺼짐, 설정 이전, 근무 시간, 증가 알림, 연결 변경 기준값,
+  수량과 시각 외 문서 자료를 저장하지 않음, macOS에서 확인 작업을 시작하지 않음
+- `approvalMonitorWindows.test.ts` / `approvalMonitorHandlers.test.ts` — 결재함 주소 재검증,
+  안전한 정수 수량만 허용, 로그인 포털에서 읽기 중단, 고정 통신 입력 검증
+- `approvalMonitorUi.test.ts` — Windows 웹 업무 설정 배치, 나이스·에듀파인 결재함 키,
+  시스템별 대기 수 배지와 사용자 처리 안전 안내
 - `multiAction.test.ts` — 순차 실행, 기다리기 순서, 실패 즉시 중단, 중복 실행 거부,
   취소 뒤 재실행, 최대 단계·전체 기다리기 제한, 없는 키와 중첩 멀티 액션 참조 거부
 
@@ -2328,6 +2385,14 @@ StreamPanel-1.0.0-x64.dmg             # macOS Intel
 - [ ] 교육청을 바꾸면 이전 교육청의 업무용 브라우저 세션만 닫힌다
 - [ ] 스트림 패널 종료 때 업무용 브라우저는 닫히고 사용자가 연 개인 브라우저는 남는다
 - [ ] 문제 해결 폴더에는 전체 주소, 화면 내용, 암호와 인증서 자료가 기록되지 않는다
+- [ ] 업무 알림은 처음에는 꺼져 있고 나이스와 에듀파인을 각각 켤 수 있다
+- [ ] 지금 확인 뒤 시스템별 결재 대기 수와 마지막 확인 상태가 보인다
+- [ ] 결재함 키를 추가하면 루트 첫 빈 위치에 생기고 해당 시스템 대기 수 배지가 표시된다
+- [ ] 앱 재시작, 교육청 변경과 브라우저 변경 직후 첫 확인에서는 증가 알림이 울리지 않는다
+- [ ] 같은 연결에서 대기 수가 늘면 윈도우 알림이 한 번 나타난다
+- [ ] 로그인 만료 때 인증 정보를 대신 입력하지 않고 로그인 필요 원인과 해결 방법을 표시한다
+- [ ] 결재함 목록까지만 열고 승인, 반려, 서명과 결재 처리 단추는 누르지 않는다
+- [ ] 상태 파일에는 수량과 시각만 있고 문서 제목, 작성자, 본문, 쿠키와 인증 자료가 없다
 - [ ] 실제 기관 계정과 인증서 환경에서 위 항목을 확인하기 전에는 실기 완료로 표시하지 않는다
 
 ### 15.7 macOS 전용
@@ -2466,6 +2531,19 @@ URL 키에 Chrome + 업무용 프로필 + 전용 창을 지정하면 **기본 �
 패널에서 취소할 수 있고 취소 뒤 다시 실행할 수 있다. 중첩 멀티 액션과 없는 키 참조는
 저장 단계에서 거부된다. 임의 셸 명령과 스크립트 실행 경로가 없고 양쪽 운영체제에서
 `multiAction.test.ts`와 전체 기존 테스트가 통과한다.
+
+### M6.8 — 결재 대기 업무 알림 · Windows 전용
+
+`services/approvalMonitor/{index,windows,macos}.ts`, `web-approval:status`와
+`web-approval:check`, `web-approval:changed`, 설정의 `업무 알림`, 결재함 키와 대기 수 배지를
+구현한다. 나이스와 에듀파인별 브라우저, 5분·10분·30분 확인 주기, 근무 시간과 증가 알림 정책을
+지원한다.
+
+**수용 기준:** 기본 꺼짐이며 macOS에서는 초기화되지 않는다. Windows에서는 허용된 교육청의
+결재함 목록에서 0부터 9999까지의 정수 수량만 읽고, 연결별 첫 확인을 기준값으로 삼은 뒤 증가할
+때만 알린다. 결재함 키를 누르면 목록까지만 열고 승인, 반려, 서명과 결재 처리는 누르지 않는다.
+상태 파일에는 수량과 시각만 저장한다. 관련 검증과 전체 기존 검증이 통과하며 실제 기관 계정 실기는
+별도 확인표로 남긴다.
 
 ### M7 — 트레이 · 키별 단축키 · 가장자리 피크 · 설정 · 자동 시작 · 마감
 `tray.ts`, `shortcuts.ts`, `autoLaunch.ts`,
