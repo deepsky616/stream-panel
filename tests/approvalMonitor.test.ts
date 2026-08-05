@@ -8,6 +8,7 @@ import {
   isWithinApprovalWorkHours,
   shouldSendApprovalNotification,
 } from '../src/main/services/approvalMonitor';
+import { createMacosApprovalScanner } from '../src/main/services/approvalMonitor/macos';
 
 function windowsConfig(): AppConfig {
   let id = 0;
@@ -57,6 +58,14 @@ describe('approval monitor settings', () => {
 });
 
 describe('approval monitor rules', () => {
+  it('returns a safe empty result from the macOS platform adapter', async () => {
+    await expect(createMacosApprovalScanner().scan({
+      system: 'neis',
+      officeCode: 'goe',
+      browserId: 'edge',
+    })).resolves.toBe(0);
+  });
+
   it('checks normal and overnight local work-hour windows', () => {
     expect(isWithinApprovalWorkHours(new Date(2026, 7, 5, 9, 30), {
       enabled: true,
@@ -130,6 +139,45 @@ describe('approval monitor service', () => {
     expect(notifications).toEqual([6]);
     await service.check({ system: 'neis' });
     expect(notifications).toEqual([6, 10]);
+  });
+
+  it('discards an old browser result that finishes after the connection changes', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    let releaseOldScan!: (count: number) => void;
+    const oldScan = new Promise<number>((resolve) => { releaseOldScan = resolve; });
+    let scanNumber = 0;
+    const notifications: number[] = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: {
+        scan: async () => {
+          scanNumber += 1;
+          if (scanNumber === 1) return 1;
+          if (scanNumber === 2) return oldScan;
+          return scanNumber === 3 ? 8 : 9;
+        },
+      },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      notify: (_system, count) => { notifications.push(count); },
+      setTimer: (handler) => handler,
+      clearTimer: () => undefined,
+    });
+    await service.start();
+    await service.check({ system: 'neis' });
+
+    const staleCheck = service.check({ system: 'neis' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    config.approvalMonitor.sources.neis.browserId = 'chrome';
+    service.onConfigChanged(config);
+    releaseOldScan(7);
+    await staleCheck;
+
+    await service.check({ system: 'neis' });
+    expect(notifications).toEqual([]);
+    await service.check({ system: 'neis' });
+    expect(notifications).toEqual([9]);
   });
 
   it('checks only enabled systems, broadcasts counts, and persists counts without document data', async () => {

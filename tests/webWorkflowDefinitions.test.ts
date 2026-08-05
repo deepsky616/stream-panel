@@ -5,8 +5,10 @@ import { NEIS_WORKFLOWS } from '../src/main/services/webConnector/workflows/neis
 import { isForbiddenActionText } from '../src/main/services/webConnector/workflows/common';
 import * as workflowCommon from '../src/main/services/webConnector/workflows/common';
 import type { WebWorkflowSpec } from '../src/shared/types';
+import { APPROVAL_INBOX_WORKFLOWS } from '../src/main/services/approvalMonitor/definitions';
 
 const definitions = { ...NEIS_WORKFLOWS, ...EDUFINE_WORKFLOWS };
+const allDefinitions = { ...definitions, ...APPROVAL_INBOX_WORKFLOWS };
 
 describe('managed web workflow definitions', () => {
   it('turns a custom path into checked navigation steps ending at the requested screen text', () => {
@@ -106,7 +108,7 @@ describe('managed web workflow definitions', () => {
   });
 
   it('never places forbidden action text in a clickable candidate label', () => {
-    for (const definition of Object.values(definitions)) {
+    for (const definition of Object.values(allDefinitions)) {
       for (const step of definition.steps) {
         expect(step.candidateLabels.length).toBeGreaterThan(0);
         expect(step.maxChecks).toBe(3);

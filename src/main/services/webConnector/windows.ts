@@ -39,10 +39,12 @@ import {
 } from './sessionManager';
 import {
   scanWindowsApprovalCount,
-  type ApprovalScanInput,
   type WindowsApprovalPage,
 } from '../approvalMonitor/windows';
-import { APPROVAL_INBOX_WORKFLOWS } from '../approvalMonitor/definitions';
+import {
+  APPROVAL_INBOX_WORKFLOWS,
+  type ApprovalScanInput,
+} from '../approvalMonitor/definitions';
 
 export interface ResolveWindowsManagedBrowserOptions {
   env?: NodeJS.ProcessEnv;

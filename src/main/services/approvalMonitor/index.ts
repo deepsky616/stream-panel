@@ -6,7 +6,7 @@ import type {
   ApprovalWorkHoursConfig,
   WebWorkflowSystem,
 } from '../../../shared/types';
-import type { ApprovalScanInput } from './windows';
+import type { ApprovalScanInput } from './definitions';
 
 const SYSTEMS = ['neis', 'edufine'] as const;
 
@@ -166,6 +166,9 @@ export function createApprovalMonitorService({
   let tail: Promise<void> = Promise.resolve();
   const establishedBaselines = new Set<WebWorkflowSystem>();
   let sourceSignatures = new Map<WebWorkflowSystem, string>();
+  const sourceRevisions = new Map<WebWorkflowSystem, number>(
+    SYSTEMS.map((system) => [system, 0]),
+  );
 
   const sourceSignature = (config: AppConfig, system: WebWorkflowSystem): string => {
     const source = config.approvalMonitor.sources[system];
@@ -227,6 +230,7 @@ export function createApprovalMonitorService({
           const config = getConfig();
           const source = config.approvalMonitor.sources[system];
           if (!source.enabled) continue;
+          const sourceRevision = sourceRevisions.get(system) ?? 0;
           const index = statuses.findIndex((status) => status.system === system);
           const previous = state.systems[system];
           statuses[index] = {
@@ -244,6 +248,11 @@ export function createApprovalMonitorService({
               browserId: source.browserId,
               officeCode: config.educationOfficeCode,
             });
+            if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
+              statuses = createStatuses();
+              publish();
+              continue;
+            }
             const checkedAt = now();
             const sendNotification = establishedBaselines.has(system) &&
               shouldSendApprovalNotification(
@@ -261,6 +270,14 @@ export function createApprovalMonitorService({
                   : { lastNotifiedCount: previous.lastNotifiedCount }),
             };
             await persist();
+            if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
+              if (previous) state.systems[system] = previous;
+              else delete state.systems[system];
+              await persist();
+              statuses = createStatuses();
+              publish();
+              continue;
+            }
             statuses[index] = {
               system,
               state: 'ready',
@@ -295,6 +312,7 @@ export function createApprovalMonitorService({
         const nextSignature = sourceSignature(config, system);
         if (sourceSignatures.get(system) !== nextSignature) {
           establishedBaselines.delete(system);
+          sourceRevisions.set(system, (sourceRevisions.get(system) ?? 0) + 1);
         }
         sourceSignatures.set(system, nextSignature);
       }

@@ -1,5 +1,15 @@
-import type { WebWorkflowSystem } from '../../../shared/types';
+import type {
+  EducationOfficeCode,
+  WebConnectorBrowserId,
+  WebWorkflowSystem,
+} from '../../../shared/types';
 import type { ManagedWorkflowDefinition } from '../webConnector/workflows/common';
+
+export interface ApprovalScanInput {
+  system: WebWorkflowSystem;
+  officeCode: EducationOfficeCode;
+  browserId: WebConnectorBrowserId;
+}
 
 const COMMON_CHECKS = { maxChecks: 3 as const, checkDelayMs: 250 };
 

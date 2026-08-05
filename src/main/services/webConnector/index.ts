@@ -32,7 +32,7 @@ import {
   type WindowsManagedBrowserSession,
 } from './windows';
 import type { WorkflowRunResult } from './workflows/engine';
-import type { ApprovalScanInput } from '../approvalMonitor/windows';
+import type { ApprovalScanInput } from '../approvalMonitor/definitions';
 
 export type ConnectorReply = { ok: true } | { ok: false; message: string };
 

@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { DeckItem } from '../../../shared/types';
-import type { ApprovalBadge } from '../panel/approvalBadge';
+
+export interface KeyTileStatusBadge {
+  label: string;
+  title: string;
+  state: string;
+}
 
 interface KeyTileProps {
   item: DeckItem;
@@ -10,7 +15,7 @@ interface KeyTileProps {
   failed?: boolean;
   hint?: string;
   hintMuted?: boolean;
-  statusBadge?: ApprovalBadge;
+  statusBadge?: KeyTileStatusBadge;
 }
 
 function iconText(item: DeckItem): string {

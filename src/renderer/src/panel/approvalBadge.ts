@@ -1,10 +1,7 @@
 import type { ApprovalMonitorStatus, DeckItem, WebWorkflowSystem } from '../../../shared/types';
+import type { KeyTileStatusBadge } from '../common/KeyTile';
 
-export interface ApprovalBadge {
-  label: string;
-  title: string;
-  state: ApprovalMonitorStatus['state'];
-}
+export type ApprovalBadge = KeyTileStatusBadge;
 
 function systemForItem(item: DeckItem): WebWorkflowSystem | null {
   if (item.kind !== 'action') return null;

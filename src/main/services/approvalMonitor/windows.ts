@@ -1,20 +1,12 @@
 import { getEducationOffice, isAllowedOfficeHost } from '../../../shared/educationOffices';
 import type {
-  EducationOfficeCode,
-  WebConnectorBrowserId,
   WebWorkflowSystem,
 } from '../../../shared/types';
 import { isAllowedWebWorkflowTarget } from '../../../shared/webWorkflows';
 import type { ManagedBrowserSession } from '../webConnector/sessionManager';
 import type { WorkflowPageAdapter } from '../webConnector/workflows/engine';
 import { runWorkflow } from '../webConnector/workflows/engine';
-import { APPROVAL_INBOX_WORKFLOWS } from './definitions';
-
-export interface ApprovalScanInput {
-  system: WebWorkflowSystem;
-  officeCode: EducationOfficeCode;
-  browserId: WebConnectorBrowserId;
-}
+import { APPROVAL_INBOX_WORKFLOWS, type ApprovalScanInput } from './definitions';
 
 export interface WindowsApprovalPage extends WorkflowPageAdapter {
   currentOrigin(): Promise<string>;
