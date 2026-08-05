@@ -215,4 +215,45 @@ describe('approval monitor service', () => {
       expect.objectContaining({ system: 'edufine', state: 'disabled' }),
     ]);
   });
+
+  it('reschedules outside work hours and scans from the shared timer during work hours', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    let currentTime = new Date(2026, 7, 5, 20, 0).getTime();
+    let scans = 0;
+    const timers: Array<{ handler: () => void; delayMs: number }> = [];
+    const cleared: unknown[] = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => { scans += 1; return 3; } },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      now: () => currentTime,
+      setTimer: (handler, delayMs) => {
+        const timer = { handler, delayMs };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer: (handle) => { cleared.push(handle); },
+    });
+
+    await service.start();
+    expect(timers.at(-1)?.delayMs).toBe(10 * 60_000);
+    timers.at(-1)?.handler();
+    expect(scans).toBe(0);
+    expect(timers).toHaveLength(2);
+
+    currentTime = new Date(2026, 7, 6, 9, 30).getTime();
+    timers.at(-1)?.handler();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(scans).toBe(1);
+    expect(service.getStatuses()).toEqual([
+      expect.objectContaining({ system: 'neis', state: 'ready', pendingCount: 3 }),
+      expect.objectContaining({ system: 'edufine', state: 'disabled' }),
+    ]);
+    expect(timers.at(-1)?.delayMs).toBe(10 * 60_000);
+
+    await service.stop();
+    expect(cleared.length).toBeGreaterThan(0);
+  });
 });
