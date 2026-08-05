@@ -54,6 +54,11 @@ export const DEFAULT_APPROVAL_MONITOR = {
   workHours: { enabled: true, start: '08:00', end: '18:00' },
 } as const;
 
+export const DEFAULT_WEB_CONNECTION = {
+  autoConnectAfterPortalLogin: true,
+  autoConnectTarget: 'both',
+} as const;
+
 function getRuntimePlatform(): string {
   return (globalThis as { process?: { platform?: string } }).process?.platform ?? 'win32';
 }
@@ -121,6 +126,7 @@ export function createDefaultConfig(
       ...DEFAULT_KEYBOARD,
       globalNumberModifier: configPlatform === 'darwin' ? 'Control+Alt' : 'Alt+Shift',
     },
+    webConnection: { ...DEFAULT_WEB_CONNECTION },
     approvalMonitor: structuredClone(DEFAULT_APPROVAL_MONITOR),
     theme: 'system',
     hotkey: 'CommandOrControl+Alt+D',

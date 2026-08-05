@@ -49,6 +49,7 @@ describe('store migration', () => {
     delete legacy.behavior;
     delete legacy.keyboard;
     delete legacy.educationOfficeCode;
+    delete legacy.webConnection;
     legacy.hotkey = 'Control+Alt+D';
 
     const result = recoverConfigText(JSON.stringify(legacy), defaults);
@@ -66,6 +67,10 @@ describe('store migration', () => {
     expect(result.config.keyboard.hintKeys).toHaveLength(40);
     expect(result.config.hotkey).toBe('CommandOrControl+Alt+D');
     expect(result.config.educationOfficeCode).toBe('goe');
+    expect(result.config.webConnection).toEqual({
+      autoConnectAfterPortalLogin: true,
+      autoConnectTarget: 'both',
+    });
   });
 
   it('preserves an allowed office and replaces an invalid office with Gyeonggi', () => {

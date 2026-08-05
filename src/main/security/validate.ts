@@ -474,6 +474,13 @@ export function validateAppConfig(config: AppConfig): void {
   if (!isEducationOfficeCode(config.educationOfficeCode)) {
     throw new ValidationError('소속 교육청 설정이 올바르지 않습니다. 목록에서 다시 선택해 주세요.');
   }
+  if (
+    !config.webConnection ||
+    typeof config.webConnection.autoConnectAfterPortalLogin !== 'boolean' ||
+    !['neis', 'edufine', 'both'].includes(config.webConnection.autoConnectTarget)
+  ) {
+    throw new ValidationError('업무포털 자동 연결 설정에서 나이스, 에듀파인 또는 둘 다를 선택해 주세요.');
+  }
   const approvalMonitor = config.approvalMonitor;
   const validTime = (value: unknown): value is string => (
     typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)

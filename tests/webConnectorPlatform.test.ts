@@ -374,6 +374,74 @@ describe('Windows managed web automation', () => {
     expect(ssoClicked).toBe(true);
   });
 
+  it('enters K-Edufine through the official portal SSO menu instead of a direct login URL', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let ssoClicked = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') {
+          const url = ssoClicked
+            ? 'https://klef.goe.go.kr/main'
+            : 'https://goe.eduptl.kr/bpm_man_mn00_001.do';
+          return { targetInfos: [{ targetId: 'portal', type: 'page', url }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'portal-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 9 };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('loginVisible')) {
+            const href = ssoClicked
+              ? 'https://klef.goe.go.kr/main'
+              : 'https://goe.eduptl.kr/bpm_man_mn00_001.do';
+            return { result: { value: {
+              href,
+              origin: new URL(href).origin,
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes('clickable().slice')) {
+            return { result: { value: [safeCandidate(0, 'K-에듀파인')] } };
+          }
+          if (expression.includes('const item=clickable()')) {
+            ssoClicked = true;
+            return { result: { value: { ok: true, x: 2, y: 2 } } };
+          }
+          if (expression === 'location.origin') {
+            return { result: { value: 'https://klef.goe.go.kr' } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    const workflowPage = await openCdpWindowsWorkflowPage(
+      session as never,
+      'edufine-purchase',
+    );
+
+    expect(ssoClicked).toBe(true);
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.some(({ method, params }) => (
+      method === 'Page.navigate' && String(params.url).includes('klef.goe.go.kr')
+    ))).toBe(false);
+    await workflowPage.release?.();
+  });
+
   it('stops on a login portal or an unapproved origin before inspecting page content', async () => {
     let inspections = 0;
     const loginPage = page('https://goe.eduptl.kr');
@@ -518,6 +586,20 @@ describe('Windows managed web automation', () => {
       focusWindow: async (id) => { focused.push(id); return true; },
     })).resolves.toMatchObject({ finalState: 'standard-form-editor' });
     expect(focused).toEqual([11]);
+
+    let reusedChecks = 0;
+    const reusedFocus: number[] = [];
+    await expect(executeWindowsWorkflow(session, workflowRequest, {
+      openWorkflowPage: async () => page('https://klef.goe.go.kr'),
+      isWxsClientRegistered: async () => true,
+      listWxsClientWindows: async () => {
+        reusedChecks += 1;
+        return [{ id: 22, title: 'K-에듀파인 문서작성', handle: 220 }];
+      },
+      focusWindow: async (id) => { reusedFocus.push(id); return true; },
+    })).resolves.toMatchObject({ finalState: 'standard-form-editor' });
+    expect(reusedChecks).toBeGreaterThanOrEqual(9);
+    expect(reusedFocus).toEqual([22]);
   });
 });
 

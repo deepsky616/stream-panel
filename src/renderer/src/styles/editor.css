@@ -1128,9 +1128,78 @@
 }
 
 .connector-state-needs-connection,
+.connector-state-login-required,
 .connector-state-error {
   color: #ef7777;
   background: rgb(239 119 119 / 14%);
+}
+
+.portal-auto-connect {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(190px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--tile));
+}
+
+.portal-auto-connect > div {
+  display: grid;
+  gap: 4px;
+}
+
+.portal-auto-connect small {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.portal-auto-connect > label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.connector-system-list {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.connector-system {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.connector-system b {
+  color: var(--text);
+}
+
+.connector-system-connecting {
+  color: #e5b95c;
+  border-color: rgb(229 185 92 / 42%);
+}
+
+.connector-system-connected {
+  color: #65c88b;
+  border-color: rgb(45 166 91 / 42%);
+}
+
+.connector-system-login-required,
+.connector-system-error {
+  color: #ef7777;
+  border-color: rgb(239 119 119 / 42%);
 }
 
 .connector-error {

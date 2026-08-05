@@ -6,7 +6,7 @@ import { isAllowedWebWorkflowTarget } from '../../../shared/webWorkflows';
 import type { ManagedBrowserSession } from '../webConnector/sessionManager';
 import type { WorkflowPageAdapter } from '../webConnector/workflows/engine';
 import { runWorkflow } from '../webConnector/workflows/engine';
-import { APPROVAL_INBOX_WORKFLOWS, type ApprovalScanInput } from './definitions';
+import { APPROVAL_INBOX_WORKFLOW_ROUTES, type ApprovalScanInput } from './definitions';
 
 export interface WindowsApprovalPage extends WorkflowPageAdapter {
   currentOrigin(): Promise<string>;
@@ -100,10 +100,10 @@ export function parseApprovalCounterCandidates(
   if (!Array.isArray(value) || value.length > 100 || !value.every(isCounterCandidate)) {
     throw new Error('결재 대기 수 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
   }
-  const counts = new Set<number>();
-  for (const candidate of value) {
-    const candidateTexts = [candidate.text, candidate.ariaLabel, candidate.title];
-    for (const label of COUNTER_LABELS[system]) {
+  for (const label of COUNTER_LABELS[system]) {
+    const counts = new Set<number>();
+    for (const candidate of value) {
+      const candidateTexts = [candidate.text, candidate.ariaLabel, candidate.title];
       for (const text of candidateTexts) {
         const count = inlineCount(text, label);
         if (count !== null) counts.add(parseApprovalCounterValue(count));
@@ -118,14 +118,12 @@ export function parseApprovalCounterCandidates(
         if (count !== null) counts.add(parseApprovalCounterValue(count));
       }
     }
+    if (counts.size > 1) {
+      throw new Error(`'${label}' 결재 대기 수가 둘 이상 보여 안전하게 고를 수 없습니다. 결재함 화면을 직접 확인해 주세요.`);
+    }
+    if (counts.size === 1) return [...counts][0];
   }
-  if (counts.size === 0) {
-    throw new Error('결재 대기 수를 안전하게 읽지 못했습니다. 결재함 화면을 직접 확인해 주세요.');
-  }
-  if (counts.size > 1) {
-    throw new Error('결재 대기 수가 둘 이상 보여 안전하게 고를 수 없습니다. 결재함 화면을 직접 확인해 주세요.');
-  }
-  return [...counts][0];
+  throw new Error('결재 대기 수를 안전하게 읽지 못했습니다. 결재함 화면을 직접 확인해 주세요.');
 }
 
 function approvalWorkflowId(system: WebWorkflowSystem) {
@@ -178,7 +176,23 @@ export async function scanWindowsApprovalCount(
       },
       wait: (delayMs) => page.wait(delayMs),
     };
-    await runWorkflow(APPROVAL_INBOX_WORKFLOWS[input.system], guardedPage);
+    const routes = APPROVAL_INBOX_WORKFLOW_ROUTES[input.system];
+    let completed = false;
+    let routeError: unknown;
+    for (const [index, route] of routes.entries()) {
+      try {
+        await runWorkflow(route, guardedPage);
+        completed = true;
+        routeError = undefined;
+        break;
+      } catch (error) {
+        routeError = error;
+        const recoverable = error instanceof Error &&
+          /메뉴를 찾지 못했습니다|기대한 화면을 확인하지 못했습니다/.test(error.message);
+        if (index === routes.length - 1 || !recoverable) throw error;
+      }
+    }
+    if (!completed) throw routeError;
     await assertOrigin();
     const count = parseApprovalCounterValue(await page.readApprovalCount(input.system));
     await assertOrigin();

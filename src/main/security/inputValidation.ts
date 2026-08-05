@@ -20,6 +20,7 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
     'window',
     'behavior',
     'keyboard',
+    'webConnection',
     'approvalMonitor',
     'theme',
     'hotkey',
@@ -131,6 +132,20 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
       keyboard.quickLauncherHotkey.length > 80
     ) {
       throw new TypeError('키보드 설정이 올바르지 않습니다. 힌트 문자는 중복 없이 입력해 주세요.');
+    }
+  }
+  if ('webConnection' in value) {
+    assertRecord(value.webConnection, '업무포털 자동 연결');
+    const connection = value.webConnection;
+    if (
+      Object.keys(connection).some((key) => ![
+        'autoConnectAfterPortalLogin',
+        'autoConnectTarget',
+      ].includes(key)) ||
+      typeof connection.autoConnectAfterPortalLogin !== 'boolean' ||
+      !['neis', 'edufine', 'both'].includes(String(connection.autoConnectTarget))
+    ) {
+      throw new TypeError('업무포털 자동 연결 설정이 올바르지 않습니다. 연결할 시스템을 다시 선택해 주세요.');
     }
   }
   if ('approvalMonitor' in value) {

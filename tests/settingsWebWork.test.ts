@@ -108,6 +108,22 @@ describe('web work settings view model', () => {
       expect.objectContaining({ browserId: 'edge', state: 'needs-connection' }),
       expect.objectContaining({ browserId: 'chrome', state: 'error', stateLabel: '오류' }),
     ]);
+    expect(createWebWorkBrowserCards([{
+      browserId: 'edge',
+      paired: true,
+      connected: true,
+      systems: [
+        { system: 'neis', state: 'connected' },
+        { system: 'edufine', state: 'login-required', message: '인증이 필요합니다.' },
+      ],
+    }])[0]).toMatchObject({
+      state: 'login-required',
+      stateLabel: '추가 로그인 필요',
+      systems: [
+        { system: 'neis', label: '나이스', stateLabel: '연결됨' },
+        { system: 'edufine', label: 'K-에듀파인', stateLabel: '추가 로그인 필요' },
+      ],
+    });
   });
 
   it('retargets workflow addresses for a new office without changing identifiers or references', () => {

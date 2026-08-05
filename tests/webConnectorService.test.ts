@@ -151,14 +151,68 @@ describe('managed web connector service', () => {
         paired: true,
         connected: true,
         lastSeenAt: 1_800_000_000_000,
+        systems: [
+          { system: 'neis', state: 'idle' },
+          { system: 'edufine', state: 'idle' },
+        ],
       },
-      { browserId: 'chrome', paired: false, connected: false },
+      {
+        browserId: 'chrome',
+        paired: false,
+        connected: false,
+        systems: [
+          { system: 'neis', state: 'idle' },
+          { system: 'edufine', state: 'idle' },
+        ],
+      },
     ]);
     expect(JSON.parse(writes.at(-1)!)).toEqual({
       version: 1,
       offices: { goe: { edge: { lastSeenAt: 1_800_000_000_000 } } },
       legacyExtensionNoticeShown: false,
     });
+  });
+
+  it('prepares both system sessions after the portal opens and broadcasts their states', async () => {
+    const inputs: unknown[] = [];
+    const broadcasts: unknown[] = [];
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    controller.connectSystems = async (input, report) => {
+      inputs.push(input);
+      for (const system of input.systems) {
+        report?.({ system, state: 'connecting' });
+        report?.({ system, state: 'connected', checkedAt: 1_800_000_000_001 });
+      }
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+      broadcast: (statuses) => broadcasts.push(statuses),
+    });
+    await service.start();
+
+    await expect(service.test('edge')).resolves.toEqual({ ok: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(inputs).toEqual([expect.objectContaining({
+      officeCode: 'goe',
+      browserId: 'edge',
+      systems: ['neis', 'edufine'],
+    })]);
+    expect(service.getStatuses()[0].systems).toEqual([
+      { system: 'neis', state: 'connected', checkedAt: 1_800_000_000_001 },
+      { system: 'edufine', state: 'connected', checkedAt: 1_800_000_000_001 },
+    ]);
+    expect(broadcasts.length).toBeGreaterThan(0);
   });
 
   it('accepts a validated workflow immediately and reports its later result through notifications', async () => {

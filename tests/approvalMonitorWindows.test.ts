@@ -33,7 +33,7 @@ function page(origin: string, count = 3): WindowsApprovalPage {
 }
 
 describe('Windows approval count reader', () => {
-  it('reads one explicit badge count but rejects a year or conflicting counts', () => {
+  it('reads one explicit badge count, rejects a year, and prioritizes the canonical label', () => {
     const parseApprovalCounterCandidates = (
       approvalWindows as unknown as {
         parseApprovalCounterCandidates?: (
@@ -63,7 +63,7 @@ describe('Windows approval count reader', () => {
         children: [],
       },
     ])).toThrow(/안전하게 읽지 못했습니다/);
-    expect(() => parseApprovalCounterCandidates!('edufine', [
+    expect(parseApprovalCounterCandidates!('edufine', [
       {
         text: '결재할 문서 (2)',
         ariaLabel: '',
@@ -80,7 +80,7 @@ describe('Windows approval count reader', () => {
         role: 'status',
         children: [],
       },
-    ])).toThrow(/둘 이상/);
+    ])).toBe(4);
   });
 
   it('never treats the generic approval action label as an inbox navigation target', () => {

@@ -88,8 +88,13 @@ describe('managed web workflow definitions', () => {
     expect(definitions['edufine-draft'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['업무관리'],
       ['문서관리'],
-      ['공용서식'],
-      ['표준서식(결재4인,협조4인)'],
+      ['기안'],
+      ['공용서식', '공용 서식'],
+      [
+        '표준서식(결재4인,협조4인)',
+        '표준서식(결재 4인, 협조 4인)',
+        '표준서식(결재4인, 협조4인)',
+      ],
     ]);
     expect(definitions['edufine-draft'].steps.at(-1)?.postcondition).toEqual({
       kind: 'new-window',
@@ -98,12 +103,16 @@ describe('managed web workflow definitions', () => {
     });
     expect(definitions['edufine-purchase'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['학교회계'],
-      ['사업관리'],
-      ['품의등록'],
+      ['사업담당'],
+      ['품의/정산', '품의·정산'],
+      ['품의등록', '품의 등록'],
     ]);
     expect(definitions['edufine-purchase'].steps.at(-1)?.postcondition).toEqual({
-      kind: 'visible-all',
-      labels: ['품의등록', '예산내역', '품목내역', '결재요청'],
+      kind: 'visible-groups',
+      groups: [
+        ['품의등록', '품의 등록'],
+        ['기본정보', '제목', '개요', '예산내역', '품목내역'],
+      ],
     });
   });
 
@@ -111,9 +120,10 @@ describe('managed web workflow definitions', () => {
     for (const definition of Object.values(allDefinitions)) {
       for (const step of definition.steps) {
         expect(step.candidateLabels.length).toBeGreaterThan(0);
-        const isApprovalInbox = definition.id.endsWith('approval-inbox');
-        expect(step.maxChecks).toBe(isApprovalInbox ? 3 : 20);
-        expect(step.checkDelayMs).toBe(isApprovalInbox ? 250 : 500);
+        expect(step.maxChecks).toBe(
+          definition.id === 'neis-leave' || definition.id === 'neis-trip' ? 20 : 60,
+        );
+        expect(step.checkDelayMs).toBe(500);
         for (const label of step.candidateLabels) {
           expect(isForbiddenActionText(label), `${definition.id}:${step.id}:${label}`).toBe(false);
         }

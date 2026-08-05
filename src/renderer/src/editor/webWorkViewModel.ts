@@ -10,9 +10,21 @@ import type {
   EducationOfficeCode,
   WebConnectorBrowserId,
   WebConnectorStatus,
+  WebSystemConnectionStatus,
+  WebWorkflowSystem,
 } from '../../../shared/types';
 
-export type WebWorkBrowserState = 'ready' | 'running' | 'needs-connection' | 'error';
+export type WebWorkBrowserState =
+  | 'ready'
+  | 'running'
+  | 'needs-connection'
+  | 'login-required'
+  | 'error';
+
+export interface WebWorkSystemState extends WebSystemConnectionStatus {
+  label: string;
+  stateLabel: string;
+}
 
 export interface WebWorkBrowserCard {
   browserId: WebConnectorBrowserId;
@@ -21,7 +33,21 @@ export interface WebWorkBrowserCard {
   state: WebWorkBrowserState;
   stateLabel: string;
   lastSeenAt?: number;
+  systems: WebWorkSystemState[];
 }
+
+const SYSTEM_LABELS: Record<WebWorkflowSystem, string> = {
+  neis: '나이스',
+  edufine: 'K-에듀파인',
+};
+
+const SYSTEM_STATE_LABELS: Record<WebSystemConnectionStatus['state'], string> = {
+  idle: '확인 전',
+  connecting: '연결 중',
+  connected: '연결됨',
+  'login-required': '추가 로그인 필요',
+  error: '실패',
+};
 
 export function shouldShowWebWorkSettings(platform: AppConfig['platform']): boolean {
   return platform === 'win32';
@@ -34,10 +60,22 @@ export function createWebWorkBrowserCards(
 ): WebWorkBrowserCard[] {
   return (['edge', 'chrome'] as const).map((browserId) => {
     const status = statuses.find((candidate) => candidate.browserId === browserId);
+    const systems = (status?.systems ?? []).map((system): WebWorkSystemState => ({
+      ...system,
+      label: SYSTEM_LABELS[system.system],
+      stateLabel: SYSTEM_STATE_LABELS[system.state],
+    }));
+    const hasSystemError = systems.some((system) => system.state === 'error');
+    const hasLoginRequired = systems.some((system) => system.state === 'login-required');
+    const hasConnecting = systems.some((system) => system.state === 'connecting');
     const state: WebWorkBrowserState = errorBrowserId === browserId
       ? 'error'
-      : busyBrowserId === browserId
+      : hasSystemError
+        ? 'error'
+      : busyBrowserId === browserId || hasConnecting
         ? 'running'
+        : hasLoginRequired
+          ? 'login-required'
         : status?.paired || status?.connected
           ? 'ready'
           : 'needs-connection';
@@ -45,6 +83,7 @@ export function createWebWorkBrowserCards(
       ready: '준비됨',
       running: '실행 중',
       'needs-connection': '연결 필요',
+      'login-required': '추가 로그인 필요',
       error: '오류',
     }[state];
     return {
@@ -53,6 +92,7 @@ export function createWebWorkBrowserCards(
       recommended: browserId === 'edge',
       state,
       stateLabel,
+      systems,
       ...(status?.lastSeenAt !== undefined ? { lastSeenAt: status.lastSeenAt } : {}),
     };
   });

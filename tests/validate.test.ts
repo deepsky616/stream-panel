@@ -371,6 +371,12 @@ describe('security validation', () => {
     expect(() => inputValidation.assertConfigPatch({ educationOfficeCode: 'wrong' })).toThrow(
       /교육청/,
     );
+    expect(() => inputValidation.assertConfigPatch({
+      webConnection: { autoConnectAfterPortalLogin: true, autoConnectTarget: 'both' },
+    })).not.toThrow();
+    expect(() => inputValidation.assertConfigPatch({
+      webConnection: { autoConnectAfterPortalLogin: true, autoConnectTarget: 'all' },
+    })).toThrow(/자동 연결/);
   });
 
   it('validates every quick-launcher IPC payload and rejects extra fields', () => {

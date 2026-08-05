@@ -23,6 +23,7 @@ export interface CandidateSummary {
 export type WorkflowPostcondition =
   | { kind: 'visible-any'; labels: readonly string[] }
   | { kind: 'visible-all'; labels: readonly string[] }
+  | { kind: 'visible-groups'; groups: readonly (readonly string[])[] }
   | { kind: 'dialog-title-any'; labels: readonly string[] }
   | { kind: 'tab-selected-any'; labels: readonly string[] }
   | { kind: 'new-window'; processName: 'WXSClient'; titleIncludes: string };
@@ -31,6 +32,7 @@ export interface WorkflowStep {
   id: string;
   candidateLabels: readonly string[];
   interaction: 'mouse' | 'dom-click';
+  selection?: 'unique-any' | 'first-available';
   navigationOnly?: boolean;
   postcondition: WorkflowPostcondition;
   maxChecks: number;
@@ -74,7 +76,10 @@ export const FORBIDDEN_ACTION_TOKENS = [
 export const APPROVED_NON_ACTION_LABELS = new Set([
   '신청',
   '품의등록',
+  '품의 등록',
   '표준서식(결재4인,협조4인)',
+  '표준서식(결재 4인, 협조 4인)',
+  '표준서식(결재4인, 협조4인)',
   '결재함',
   '결재 대기',
   '결재대기',
@@ -82,6 +87,8 @@ export const APPROVED_NON_ACTION_LABELS = new Set([
   '미결문서',
   '대기문서',
   '결재할 문서',
+  '내 결재함',
+  '결재문서함',
 ]);
 
 export function normalizeCandidateText(value: unknown): string {
@@ -104,13 +111,20 @@ function candidateSurfaceTexts(candidate: CandidateSummary): string[] {
   ].filter((text): text is string => typeof text === 'string' && text.trim() !== '');
 }
 
+function candidateMatchesLabel(candidate: CandidateSummary, label: string): boolean {
+  const expected = normalizeCandidateText(label);
+  return candidateSurfaceTexts(candidate).some((text) => (
+    normalizeCandidateText(text) === expected
+  ));
+}
+
 export function selectSafeCandidate(
   candidates: readonly CandidateSummary[],
   labels: readonly string[],
   navigationOnly = false,
+  selection: WorkflowStep['selection'] = 'unique-any',
 ): CandidateSummary | null {
-  const approved = new Set(labels.map(normalizeCandidateText).filter(Boolean));
-  const exact = candidates.filter((candidate) => (
+  const eligible = candidates.filter((candidate) => (
     candidate.visible &&
     candidate.enabled &&
     candidate.width > 0 &&
@@ -118,9 +132,15 @@ export function selectSafeCandidate(
     (!navigationOnly || (
       candidate.navigation === true &&
       candidate.safeNavigation === true
-    )) &&
-    approved.has(normalizeCandidateText(candidate.text))
+    ))
   ));
+  const exact = selection === 'first-available'
+    ? labels.reduce<CandidateSummary[]>((selected, label) => (
+        selected.length > 0
+          ? selected
+          : eligible.filter((candidate) => candidateMatchesLabel(candidate, label))
+      ), [])
+    : eligible.filter((candidate) => labels.some((label) => candidateMatchesLabel(candidate, label)));
   const forbidden = exact.filter((candidate) => (
     candidateSurfaceTexts(candidate).some(isForbiddenActionText)
   ));

@@ -163,6 +163,11 @@ export function SettingsModal({
     setApprovalStatuses(payload as ApprovalMonitorStatus[]);
   }), []);
 
+  useEffect(() => window.api.on('web-connector:changed', (payload) => {
+    if (!Array.isArray(payload)) return;
+    setConnectorStatuses(payload as WebConnectorStatus[]);
+  }), []);
+
   useEffect(() => {
     if (!open) return;
     let active = true;
@@ -232,6 +237,11 @@ export function SettingsModal({
     update: (current: AppConfig['approvalMonitor']) => AppConfig['approvalMonitor'],
   ) => {
     setConfig((current) => ({ approvalMonitor: update(current.approvalMonitor) }));
+  };
+  const setWebConnection = (patch: Partial<AppConfig['webConnection']>) => {
+    setConfig((current) => ({
+      webConnection: { ...current.webConnection, ...patch },
+    }));
   };
   const updateGrid = (patch: Partial<AppConfig['grid']>) => {
     const next = { ...config.grid, ...patch };
@@ -320,7 +330,7 @@ export function SettingsModal({
     try {
       const result = await window.api.webConnector.test({ browserId });
       if (result.ok) {
-        setMessage(`${browserId === 'edge' ? '엣지' : '크롬'} 업무용 브라우저 연결을 확인했습니다.`);
+        setMessage(`${browserId === 'edge' ? '엣지' : '크롬'} 업무포털을 열었습니다. 로그인하면 선택한 업무 시스템 연결이 자동으로 이어집니다.`);
       } else {
         setConnectorError(browserId);
         setMessage(result.message);
@@ -483,6 +493,36 @@ export function SettingsModal({
                   </select>
                   <small>교육청을 바꾸면 등록된 웹 업무 키 주소도 함께 안전하게 바뀝니다.</small>
                 </label>
+                <section className="portal-auto-connect" aria-labelledby="portal-auto-connect-title">
+                  <div>
+                    <strong id="portal-auto-connect-title">업무포털 로그인 후 자동 연결</strong>
+                    <small>포털 로그인을 감지하면 공식 SSO 메뉴를 통해 선택한 업무 시스템의 세션을 미리 준비합니다.</small>
+                  </div>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={config.webConnection.autoConnectAfterPortalLogin}
+                      onChange={(event) => setWebConnection({
+                        autoConnectAfterPortalLogin: event.target.checked,
+                      })}
+                    />
+                    자동 연결 사용
+                  </label>
+                  <label>
+                    연결 대상
+                    <select
+                      value={config.webConnection.autoConnectTarget}
+                      disabled={!config.webConnection.autoConnectAfterPortalLogin}
+                      onChange={(event) => setWebConnection({
+                        autoConnectTarget: event.target.value as AppConfig['webConnection']['autoConnectTarget'],
+                      })}
+                    >
+                      <option value="both">나이스와 K-에듀파인 — 기본</option>
+                      <option value="neis">나이스</option>
+                      <option value="edufine">K-에듀파인</option>
+                    </select>
+                  </label>
+                </section>
                 <div className="connector-browser-list">
                   {connectorCards.map((card) => (
                       <article className={`connector-browser-card connector-${card.state}`} key={card.browserId}>
@@ -493,6 +533,18 @@ export function SettingsModal({
                             {card.stateLabel}
                           </span>
                           <small>소속 교육청 전용 프로필을 사용하며 개인 방문 기록과 설정을 섞지 않습니다.</small>
+                          <div className="connector-system-list" aria-label={`${card.name} 업무 시스템 연결 상태`}>
+                            {card.systems.map((system) => (
+                              <span
+                                className={`connector-system connector-system-${system.state}`}
+                                key={system.system}
+                                title={system.message}
+                              >
+                                <b>{system.label}</b>
+                                {system.stateLabel}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                         <div className="connector-actions">
                           <button
@@ -521,7 +573,8 @@ export function SettingsModal({
                   <h3>사용 순서</h3>
                   <ol>
                     <li>소속 교육청과 사용할 엣지 또는 크롬을 고릅니다.</li>
-                    <li>업무용 브라우저 열기를 누르고 나이스와 에듀파인에 직접 로그인합니다.</li>
+                    <li>업무용 브라우저 열기를 누르고 업무포털에서 한 번 로그인합니다.</li>
+                    <li>로그인이 끝나면 나이스와 K-에듀파인 연결이 순서대로 자동 준비됩니다.</li>
                     <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓고 실행합니다.</li>
                   </ol>
                 </div>

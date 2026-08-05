@@ -69,6 +69,11 @@ app.whenReady().then(async () => {
           window.webContents.send(IPC_CHANNELS.TOAST, { level, message });
         }
       },
+      broadcast: (statuses) => {
+        for (const window of createSafeWindowList()) {
+          window.webContents.send(IPC_CHANNELS.WEB_CONNECTOR_CHANGED, statuses);
+        }
+      },
     });
     webConnectorService = connector;
     const connectorStart = await connector.start();

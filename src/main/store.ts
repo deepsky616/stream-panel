@@ -12,6 +12,7 @@ import type {
   DeckItem,
   GridConfig,
   KeyboardConfig,
+  WebConnectionConfig,
   WindowConfig,
 } from '../shared/types';
 
@@ -62,6 +63,7 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
   const behavior = partialObject<BehaviorConfig>(parsed.behavior);
   const keyboard = partialObject<KeyboardConfig>(parsed.keyboard);
   const approvalMonitor = partialObject<ApprovalMonitorConfig>(parsed.approvalMonitor);
+  const webConnection = partialObject<WebConnectionConfig>(parsed.webConnection);
   const approvalSources = partialObject<ApprovalMonitorConfig['sources']>(approvalMonitor.sources);
   const approvalWorkHours = partialObject<ApprovalMonitorConfig['workHours']>(approvalMonitor.workHours);
   const grid = partialObject<GridConfig>(parsed.grid);
@@ -107,6 +109,17 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
       ...keyboard,
       hintKeys: normalizeHintKeys(hintKeys),
       globalNumberModifier,
+    },
+    webConnection: {
+      autoConnectAfterPortalLogin:
+        typeof webConnection.autoConnectAfterPortalLogin === 'boolean'
+          ? webConnection.autoConnectAfterPortalLogin
+          : defaultConfig.webConnection.autoConnectAfterPortalLogin,
+      autoConnectTarget: ['neis', 'edufine', 'both'].includes(
+        String(webConnection.autoConnectTarget),
+      )
+        ? webConnection.autoConnectTarget as WebConnectionConfig['autoConnectTarget']
+        : defaultConfig.webConnection.autoConnectTarget,
     },
     approvalMonitor: {
       ...defaultConfig.approvalMonitor,

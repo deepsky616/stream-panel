@@ -109,6 +109,22 @@ export interface WebConnectorStatus {
   paired: boolean;
   connected: boolean;
   lastSeenAt?: number;
+  /** Present for Windows managed sessions; optional for legacy/preload status payloads. */
+  systems?: WebSystemConnectionStatus[];
+}
+
+export type WebAutoConnectTarget = WebWorkflowSystem | 'both';
+
+export interface WebConnectionConfig {
+  autoConnectAfterPortalLogin: boolean;
+  autoConnectTarget: WebAutoConnectTarget;
+}
+
+export interface WebSystemConnectionStatus {
+  system: WebWorkflowSystem;
+  state: 'idle' | 'connecting' | 'connected' | 'login-required' | 'error';
+  checkedAt?: number;
+  message?: string;
 }
 
 export interface ApprovalMonitorSourceConfig {
@@ -213,6 +229,7 @@ export interface AppConfig {
   window: WindowConfig;
   behavior: BehaviorConfig;
   keyboard: KeyboardConfig;
+  webConnection: WebConnectionConfig;
   approvalMonitor: ApprovalMonitorConfig;
   theme: 'dark' | 'light' | 'system';
   hotkey: string;

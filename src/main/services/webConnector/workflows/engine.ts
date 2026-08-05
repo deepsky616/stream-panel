@@ -39,6 +39,7 @@ async function findCandidate(
       await adapter.inspectCandidates(step),
       step.candidateLabels,
       step.navigationOnly,
+      step.selection,
     );
     if (selected) {
       const candidateKey = `${selected.index}:${selected.text}`;

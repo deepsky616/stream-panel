@@ -6,9 +6,12 @@ import type {
   EducationOfficeCode,
   WebConnectorBrowserId,
   WebConnectorStatus,
+  WebSystemConnectionStatus,
   WebWorkflowSpec,
+  WebWorkflowSystem,
 } from '../../../shared/types';
 import {
+  getWebWorkflowSystem,
   isAllowedWebWorkflowSpecTarget,
   isWebWorkflowSpec,
 } from '../../../shared/webWorkflows';
@@ -54,6 +57,15 @@ export interface WebConnectorSessionController {
   closeOtherOffices(officeCode: EducationOfficeCode): Promise<void>;
   closeAll(): Promise<void>;
   checkApproval?(input: ApprovalScanInput): Promise<number>;
+  connectSystems?(
+    input: {
+      officeCode: EducationOfficeCode;
+      browserId: WebConnectorBrowserId;
+      systems: readonly WebWorkflowSystem[];
+      signal?: AbortSignal;
+    },
+    report?: (status: WebSystemConnectionStatus) => void,
+  ): Promise<void>;
 }
 
 export interface WebConnectorService {
@@ -76,6 +88,7 @@ export interface CreateWebConnectorServiceOptions {
   platform?: NodeJS.Platform;
   getConfig: () => AppConfig;
   notify?: (message: string, level: 'info' | 'error') => void;
+  broadcast?: (statuses: WebConnectorStatus[]) => void;
   stateIo?: LoadManagedWebConnectorStateOptions;
   sessionController?: WebConnectorSessionController;
   openPortal?: (session: ManagedBrowserSession) => Promise<void>;
@@ -155,6 +168,7 @@ export function createWebConnectorService({
   platform = process.platform,
   getConfig,
   notify = () => undefined,
+  broadcast = () => undefined,
   stateIo = diskStateIo(userDataPath),
   sessionController,
   openPortal,
@@ -182,6 +196,75 @@ export function createWebConnectorService({
   let persistTail: Promise<void> = Promise.resolve();
   const pending = new Set<Promise<void>>();
   const inFlightWorkflows = new Map<string, Promise<void>>();
+  const connectionStates = new Map<string, Map<WebWorkflowSystem, WebSystemConnectionStatus>>();
+  const connectionControllers = new Map<string, AbortController>();
+  let configuredOfficeCode = getConfig().educationOfficeCode;
+  let configuredConnectionSignature = JSON.stringify(getConfig().webConnection);
+
+  const currentOffice = (): EducationOfficeCode => getConfig().educationOfficeCode;
+
+  const connectionKey = (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ) => `${officeCode}:${browserId}`;
+
+  const systemStatuses = (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+    sessionAlive: boolean,
+  ): WebSystemConnectionStatus[] => {
+    const stored = connectionStates.get(connectionKey(officeCode, browserId));
+    return (['neis', 'edufine'] as const).map((system) => {
+      const status = stored?.get(system) ?? { system, state: 'idle' as const };
+      return !sessionAlive && status.state === 'connected'
+        ? { system, state: 'idle' as const }
+        : { ...status };
+    });
+  };
+
+  const readStatuses = (): WebConnectorStatus[] => {
+    const officeCode = currentOffice();
+    return (['edge', 'chrome'] as const).map((browserId): WebConnectorStatus => {
+      const handshake = state?.offices[officeCode]?.[browserId];
+      const session = controller.getSession(officeCode, browserId);
+      const sessionAlive = Boolean(session?.isAlive());
+      return {
+        browserId,
+        paired: Boolean(handshake),
+        connected: sessionAlive,
+        systems: systemStatuses(officeCode, browserId, sessionAlive),
+        ...(handshake ? { lastSeenAt: handshake.lastSeenAt } : {}),
+      };
+    });
+  };
+
+  const publishStatuses = (): void => {
+    try {
+      broadcast(readStatuses());
+    } catch {
+      // A closed renderer must not stop browser connection work.
+    }
+  };
+
+  const setSystemStatus = (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+    status: WebSystemConnectionStatus,
+  ): void => {
+    const key = connectionKey(officeCode, browserId);
+    const systems = connectionStates.get(key) ?? new Map();
+    systems.set(status.system, { ...status });
+    connectionStates.set(key, systems);
+    publishStatuses();
+  };
+
+  const configuredAutoSystems = (): WebWorkflowSystem[] => {
+    const connection = getConfig().webConnection;
+    if (!connection.autoConnectAfterPortalLogin) return [];
+    return connection.autoConnectTarget === 'both'
+      ? ['neis', 'edufine']
+      : [connection.autoConnectTarget];
+  };
 
   const persist = (): Promise<void> => {
     if (!state) return Promise.resolve();
@@ -219,8 +302,6 @@ export function createWebConnectorService({
     return result;
   };
 
-  const currentOffice = (): EducationOfficeCode => getConfig().educationOfficeCode;
-
   const prepareAndMark = async (
     browserId: WebConnectorBrowserId,
   ): Promise<ManagedBrowserSession> => {
@@ -238,13 +319,82 @@ export function createWebConnectorService({
     return session;
   };
 
+  const startAutoConnection = (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): void => {
+    const systems = configuredAutoSystems();
+    if (!controller.connectSystems || systems.length === 0) {
+      publishStatuses();
+      return;
+    }
+    const key = connectionKey(officeCode, browserId);
+    if (connectionControllers.has(key)) return;
+    const abortController = new AbortController();
+    connectionControllers.set(key, abortController);
+    for (const system of systems) {
+      setSystemStatus(officeCode, browserId, {
+        system,
+        state: 'connecting',
+        message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결을 준비하고 있습니다.`,
+      });
+    }
+    const task = Promise.resolve().then(async () => {
+      try {
+        await controller.connectSystems?.(
+          { officeCode, browserId, systems, signal: abortController.signal },
+          (status) => setSystemStatus(officeCode, browserId, status),
+        );
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          for (const system of systems) {
+            const current = connectionStates.get(key)?.get(system);
+            if (current?.state === 'connecting') {
+              setSystemStatus(officeCode, browserId, { system, state: 'idle' });
+            }
+          }
+          return;
+        }
+        const message = errorDetail(error);
+        for (const system of systems) {
+          const current = connectionStates.get(key)?.get(system);
+          if (!current || current.state === 'connecting') {
+            setSystemStatus(officeCode, browserId, {
+              system,
+              state: /로그인|인증/.test(message) ? 'login-required' : 'error',
+              message,
+            });
+          }
+        }
+      }
+    });
+    pending.add(task);
+    void task.finally(() => {
+      pending.delete(task);
+      if (connectionControllers.get(key) === abortController) {
+        connectionControllers.delete(key);
+      }
+      publishStatuses();
+    });
+  };
+
+  const cancelConnection = (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): void => {
+    connectionControllers.get(connectionKey(officeCode, browserId))?.abort();
+  };
+
   return {
     start,
     async stop() {
       started = false;
+      for (const abortController of connectionControllers.values()) abortController.abort();
       await Promise.allSettled([...pending]);
       await controller.closeAll();
       await persistTail;
+      connectionControllers.clear();
+      connectionStates.clear();
       state = null;
       starting = null;
     },
@@ -268,6 +418,7 @@ export function createWebConnectorService({
         };
       }
       const workflowSpec = item.webWorkflow;
+      const workflowSystem = getWebWorkflowSystem(workflowSpec);
       const officeCode = workflowSpec.officeCode ?? currentOffice();
       if (!isAllowedWebWorkflowSpecTarget(workflowSpec, item.target, officeCode)) {
         return {
@@ -293,6 +444,7 @@ export function createWebConnectorService({
       }
       const startedAt = now();
       notify(workflowProgressMessage(workflowSpec), 'info');
+      cancelConnection(officeCode, request.browserId);
       const task = (async () => {
         try {
           await controller.closeOtherOffices(officeCode);
@@ -302,6 +454,11 @@ export function createWebConnectorService({
             await persist();
           }
           await controller.run(request);
+          setSystemStatus(officeCode, request.browserId, {
+            system: workflowSystem,
+            state: 'connected',
+            checkedAt: now(),
+          });
           notify(workflowSuccessMessage(workflowSpec), 'info');
           await diagnostics.record({
             at: now(),
@@ -315,6 +472,13 @@ export function createWebConnectorService({
           });
         } catch (error) {
           const detail = errorDetail(error);
+          setSystemStatus(officeCode, request.browserId, {
+            system: workflowSystem,
+            state: /로그인|인증|기다리는 시간이 지났습니다/.test(detail)
+              ? 'login-required'
+              : 'error',
+            message: detail,
+          });
           notify(detail, 'error');
           try {
             await diagnostics.record({
@@ -343,22 +507,14 @@ export function createWebConnectorService({
       return { queued: true };
     },
     getStatuses() {
-      const officeCode = currentOffice();
-      return (['edge', 'chrome'] as const).map((browserId): WebConnectorStatus => {
-        const handshake = state?.offices[officeCode]?.[browserId];
-        const session = controller.getSession(officeCode, browserId);
-        return {
-          browserId,
-          paired: Boolean(handshake),
-          connected: Boolean(session?.isAlive()),
-          ...(handshake ? { lastSeenAt: handshake.lastSeenAt } : {}),
-        };
-      });
+      return readStatuses();
     },
     async test(browserId) {
       try {
         const session = await prepareAndMark(browserId);
         await openOfficePortal(session);
+        publishStatuses();
+        startAutoConnection(session.officeCode, session.browserId);
         return { ok: true };
       } catch (error) {
         return { ok: false, message: errorDetail(error) };
@@ -395,10 +551,50 @@ export function createWebConnectorService({
       if (!controller.checkApproval) {
         throw new Error('결재 대기 확인 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
       }
-      return controller.checkApproval(input);
+      cancelConnection(input.officeCode, input.browserId);
+      setSystemStatus(input.officeCode, input.browserId, {
+        system: input.system,
+        state: 'connecting',
+        message: `${input.system === 'neis' ? '나이스' : 'K-에듀파인'} 결재함에 연결하고 있습니다.`,
+      });
+      try {
+        const count = await controller.checkApproval(input);
+        setSystemStatus(input.officeCode, input.browserId, {
+          system: input.system,
+          state: 'connected',
+          checkedAt: now(),
+        });
+        return count;
+      } catch (error) {
+        const message = errorDetail(error);
+        setSystemStatus(input.officeCode, input.browserId, {
+          system: input.system,
+          state: /로그인|인증|기다리는 시간이 지났습니다/.test(message)
+            ? 'login-required'
+            : 'error',
+          message,
+        });
+        throw error;
+      }
     },
     async onConfigChanged(config) {
+      const nextConnectionSignature = JSON.stringify(config.webConnection);
+      const officeChanged = configuredOfficeCode !== config.educationOfficeCode;
+      const connectionChanged = configuredConnectionSignature !== nextConnectionSignature;
+      configuredOfficeCode = config.educationOfficeCode;
+      configuredConnectionSignature = nextConnectionSignature;
+      if (officeChanged || connectionChanged) {
+        for (const abortController of connectionControllers.values()) abortController.abort();
+        connectionStates.clear();
+      }
       await controller.closeOtherOffices(config.educationOfficeCode);
+      if (officeChanged || connectionChanged) {
+        for (const browserId of ['edge', 'chrome'] as const) {
+          const session = controller.getSession(config.educationOfficeCode, browserId);
+          if (session?.isAlive()) startAutoConnection(config.educationOfficeCode, browserId);
+        }
+        publishStatuses();
+      }
     },
   };
 }
