@@ -6,6 +6,7 @@ import {
   executeWindowsWorkflow,
   openCdpWindowsApprovalPage,
   openCdpWindowsWorkflowPage,
+  restoreAndActivateTarget,
   selectWindowsWorkflowTarget,
 } from '../src/main/services/webConnector/windows';
 import { createMacosWebAutomation } from '../src/main/services/webConnector/macos';
@@ -186,6 +187,91 @@ describe('Windows managed web automation', () => {
       params: { sessionId: 'session-1' },
     });
     expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
+  });
+
+  it('keeps a maximized target window intact and never foregrounds another Edge window', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let nativeFocuses = 0;
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol: {
+          isClosed: false,
+          async send(method: string, params: Record<string, unknown>) {
+            commands.push({ method, params });
+            if (method === 'Browser.getWindowForTarget') {
+              return { windowId: 11, bounds: { windowState: 'maximized' } };
+            }
+            return {};
+          },
+          close() { this.isClosed = true; },
+        },
+        transportKind: 'pipe' as const,
+        process: { pid: 42, exited: false },
+      },
+      workflowState: 'IDLE' as const,
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await restoreAndActivateTarget(
+      session as never,
+      'edufine-target',
+      'edufine-session',
+      async () => {
+        nativeFocuses += 1;
+        return true;
+      },
+    );
+
+    expect(nativeFocuses).toBe(0);
+    expect(commands.some(({ method }) => method === 'Browser.setWindowBounds')).toBe(false);
+    expect(commands.slice(-2)).toEqual([
+      { method: 'Target.activateTarget', params: { targetId: 'edufine-target' } },
+      { method: 'Page.bringToFront', params: {} },
+    ]);
+  });
+
+  it('uses the owned-process focus fallback only when Chromium cannot resolve the target window', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let nativeFocuses = 0;
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol: {
+          isClosed: false,
+          async send(method: string, params: Record<string, unknown>) {
+            commands.push({ method, params });
+            if (method === 'Browser.getWindowForTarget') throw new Error('unsupported');
+            return {};
+          },
+          close() { this.isClosed = true; },
+        },
+        transportKind: 'pipe' as const,
+        process: { pid: 42, exited: false },
+      },
+      workflowState: 'IDLE' as const,
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await restoreAndActivateTarget(
+      session as never,
+      'neis-target',
+      undefined,
+      async () => {
+        nativeFocuses += 1;
+        return true;
+      },
+    );
+
+    expect(nativeFocuses).toBe(1);
+    expect(commands.at(-1)).toEqual({
+      method: 'Target.activateTarget',
+      params: { targetId: 'neis-target' },
+    });
   });
 
   it('ignores an existing work tab and closes only the background approval target created by the app', async () => {

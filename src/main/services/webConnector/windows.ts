@@ -924,17 +924,20 @@ async function restoreOwnedBrowserWindow(
 ): Promise<boolean> {
   const pid = session.connection.process.pid;
   if (!Number.isSafeInteger(pid) || Number(pid) <= 0) return false;
-  const command = `$p=Get-Process -Id ${Number(pid)} -ErrorAction Stop; $h=$p.MainWindowHandle; if($h -eq 0){exit 2}; Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class StreamPanelWindow { [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd,int nCmdShow); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); }'; [StreamPanelWindow]::ShowWindowAsync($h,9)|Out-Null; [StreamPanelWindow]::SetForegroundWindow($h)|Out-Null`;
+  const command = `$p=Get-Process -Id ${Number(pid)} -ErrorAction Stop; $h=$p.MainWindowHandle; if($h -eq 0){exit 2}; Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class StreamPanelWindow { [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd); [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd,int nCmdShow); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); }'; if([StreamPanelWindow]::IsIconic($h)){[StreamPanelWindow]::ShowWindowAsync($h,9)|Out-Null}; [StreamPanelWindow]::SetForegroundWindow($h)|Out-Null`;
   return (await runWindowsCommand(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command],
   )) !== null;
 }
 
-async function restoreAndActivateTarget(
+export async function restoreAndActivateTarget(
   session: WindowsManagedBrowserSession,
   targetId: string,
   sessionId?: string,
+  focusOwnedWindow: (
+    session: WindowsManagedBrowserSession,
+  ) => Promise<boolean> = restoreOwnedBrowserWindow,
 ): Promise<void> {
   const protocol = session.connection.protocol;
   let cdpWindowFound = false;
@@ -955,10 +958,12 @@ async function restoreAndActivateTarget(
   } catch {
     // Older Chromium builds can reject the Browser domain window commands.
   }
-  if (!cdpWindowFound) await restoreOwnedBrowserWindow(session);
+  // Browser.getWindowForTarget identifies the exact native window that owns this tab.
+  // Process.MainWindowHandle can point at a different Edge window, so use the native
+  // fallback only when Chromium cannot resolve the target window at all.
+  if (!cdpWindowFound) await focusOwnedWindow(session);
   await protocol.send('Target.activateTarget', { targetId });
   if (sessionId) await protocol.send('Page.bringToFront', {}, sessionId);
-  if (cdpWindowFound) await restoreOwnedBrowserWindow(session);
 }
 
 function readPageReadinessState(value: unknown): PageReadinessState | null {
