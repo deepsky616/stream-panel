@@ -120,7 +120,7 @@ describe('managed web connector service', () => {
     await service.stop();
   });
 
-  it('marks the current office browser paired after a handshake and portal check', async () => {
+  it('marks the current office browser paired without opening the portal', async () => {
     const writes: string[] = [];
     const opened: string[] = [];
     const config = createDefaultConfig(
@@ -144,7 +144,7 @@ describe('managed web connector service', () => {
 
     await expect(service.test('edge')).resolves.toEqual({ ok: true });
 
-    expect(opened).toEqual(['goe:edge']);
+    expect(opened).toEqual([]);
     expect(service.getStatuses()).toEqual([
       {
         browserId: 'edge',
@@ -173,7 +173,7 @@ describe('managed web connector service', () => {
     });
   });
 
-  it('prepares both system sessions after the portal opens and broadcasts their states', async () => {
+  it('prepares both system sessions independently and broadcasts their states', async () => {
     const inputs: unknown[] = [];
     const broadcasts: unknown[] = [];
     const config = createDefaultConfig(
@@ -207,6 +207,7 @@ describe('managed web connector service', () => {
       officeCode: 'goe',
       browserId: 'edge',
       systems: ['neis', 'edufine'],
+      foreground: true,
     })]);
     expect(service.getStatuses()[0].systems).toEqual([
       { system: 'neis', state: 'connected', checkedAt: 1_800_000_000_001 },

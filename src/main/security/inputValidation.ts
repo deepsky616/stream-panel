@@ -135,7 +135,7 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
     }
   }
   if ('webConnection' in value) {
-    assertRecord(value.webConnection, '업무포털 자동 연결');
+    assertRecord(value.webConnection, '업무 시스템 직접 연결');
     const connection = value.webConnection;
     if (
       Object.keys(connection).some((key) => ![
@@ -145,7 +145,7 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
       typeof connection.autoConnectAfterPortalLogin !== 'boolean' ||
       !['neis', 'edufine', 'both'].includes(String(connection.autoConnectTarget))
     ) {
-      throw new TypeError('업무포털 자동 연결 설정이 올바르지 않습니다. 연결할 시스템을 다시 선택해 주세요.');
+      throw new TypeError('업무 시스템 직접 연결 설정이 올바르지 않습니다. 연결할 시스템을 다시 선택해 주세요.');
     }
   }
   if ('approvalMonitor' in value) {

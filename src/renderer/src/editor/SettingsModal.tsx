@@ -308,7 +308,7 @@ export function SettingsModal({
       if (result.ok) {
         setMessage(target === 'folder'
           ? '문제 해결 폴더를 열었습니다.'
-          : '업무용 브라우저와 소속 교육청 포털을 열었습니다. 로그인은 브라우저에서 직접 진행해 주세요.');
+          : '선택한 업무 시스템을 전용 탭으로 열었습니다. 필요한 로그인은 해당 탭에서 직접 진행해 주세요.');
         if (target === 'pair') await refreshConnectorStatuses();
       } else {
         setConnectorError(browserId);
@@ -326,11 +326,11 @@ export function SettingsModal({
   const testConnector = async (browserId: WebConnectorBrowserId) => {
     setConnectorBusy(browserId);
     setConnectorError(null);
-    setMessage('업무용 브라우저를 열고 소속 교육청 포털 연결을 확인하고 있습니다.');
+    setMessage('업무용 브라우저에서 나이스·K-에듀파인 전용 연결을 각각 확인하고 있습니다.');
     try {
       const result = await window.api.webConnector.test({ browserId });
       if (result.ok) {
-        setMessage(`${browserId === 'edge' ? '엣지' : '크롬'} 업무포털을 열었습니다. 로그인하면 선택한 업무 시스템 연결이 자동으로 이어집니다.`);
+        setMessage(`${browserId === 'edge' ? '엣지' : '크롬'}에서 선택한 업무 시스템을 각각 열었습니다. 추가 로그인이 필요한 시스템은 해당 탭에서 진행해 주세요.`);
       } else {
         setConnectorError(browserId);
         setMessage(result.message);
@@ -495,8 +495,8 @@ export function SettingsModal({
                 </label>
                 <section className="portal-auto-connect" aria-labelledby="portal-auto-connect-title">
                   <div>
-                    <strong id="portal-auto-connect-title">업무포털 로그인 후 자동 연결</strong>
-                    <small>포털 로그인을 감지하면 공식 SSO 메뉴를 통해 선택한 업무 시스템의 세션을 미리 준비합니다.</small>
+                    <strong id="portal-auto-connect-title">나이스·K-에듀파인 직접 연결</strong>
+                    <small>업무포털 메뉴를 거치지 않고 선택한 교육청의 시스템 전용 탭을 각각 열어 세션을 준비합니다.</small>
                   </div>
                   <label>
                     <input
@@ -551,7 +551,7 @@ export function SettingsModal({
                             type="button"
                             disabled={connectorBusy !== null}
                             onClick={() => void openConnectorSetup(card.browserId, 'pair')}
-                          >업무용 브라우저 열기</button>
+                          >선택 시스템 열기</button>
                           <button
                             className="primary-action"
                             type="button"
@@ -573,8 +573,8 @@ export function SettingsModal({
                   <h3>사용 순서</h3>
                   <ol>
                     <li>소속 교육청과 사용할 엣지 또는 크롬을 고릅니다.</li>
-                    <li>업무용 브라우저 열기를 누르고 업무포털에서 한 번 로그인합니다.</li>
-                    <li>로그인이 끝나면 나이스와 K-에듀파인 연결이 순서대로 자동 준비됩니다.</li>
+                    <li>선택 시스템 열기를 누르면 나이스와 K-에듀파인이 각각의 전용 탭에서 열립니다.</li>
+                    <li>추가 로그인이 필요한 시스템만 해당 탭에서 직접 로그인합니다.</li>
                     <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓고 실행합니다.</li>
                   </ol>
                 </div>
@@ -596,7 +596,7 @@ export function SettingsModal({
                   예전 확장 기능은 더 이상 필요하지 않습니다. 설치되어 있다면 브라우저에서 직접 제거해도 됩니다.
                 </p>
                 <p className="workflow-safety-note">
-                  로그인과 인증서 암호, 외부 프로그램 확인은 사용자가 직접 진행합니다. 기본 업무는 저장·제출·상신·승인·결재를 실행하지 않으며, 내 웹 업무에 추가한 중요 단계는 실행 직전 확인 후 한 번만 실행합니다.
+                  로그인과 인증서 암호, 외부 프로그램 확인은 사용자가 직접 진행합니다. 접근 가능한 내부 프레임도 함께 탐색하고 정확한 세션 연장 팝업만 자동 처리합니다. 기본 업무는 저장·제출·상신·승인·결재를 실행하지 않으며, 내 웹 업무에 추가한 중요 단계는 실행 직전 확인 후 한 번만 실행합니다.
                 </p>
               </>
             )}

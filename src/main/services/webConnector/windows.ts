@@ -29,7 +29,6 @@ import {
   APPROVED_NON_ACTION_LABELS,
   createCustomManagedWorkflowDefinition,
   FORBIDDEN_ACTION_TOKENS,
-  selectSafeCandidate,
   type CandidateSummary,
   type ManagedWorkflowDefinition,
   type WorkflowStep,
@@ -72,9 +71,7 @@ export type WindowsWorkflowExecutionState =
   | 'RESTORING_WINDOW'
   | 'ACQUIRING_TARGET'
   | 'CHECKING_AUTH'
-  | 'ENTERING_SYSTEM_SSO'
   | 'WAITING_FOR_USER'
-  | 'WAITING_FOR_SYSTEM'
   | 'NAVIGATING_DUTY_MENU'
   | 'COMPLETED'
   | 'FAILED';
@@ -161,6 +158,7 @@ export interface WindowsSystemConnectionRequest {
   officeCode: EducationOfficeCode;
   browserId: WebConnectorBrowserId;
   systems: readonly WebWorkflowSystem[];
+  foreground?: boolean;
   signal?: AbortSignal;
 }
 
@@ -508,7 +506,7 @@ const surfaceTextsOf=(element)=>[
 const surfaceSignatureOf=(element)=>Array.from(new Set(surfaceTextsOf(element).map(normalize)))
   .filter(Boolean)
   .sort()
-  .join('\n');
+  .join('\\n');
 const contextTextOf=(element)=>{
   const values=[];
   let current=element?.parentElement;
@@ -695,6 +693,23 @@ return ${JSON.stringify(condition.kind)}==='visible-all'
 })()`;
 }
 
+const SESSION_EXTENSION_EXPRESSION = `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const allowedLabels=new Set([
+  '연장','시간연장','시간 연장','사용시간연장','사용시간 연장','사용 시간 연장',
+  '세션연장','세션 연장','계속사용','계속 사용'
+].map(normalize));
+const candidates=documents.flatMap(({document})=>
+  Array.from(document.querySelectorAll('#btnUseTimeExtn'))
+).filter(element=>visible(element)&&enabled(element)&&allowedLabels.has(textOf(element)));
+const primary=candidates.filter(element=>element.classList?.contains('btn-primary'));
+const eligible=primary.length>0?primary:candidates;
+if(eligible.length!==1)return {handled:false};
+eligible[0].focus?.({preventScroll:true});
+eligible[0].click?.();
+return {handled:true};
+})()`;
+
 function approvalCounterExpression(system: WebWorkflowSystem): string {
   const labels = system === 'neis'
     ? ['미결/협조함', '미결 / 협조함', '미결', '협조함', '결재 대기', '결재대기', '총', '전체']
@@ -744,6 +759,24 @@ async function evaluateValue<T>(
     throw new Error('업무 화면을 읽지 못했습니다. 페이지를 새로 고친 뒤 다시 시도해 주세요.');
   }
   return response.result.value as T;
+}
+
+async function extendSystemSessionIfPrompted(
+  session: WindowsManagedBrowserSession,
+  sessionId: string,
+): Promise<boolean> {
+  try {
+    const result = await evaluateValue<{ handled?: unknown }>(
+      session,
+      sessionId,
+      SESSION_EXTENSION_EXPRESSION,
+      true,
+    );
+    return result?.handled === true;
+  } catch {
+    // A cross-origin frame or a document reload can make the prompt unavailable briefly.
+    return false;
+  }
 }
 
 function readCandidateSummaries(value: unknown): CandidateSummary[] {
@@ -847,6 +880,7 @@ interface AttachedWindowsTarget {
 interface WorkflowTargetOptions {
   background?: boolean;
   closeCreatedTargetOnRelease?: boolean;
+  failFastOnLoginRequired?: boolean;
   forceNewTarget?: boolean;
   signal?: AbortSignal;
 }
@@ -864,38 +898,21 @@ interface PageReadinessState {
 }
 
 const PAGE_READINESS_EXPRESSION = `(()=>{
-const password=Array.from(document.querySelectorAll('input[type="password"]')).some((element)=>{
-  const style=getComputedStyle(element);
-  const rect=element.getBoundingClientRect();
-  return style.display!=='none'&&style.visibility!=='hidden'&&rect.width>0&&rect.height>0;
-});
-return {href:location.href,origin:location.origin,readyState:document.readyState,loginVisible:password};
+${PAGE_ELEMENT_HELPERS}
+const password=documents.some(({document})=>
+  Array.from(document.querySelectorAll('input[type="password"]')).some(visible)
+);
+const loginLabels=new Set([
+  '로그인','로그인하기','인증서로그인','인증서 로그인','사용자인증','사용자 인증'
+].map(normalize));
+const loginControl=documents.some(({document})=>
+  Array.from(document.querySelectorAll('a,button,input[type="button"],input[type="submit"],[role="button"],h1,h2,h3'))
+    .some(element=>visible(element)&&loginLabels.has(textOf(element)))
+);
+const loginPath=location.pathname.toLowerCase().split(/[^a-z]+/)
+  .some(part=>['login','certlogin','signin'].includes(part));
+return {href:location.href,origin:location.origin,readyState:document.readyState,loginVisible:password||loginControl||loginPath};
 })()`;
-
-const PORTAL_NEIS_LABELS = [
-  '나이스',
-  '나이스(NEIS)',
-  'NEIS',
-  '4세대 나이스',
-  '4세대 지능형 나이스',
-  '나이스 바로가기',
-  'NEIS 바로가기',
-] as const;
-
-const PORTAL_EDUFINE_LABELS = [
-  'K-에듀파인',
-  'K에듀파인',
-  '에듀파인',
-  'K-EDU FINE',
-  'K-에듀파인(업무관리)',
-  'K-에듀파인 바로가기',
-  '에듀파인 바로가기',
-] as const;
-
-const PORTAL_SYSTEM_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
-  neis: PORTAL_NEIS_LABELS,
-  edufine: PORTAL_EDUFINE_LABELS,
-};
 
 function isBootstrapTarget(target: WindowsTargetInfo): boolean {
   if (target.type !== 'page') return false;
@@ -906,57 +923,12 @@ function isBootstrapTarget(target: WindowsTargetInfo): boolean {
     normalized === 'chrome://newtab';
 }
 
-function isPortalTarget(
-  target: WindowsTargetInfo,
-  officeCode: EducationOfficeCode,
-): boolean {
-  if (target.type !== 'page') return false;
-  try {
-    return new URL(target.url).origin === new URL(
-      getEducationOffice(officeCode).portalUrl,
-    ).origin;
-  } catch {
-    return false;
-  }
-}
-
-function isOfficeIdentityProviderUrl(
-  value: string,
-  officeCode: EducationOfficeCode,
-): boolean {
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.toLowerCase();
-    return url.protocol === 'https:' && (
-      hostname === `idp-${officeCode}.neis.go.kr` ||
-      hostname === `idp1-${officeCode}.neis.go.kr` ||
-      hostname === `idp2-${officeCode}.neis.go.kr`
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isIdentityProviderTarget(
-  target: WindowsTargetInfo,
-  officeCode: EducationOfficeCode,
-): boolean {
-  return target.type === 'page' && isOfficeIdentityProviderUrl(target.url, officeCode);
-}
-
 function requestSystem(
   workflowId: WebWorkflowId,
   workflowSpec?: WebWorkflowSpec,
 ): WebWorkflowSystem | null {
   const spec = requestWorkflowSpec(workflowId, workflowSpec);
   return spec ? getWebWorkflowSystem(spec) : null;
-}
-
-function isManagedSystemRequest(
-  workflowId: WebWorkflowId,
-  workflowSpec?: WebWorkflowSpec,
-): boolean {
-  return requestSystem(workflowId, workflowSpec) !== null;
 }
 
 function workflowTargetAllowed(
@@ -1061,21 +1033,28 @@ async function waitForReadyPage(
   sessionId: string,
   accepts: (state: PageReadinessState) => boolean,
   timeoutMs = 30_000,
+  rejectState?: (state: PageReadinessState) => Error | null,
 ): Promise<PageReadinessState> {
   const deadline = Date.now() + timeoutMs;
   let stableHref = '';
   let stableCount = 0;
   while (Date.now() < deadline) {
+    let state: PageReadinessState | null = null;
     try {
-      const state = readPageReadinessState(
+      state = readPageReadinessState(
         await evaluateValue(session, sessionId, PAGE_READINESS_EXPRESSION),
       );
-      if (
-        state &&
-        /^https?:\/\//.test(state.origin) &&
-        (state.readyState === 'interactive' || state.readyState === 'complete') &&
-        accepts(state)
-      ) {
+    } catch {
+      // The document can be unavailable briefly while a direct login redirects.
+    }
+    if (
+      state &&
+      /^https?:\/\//.test(state.origin) &&
+      (state.readyState === 'interactive' || state.readyState === 'complete')
+    ) {
+      const stateError = rejectState?.(state);
+      if (stateError) throw stateError;
+      if (accepts(state)) {
         stableCount = state.href === stableHref ? stableCount + 1 : 1;
         stableHref = state.href;
         if (stableCount >= 2) return state;
@@ -1083,7 +1062,7 @@ async function waitForReadyPage(
         stableHref = '';
         stableCount = 0;
       }
-    } catch {
+    } else {
       stableHref = '';
       stableCount = 0;
     }
@@ -1174,8 +1153,7 @@ async function acquireDirectWorkflowTarget(
   if (!target && !options.forceNewTarget) {
     target = targets.find((candidate) => (
       candidate.targetId === session.bootstrapTargetId && isBootstrapTarget(candidate)
-    )) ?? targets.find(isBootstrapTarget) ??
-      targets.find((candidate) => isPortalTarget(candidate, session.officeCode)) ?? null;
+    )) ?? targets.find(isBootstrapTarget) ?? null;
     shouldNavigate = Boolean(target);
   }
   if (!target) {
@@ -1200,201 +1178,6 @@ async function acquireDirectWorkflowTarget(
   return attached;
 }
 
-function selectPortalSystemCandidate(
-  candidates: readonly CandidateSummary[],
-  system: WebWorkflowSystem,
-): CandidateSummary | null {
-  const clickable = candidates.filter((candidate) => (
-    candidate.visible &&
-    candidate.enabled &&
-    candidate.inputType !== 'submit' &&
-    candidate.inputType !== 'image' &&
-    ['A', 'BUTTON'].includes(candidate.tag?.toUpperCase() ?? '')
-  ));
-  const matching = clickable.filter((candidate) => selectSafeCandidate(
-    [candidate],
-    PORTAL_SYSTEM_LABELS[system],
-    false,
-    'first-available',
-  ) !== null);
-  if (matching.length <= 1) return matching[0] ?? null;
-
-  // The portal can repeat the same system name in a lower "나의 할 일" filter.
-  // Prefer the top navigation entry, but keep failing closed when two entries
-  // occupy the same top-most position.
-  const positioned = matching.filter((candidate) => (
-    typeof candidate.top === 'number' && Number.isFinite(candidate.top) &&
-    typeof candidate.left === 'number' && Number.isFinite(candidate.left)
-  ));
-  if (positioned.length > 0) {
-    const ordered = [...positioned].sort((left, right) => (
-      (left.top ?? 0) - (right.top ?? 0) || (left.left ?? 0) - (right.left ?? 0)
-    ));
-    const first = ordered[0];
-    const tied = ordered.filter((candidate) => (
-      Math.abs((candidate.top ?? 0) - (first.top ?? 0)) < 1 &&
-      Math.abs((candidate.left ?? 0) - (first.left ?? 0)) < 1
-    ));
-    return selectSafeCandidate(
-      tied,
-      PORTAL_SYSTEM_LABELS[system],
-      false,
-      'first-available',
-    );
-  }
-  return selectSafeCandidate(clickable, PORTAL_SYSTEM_LABELS[system], false, 'first-available');
-}
-
-async function acquireSystemWorkflowTarget(
-  session: WindowsManagedBrowserSession,
-  targets: readonly WindowsTargetInfo[],
-  workflowId: WebWorkflowId,
-  workflowSpec?: WebWorkflowSpec,
-  lifecycle: WorkflowTargetLifecycle = { attachedSessionIds: [], closeTargetIds: [] },
-  options: WorkflowTargetOptions = {},
-): Promise<AttachedWindowsTarget> {
-  const protocol = session.connection.protocol;
-  const system = requestSystem(workflowId, workflowSpec);
-  if (!system) {
-    throw new Error('업무 시스템 종류를 확인하지 못했습니다. 편집기에서 키를 다시 만들어 주세요.');
-  }
-  const systemLabel = system === 'neis' ? '나이스' : 'K-에듀파인';
-  const office = getEducationOffice(session.officeCode);
-  const existing = selectWindowsWorkflowTarget(
-    targets,
-    session.officeCode,
-    workflowId,
-    workflowSpec,
-  );
-  let portalTarget = existing ??
-    targets.find((candidate) => isPortalTarget(candidate, session.officeCode)) ??
-    targets.find((candidate) => isIdentityProviderTarget(candidate, session.officeCode));
-  let shouldNavigate = false;
-  if (!portalTarget) {
-    portalTarget = targets.find((candidate) => (
-      candidate.targetId === session.bootstrapTargetId && isBootstrapTarget(candidate)
-    )) ?? targets.find(isBootstrapTarget);
-    shouldNavigate = Boolean(portalTarget);
-  }
-  if (!portalTarget) {
-    const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
-      url: office.portalUrl,
-      ...(options.background ? { background: true } : {}),
-    });
-    if (typeof created.targetId !== 'string') {
-      throw new Error('업무 포털 탭을 만들지 못했습니다. 업무용 브라우저를 다시 열어 주세요.');
-    }
-    portalTarget = { targetId: created.targetId, type: 'page', url: office.portalUrl };
-  }
-  let active = await attachWindowsTarget(session, portalTarget, lifecycle);
-  if (!options.background) {
-    session.workflowState = 'RESTORING_WINDOW';
-    await restoreAndActivateTarget(session, portalTarget.targetId, active.sessionId);
-  }
-  if (shouldNavigate) await navigateAttachedTarget(session, active, office.portalUrl);
-
-  const portalOrigin = new URL(office.portalUrl).origin;
-  const deadline = Date.now() + 300_000;
-  let ssoStarted = false;
-  while (Date.now() < deadline) {
-    if (options.signal?.aborted) {
-      throw new Error('업무포털 자동 연결을 중지했습니다.');
-    }
-    const currentTargets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-    const systemTarget = selectWindowsWorkflowTarget(
-      currentTargets,
-      session.officeCode,
-      workflowId,
-      workflowSpec,
-    );
-    if (systemTarget) {
-      session.workflowState = 'WAITING_FOR_SYSTEM';
-      if (systemTarget.targetId === active.target.targetId) {
-        active.target = systemTarget;
-        return active;
-      }
-      const attached = await attachWindowsTarget(session, systemTarget, lifecycle);
-      if (!options.background) {
-        await restoreAndActivateTarget(session, systemTarget.targetId, attached.sessionId);
-      }
-      return attached;
-    }
-
-    const identityTarget = currentTargets.find((candidate) => (
-      isIdentityProviderTarget(candidate, session.officeCode) &&
-      candidate.targetId !== active.target.targetId
-    ));
-    if (identityTarget) {
-      active = await attachWindowsTarget(session, identityTarget, lifecycle);
-      if (!options.background) {
-        await restoreAndActivateTarget(session, identityTarget.targetId, active.sessionId);
-      }
-    }
-
-    let state: PageReadinessState | null = null;
-    try {
-      state = readPageReadinessState(
-        await evaluateValue(session, active.sessionId, PAGE_READINESS_EXPRESSION),
-      );
-    } catch {
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
-      continue;
-    }
-    if (!state || !['interactive', 'complete'].includes(state.readyState)) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
-      continue;
-    }
-    if (workflowTargetAllowed(
-      state.href,
-      session.officeCode,
-      workflowId,
-      workflowSpec,
-    )) {
-      active.target = { ...active.target, url: state.href };
-      return active;
-    }
-    if (isOfficeIdentityProviderUrl(state.href, session.officeCode)) {
-      session.workflowState = 'WAITING_FOR_USER';
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
-      continue;
-    }
-
-    if (state.origin === portalOrigin && !ssoStarted) {
-      let candidates: CandidateSummary[] = [];
-      try {
-        candidates = readCandidateSummaries(
-          await evaluateValue(session, active.sessionId, CANDIDATE_SCAN_EXPRESSION),
-        );
-      } catch {
-        await new Promise<void>((resolve) => setTimeout(resolve, 500));
-        continue;
-      }
-      const candidate = selectPortalSystemCandidate(candidates, system);
-      if (candidate) {
-        session.workflowState = 'ENTERING_SYSTEM_SSO';
-        await pressCandidateWithCdp(
-          session,
-          active.sessionId,
-          candidate,
-          'mouse',
-          false,
-        );
-        ssoStarted = true;
-        session.workflowState = 'WAITING_FOR_SYSTEM';
-      } else {
-        session.workflowState = 'WAITING_FOR_USER';
-      }
-    } else if (state.origin !== portalOrigin) {
-      session.workflowState = 'CHECKING_AUTH';
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 500));
-  }
-  if (!options.background) {
-    await restoreAndActivateTarget(session, active.target.targetId, active.sessionId);
-  }
-  throw new Error(`업무포털에서 ${systemLabel} 연결을 기다리는 시간이 지났습니다. 표시된 업무용 브라우저에서 인증서 로그인과 ${systemLabel} 메뉴를 확인해 주세요.`);
-}
-
 function createWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   attached: AttachedWindowsTarget,
@@ -1408,15 +1191,18 @@ function createWindowsWorkflowPage(
   const newPageAttachments = new Map<string, AttachedWindowsTarget>();
   return {
     async currentOrigin() {
+      await extendSystemSessionIfPrompted(session, active.sessionId);
       const origin = await evaluateValue<unknown>(session, active.sessionId, 'location.origin');
       return typeof origin === 'string' ? origin : '';
     },
     async inspectCandidates() {
+      await extendSystemSessionIfPrompted(session, active.sessionId);
       return readCandidateSummaries(
         await evaluateValue(session, active.sessionId, CANDIDATE_SCAN_EXPRESSION),
       );
     },
     async pressCandidate(candidate, step) {
+      await extendSystemSessionIfPrompted(session, active.sessionId);
       if (step.postcondition.kind === 'new-page-any') {
         targetIdsBeforeNewPage = new Set(readTargetInfos(
           await session.connection.protocol.send('Target.getTargets', {}),
@@ -1436,6 +1222,7 @@ function createWindowsWorkflowPage(
       );
     },
     async checkCurrentState(step) {
+      await extendSystemSessionIfPrompted(session, active.sessionId);
       return Boolean(await evaluateValue(
         session,
         active.sessionId,
@@ -1443,6 +1230,7 @@ function createWindowsWorkflowPage(
       ));
     },
     async checkPostcondition(step) {
+      await extendSystemSessionIfPrompted(session, active.sessionId);
       if (await evaluateValue(
         session,
         active.sessionId,
@@ -1488,12 +1276,14 @@ function createWindowsWorkflowPage(
     },
     async wait(delayMs) {
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      await extendSystemSessionIfPrompted(session, active.sessionId);
     },
     async activate() {
       await restoreAndActivateTarget(session, active.target.targetId, active.sessionId);
     },
     release,
     async readApprovalCount(system) {
+      await extendSystemSessionIfPrompted(session, active.sessionId);
       return parseApprovalCounterCandidates(
         system,
         await evaluateValue<unknown>(
@@ -1517,6 +1307,7 @@ export async function openCdpWindowsApprovalPage(
     {
       background: true,
       closeCreatedTargetOnRelease: true,
+      failFastOnLoginRequired: true,
       forceNewTarget: true,
     },
   );
@@ -1567,38 +1358,46 @@ export async function openCdpWindowsWorkflowPage(
   };
   try {
     const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-    const attached = isManagedSystemRequest(workflowId, workflowSpec) &&
-      !options.forceNewTarget
-      ? await acquireSystemWorkflowTarget(
-        session,
-        targets,
-        workflowId,
-        workflowSpec,
-        lifecycle,
-        options,
-      )
-      : await acquireDirectWorkflowTarget(
-        session,
-        targets,
-        workflowId,
-        workflowSpec,
-        options,
-        lifecycle,
-      );
-    await waitForReadyPage(
+    const attached = await acquireDirectWorkflowTarget(
       session,
-      attached.sessionId,
-      (state) => {
-        if (state.loginVisible) session.workflowState = 'WAITING_FOR_USER';
-        return !state.loginVisible && workflowTargetAllowed(
-          state.href,
-          session.officeCode,
-          workflowId,
-          workflowSpec,
-        );
-      },
-      isManagedSystemRequest(workflowId, workflowSpec) ? 120_000 : 30_000,
+      targets,
+      workflowId,
+      workflowSpec,
+      options,
+      lifecycle,
     );
+    const system = requestSystem(workflowId, workflowSpec);
+    try {
+      await waitForReadyPage(
+        session,
+        attached.sessionId,
+        (state) => {
+          if (state.loginVisible) session.workflowState = 'WAITING_FOR_USER';
+          else session.workflowState = 'CHECKING_AUTH';
+          return !state.loginVisible && workflowTargetAllowed(
+            state.href,
+            session.officeCode,
+            workflowId,
+            workflowSpec,
+          );
+        },
+        system ? (options.failFastOnLoginRequired ? 15_000 : 120_000) : 30_000,
+        options.failFastOnLoginRequired && system
+          ? (state) => state.loginVisible
+            ? new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 전용 탭에서 로그인 또는 인증을 완료해 주세요.`)
+            : null
+          : undefined,
+      );
+    } catch (error) {
+      if (options.failFastOnLoginRequired && system) {
+        const label = system === 'neis' ? '나이스' : 'K-에듀파인';
+        const message = error instanceof Error ? error.message : '';
+        if (!/로그인|인증/.test(message)) {
+          throw new Error(`${label} 전용 탭에서 로그인 또는 인증을 완료한 뒤 다시 연결해 주세요.`);
+        }
+      }
+      throw error;
+    }
     if (!options.background) session.workflowState = 'NAVIGATING_DUTY_MENU';
     return createWindowsWorkflowPage(
       session,
@@ -1618,62 +1417,24 @@ function connectionProbeWorkflowId(system: WebWorkflowSystem): BuiltInWebWorkflo
   return system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox';
 }
 
-async function retainPreparedSystemTarget(
-  session: WindowsManagedBrowserSession,
-  beforeTargets: readonly WindowsTargetInfo[],
-  system: WebWorkflowSystem,
-): Promise<void> {
-  const protocol = session.connection.protocol;
-  const office = getEducationOffice(session.officeCode);
-  const workflowId = connectionProbeWorkflowId(system);
-  const beforeIds = new Set(beforeTargets.map(({ targetId }) => targetId));
-  const currentTargets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  const portalStillOpen = currentTargets.some((target) => isPortalTarget(
-    target,
-    session.officeCode,
-  ));
-  const systemTargets = currentTargets.filter((target) => (
-    target.type === 'page' &&
-    isAllowedWebWorkflowTarget(workflowId, target.url, session.officeCode)
-  ));
-  const keeper = systemTargets.find((target) => beforeIds.has(target.targetId)) ??
-    systemTargets[0];
-  for (const target of systemTargets) {
-    if (
-      target.targetId !== keeper?.targetId &&
-      !beforeIds.has(target.targetId)
-    ) {
-      await protocol.send('Target.closeTarget', { targetId: target.targetId });
-    }
-  }
-  if (!portalStillOpen) {
-    await protocol.send('Target.createTarget', {
-      url: office.portalUrl,
-      background: true,
-    });
-  }
-}
-
 export async function connectWindowsOfficeSystems(
   session: WindowsManagedBrowserSession,
   systems: readonly WebWorkflowSystem[],
   report: WindowsSystemConnectionReporter = () => undefined,
   signal?: AbortSignal,
+  foreground = false,
 ): Promise<void> {
-  for (const [index, system] of [...new Set(systems)].entries()) {
+  for (const system of [...new Set(systems)]) {
     if (signal?.aborted) return;
     const label = system === 'neis' ? '나이스' : 'K-에듀파인';
     report({ system, state: 'connecting', message: `${label}에 연결하고 있습니다.` });
-    const beforeTargets = readTargetInfos(
-      await session.connection.protocol.send('Target.getTargets', {}),
-    );
     let page: WindowsWorkflowPage | undefined;
     try {
       page = await openCdpWindowsWorkflowPage(
         session,
         connectionProbeWorkflowId(system),
         undefined,
-        { background: true, signal },
+        { background: !foreground, failFastOnLoginRequired: true, signal },
       );
       report({ system, state: 'connected', checkedAt: Date.now() });
     } catch (error) {
@@ -1685,23 +1446,8 @@ export async function connectWindowsOfficeSystems(
         state: loginRequired ? 'login-required' : 'error',
         message,
       });
-      if (loginRequired) {
-        for (const remaining of systems.slice(index + 1)) {
-          report({
-            system: remaining,
-            state: 'login-required',
-            message: '업무포털 인증서 로그인을 완료하면 자동 연결을 다시 시작할 수 있습니다.',
-          });
-        }
-        return;
-      }
     } finally {
       await page?.release?.();
-    }
-    try {
-      await retainPreparedSystemTarget(session, beforeTargets, system);
-    } catch {
-      // The authenticated session remains valid even if an auxiliary target closes late.
     }
   }
 }
@@ -1762,8 +1508,7 @@ export async function focusWindowsWorkflow(
     request.officeCode,
     request.workflowId,
     request.workflowSpec,
-  ) ?? targets.find((candidate) => isPortalTarget(candidate, request.officeCode)) ??
-    targets.find(isBootstrapTarget);
+  ) ?? targets.find(isBootstrapTarget);
   if (target) await restoreAndActivateTarget(session, target.targetId);
 }
 
@@ -1898,7 +1643,13 @@ export function createWindowsManagedSessionManager(
       report?: WindowsSystemConnectionReporter,
     ) {
       return manager.use(input.officeCode, input.browserId, (session) => (
-        connectWindowsOfficeSystems(session, input.systems, report, input.signal)
+        connectWindowsOfficeSystems(
+          session,
+          input.systems,
+          report,
+          input.signal,
+          input.foreground,
+        )
       ));
     },
     checkApproval(input: ApprovalScanInput) {
@@ -1910,7 +1661,7 @@ export function createWindowsManagedSessionManager(
         if (connectionStatus?.state !== 'connected') {
           throw new Error(
             connectionStatus?.message ??
-            `${input.system === 'neis' ? '나이스' : 'K-에듀파인'}에 연결하지 못했습니다. 업무포털 로그인 상태를 확인해 주세요.`,
+            `${input.system === 'neis' ? '나이스' : 'K-에듀파인'}에 연결하지 못했습니다. 해당 시스템 전용 탭의 로그인 상태를 확인해 주세요.`,
           );
         }
         return scanWindowsApprovalCount(session, input, {

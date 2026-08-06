@@ -29,11 +29,7 @@ import {
   type LoadManagedWebConnectorStateOptions,
   type ManagedWebConnectorState,
 } from './state';
-import {
-  createWindowsManagedSessionManager,
-  openWindowsOfficePortal,
-  type WindowsManagedBrowserSession,
-} from './windows';
+import { createWindowsManagedSessionManager } from './windows';
 import type { WorkflowRunResult } from './workflows/engine';
 import type { ApprovalScanInput } from '../approvalMonitor/definitions';
 
@@ -62,6 +58,7 @@ export interface WebConnectorSessionController {
       officeCode: EducationOfficeCode;
       browserId: WebConnectorBrowserId;
       systems: readonly WebWorkflowSystem[];
+      foreground?: boolean;
       signal?: AbortSignal;
     },
     report?: (status: WebSystemConnectionStatus) => void,
@@ -176,7 +173,6 @@ export function createWebConnectorService({
   broadcast = () => undefined,
   stateIo = diskStateIo(userDataPath),
   sessionController,
-  openPortal,
   diagnostics: injectedDiagnostics,
   now = Date.now,
   confirmWorkflowStep,
@@ -199,12 +195,6 @@ export function createWebConnectorService({
       })
       : unavailableController()
   );
-  const openOfficePortal = openPortal ?? (async (session) => {
-    if (platform !== 'win32' || !('connection' in session)) {
-      throw new Error('업무용 브라우저 연결 정보가 없습니다. 설정에서 연결을 다시 시험해 주세요.');
-    }
-    await openWindowsOfficePortal(session as WindowsManagedBrowserSession);
-  });
   const diagnostics = injectedDiagnostics ?? createWebConnectorDiagnostics({
     userDataPath,
     platform: platform === 'win32' ? 'win32' : 'darwin',
@@ -341,6 +331,7 @@ export function createWebConnectorService({
   const startAutoConnection = (
     officeCode: EducationOfficeCode,
     browserId: WebConnectorBrowserId,
+    foreground = false,
   ): void => {
     const systems = configuredAutoSystems();
     if (!controller.connectSystems || systems.length === 0) {
@@ -348,20 +339,31 @@ export function createWebConnectorService({
       return;
     }
     const key = connectionKey(officeCode, browserId);
-    if (connectionControllers.has(key)) return;
+    const existingController = connectionControllers.get(key);
+    if (existingController) {
+      if (!foreground) return;
+      existingController.abort();
+      connectionControllers.delete(key);
+    }
     const abortController = new AbortController();
     connectionControllers.set(key, abortController);
     for (const system of systems) {
       setSystemStatus(officeCode, browserId, {
         system,
         state: 'connecting',
-        message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결을 준비하고 있습니다.`,
+        message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 전용 탭을 준비하고 있습니다.`,
       });
     }
     const task = Promise.resolve().then(async () => {
       try {
         await controller.connectSystems?.(
-          { officeCode, browserId, systems, signal: abortController.signal },
+          {
+            officeCode,
+            browserId,
+            systems,
+            foreground,
+            signal: abortController.signal,
+          },
           (status) => setSystemStatus(officeCode, browserId, status),
         );
       } catch (error) {
@@ -536,9 +538,8 @@ export function createWebConnectorService({
     async test(browserId) {
       try {
         const session = await prepareAndMark(browserId);
-        await openOfficePortal(session);
         publishStatuses();
-        startAutoConnection(session.officeCode, session.browserId);
+        startAutoConnection(session.officeCode, session.browserId, true);
         return { ok: true };
       } catch (error) {
         return { ok: false, message: errorDetail(error) };
