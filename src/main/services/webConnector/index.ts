@@ -206,9 +206,7 @@ export function createWebConnectorService({
   const pending = new Set<Promise<void>>();
   const inFlightWorkflows = new Map<string, Promise<void>>();
   const connectionStates = new Map<string, Map<WebWorkflowSystem, WebSystemConnectionStatus>>();
-  const connectionControllers = new Map<string, AbortController>();
   let configuredOfficeCode = getConfig().educationOfficeCode;
-  let configuredConnectionSignature = JSON.stringify(getConfig().webConnection);
 
   const currentOffice = (): EducationOfficeCode => getConfig().educationOfficeCode;
 
@@ -267,14 +265,6 @@ export function createWebConnectorService({
     publishStatuses();
   };
 
-  const configuredAutoSystems = (): WebWorkflowSystem[] => {
-    const connection = getConfig().webConnection;
-    if (!connection.autoConnectAfterPortalLogin) return [];
-    return connection.autoConnectTarget === 'both'
-      ? ['neis', 'edufine']
-      : [connection.autoConnectTarget];
-  };
-
   const persist = (): Promise<void> => {
     if (!state) return Promise.resolve();
     const text = JSON.stringify(state, null, 2);
@@ -328,93 +318,13 @@ export function createWebConnectorService({
     return session;
   };
 
-  const startAutoConnection = (
-    officeCode: EducationOfficeCode,
-    browserId: WebConnectorBrowserId,
-    foreground = false,
-  ): void => {
-    const systems = configuredAutoSystems();
-    if (!controller.connectSystems || systems.length === 0) {
-      publishStatuses();
-      return;
-    }
-    const key = connectionKey(officeCode, browserId);
-    const existingController = connectionControllers.get(key);
-    if (existingController) {
-      if (!foreground) return;
-      existingController.abort();
-      connectionControllers.delete(key);
-    }
-    const abortController = new AbortController();
-    connectionControllers.set(key, abortController);
-    for (const system of systems) {
-      setSystemStatus(officeCode, browserId, {
-        system,
-        state: 'connecting',
-        message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 전용 탭을 준비하고 있습니다.`,
-      });
-    }
-    const task = Promise.resolve().then(async () => {
-      try {
-        await controller.connectSystems?.(
-          {
-            officeCode,
-            browserId,
-            systems,
-            foreground,
-            signal: abortController.signal,
-          },
-          (status) => setSystemStatus(officeCode, browserId, status),
-        );
-      } catch (error) {
-        if (abortController.signal.aborted) {
-          for (const system of systems) {
-            const current = connectionStates.get(key)?.get(system);
-            if (current?.state === 'connecting') {
-              setSystemStatus(officeCode, browserId, { system, state: 'idle' });
-            }
-          }
-          return;
-        }
-        const message = errorDetail(error);
-        for (const system of systems) {
-          const current = connectionStates.get(key)?.get(system);
-          if (!current || current.state === 'connecting') {
-            setSystemStatus(officeCode, browserId, {
-              system,
-              state: /로그인|인증/.test(message) ? 'login-required' : 'error',
-              message,
-            });
-          }
-        }
-      }
-    });
-    pending.add(task);
-    void task.finally(() => {
-      pending.delete(task);
-      if (connectionControllers.get(key) === abortController) {
-        connectionControllers.delete(key);
-      }
-      publishStatuses();
-    });
-  };
-
-  const cancelConnection = (
-    officeCode: EducationOfficeCode,
-    browserId: WebConnectorBrowserId,
-  ): void => {
-    connectionControllers.get(connectionKey(officeCode, browserId))?.abort();
-  };
-
   return {
     start,
     async stop() {
       started = false;
-      for (const abortController of connectionControllers.values()) abortController.abort();
       await Promise.allSettled([...pending]);
       await controller.closeAll();
       await persistTail;
-      connectionControllers.clear();
       connectionStates.clear();
       state = null;
       starting = null;
@@ -465,7 +375,6 @@ export function createWebConnectorService({
       }
       const startedAt = now();
       notify(workflowProgressMessage(workflowSpec), 'info');
-      cancelConnection(officeCode, request.browserId);
       const task = (async () => {
         try {
           await controller.closeOtherOffices(officeCode);
@@ -537,9 +446,8 @@ export function createWebConnectorService({
     },
     async test(browserId) {
       try {
-        const session = await prepareAndMark(browserId);
+        await prepareAndMark(browserId);
         publishStatuses();
-        startAutoConnection(session.officeCode, session.browserId, true);
         return { ok: true };
       } catch (error) {
         return { ok: false, message: errorDetail(error) };
@@ -576,7 +484,6 @@ export function createWebConnectorService({
       if (!controller.checkApproval) {
         throw new Error('결재 대기 확인 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
       }
-      cancelConnection(input.officeCode, input.browserId);
       setSystemStatus(input.officeCode, input.browserId, {
         system: input.system,
         state: 'connecting',
@@ -603,23 +510,11 @@ export function createWebConnectorService({
       }
     },
     async onConfigChanged(config) {
-      const nextConnectionSignature = JSON.stringify(config.webConnection);
       const officeChanged = configuredOfficeCode !== config.educationOfficeCode;
-      const connectionChanged = configuredConnectionSignature !== nextConnectionSignature;
       configuredOfficeCode = config.educationOfficeCode;
-      configuredConnectionSignature = nextConnectionSignature;
-      if (officeChanged || connectionChanged) {
-        for (const abortController of connectionControllers.values()) abortController.abort();
-        connectionStates.clear();
-      }
+      if (officeChanged) connectionStates.clear();
       await controller.closeOtherOffices(config.educationOfficeCode);
-      if (officeChanged || connectionChanged) {
-        for (const browserId of ['edge', 'chrome'] as const) {
-          const session = controller.getSession(config.educationOfficeCode, browserId);
-          if (session?.isAlive()) startAutoConnection(config.educationOfficeCode, browserId);
-        }
-        publishStatuses();
-      }
+      if (officeChanged) publishStatuses();
     },
   };
 }

@@ -50,6 +50,15 @@ describe('managed web workflow engine', () => {
     ], ['복무'])).toThrow(/둘 이상/);
   });
 
+  it('uses the topmost exact duplicate only for an explicitly first-available menu step', () => {
+    expect(selectSafeCandidate([
+      candidate(0, '복무', { top: 500, left: 10 }),
+      candidate(1, '복무', { top: 100, left: 10 }),
+    ], ['복무'], false, 'first-available')).toEqual(
+      candidate(1, '복무', { top: 100, left: 10 }),
+    );
+  });
+
   it('never selects save, submit, approval, payment, or confirmation actions', () => {
     for (const text of ['저장', '제출', '결재', '결재 요청', '상신', '승인', '최종 확정']) {
       expect(isForbiddenActionText(text)).toBe(true);
@@ -96,8 +105,8 @@ describe('managed web workflow engine', () => {
     expect(presses).toBe(1);
   });
 
-  it('rejects a safe label when another visible or accessible name reveals an action', () => {
-    expect(() => selectSafeCandidate([
+  it('ignores important words elsewhere in a menu but still blocks the selected item itself', () => {
+    expect(selectSafeCandidate([
       candidate(0, '결재함', {
         navigation: true,
         safeNavigation: true,
@@ -106,7 +115,14 @@ describe('managed web workflow engine', () => {
         titleText: '',
         valueText: '',
       } as Partial<CandidateSummary>),
-    ], ['결재함'], true)).toThrow(/중요 동작/);
+    ], ['결재함'], true)).toEqual(candidate(0, '결재함', {
+      navigation: true,
+      safeNavigation: true,
+      visibleText: '승인',
+      accessibleName: '결재함',
+      titleText: '',
+      valueText: '',
+    } as Partial<CandidateSummary>));
 
     expect(() => selectSafeCandidate([
       candidate(0, '저장', {

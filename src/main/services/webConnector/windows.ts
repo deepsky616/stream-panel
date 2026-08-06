@@ -626,7 +626,8 @@ if(!item)return {ok:false};
 const forbiddenTokens=${JSON.stringify(FORBIDDEN_ACTION_TOKENS)};
 const approvedNonActions=new Set(${JSON.stringify([...APPROVED_NON_ACTION_LABELS])});
 const allowedActionLabels=new Set(${JSON.stringify(allowedActionLabels)}.map(normalize));
-const forbiddenSurface=surfaceTextsOf(item.element).some(text=>{
+const ownActionTexts=[textOf(item.element),accessibleNameOf(item.element),titleTextOf(item.element),valueTextOf(item.element)].filter(Boolean);
+const forbiddenSurface=ownActionTexts.some(text=>{
   const normalized=normalize(text);
   return !approvedNonActions.has(normalized)&&forbiddenTokens.some(token=>normalized.includes(token))&&(!${JSON.stringify(allowActionText)}||!allowedActionLabels.has(normalized));
 });
@@ -1306,9 +1307,9 @@ export async function openCdpWindowsApprovalPage(
     undefined,
     {
       background: true,
-      closeCreatedTargetOnRelease: true,
+      closeCreatedTargetOnRelease: false,
       failFastOnLoginRequired: true,
-      forceNewTarget: true,
+      forceNewTarget: false,
     },
   );
   if (!page.readApprovalCount) {

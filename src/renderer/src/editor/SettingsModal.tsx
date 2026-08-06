@@ -238,11 +238,6 @@ export function SettingsModal({
   ) => {
     setConfig((current) => ({ approvalMonitor: update(current.approvalMonitor) }));
   };
-  const setWebConnection = (patch: Partial<AppConfig['webConnection']>) => {
-    setConfig((current) => ({
-      webConnection: { ...current.webConnection, ...patch },
-    }));
-  };
   const updateGrid = (patch: Partial<AppConfig['grid']>) => {
     const next = { ...config.grid, ...patch };
     const nextCapacity = next.cols * next.rows;
@@ -308,7 +303,7 @@ export function SettingsModal({
       if (result.ok) {
         setMessage(target === 'folder'
           ? '문제 해결 폴더를 열었습니다.'
-          : '선택한 업무 시스템을 전용 탭으로 열었습니다. 필요한 로그인은 해당 탭에서 직접 진행해 주세요.');
+          : '업무용 브라우저를 준비했습니다. 웹 업무 키나 업무 알림의 지금 확인을 누르면 해당 시스템에 연결합니다.');
         if (target === 'pair') await refreshConnectorStatuses();
       } else {
         setConnectorError(browserId);
@@ -326,11 +321,11 @@ export function SettingsModal({
   const testConnector = async (browserId: WebConnectorBrowserId) => {
     setConnectorBusy(browserId);
     setConnectorError(null);
-    setMessage('업무용 브라우저에서 나이스·K-에듀파인 전용 연결을 각각 확인하고 있습니다.');
+    setMessage('업무용 브라우저 연결을 확인하고 있습니다.');
     try {
       const result = await window.api.webConnector.test({ browserId });
       if (result.ok) {
-        setMessage(`${browserId === 'edge' ? '엣지' : '크롬'}에서 선택한 업무 시스템을 각각 열었습니다. 추가 로그인이 필요한 시스템은 해당 탭에서 진행해 주세요.`);
+        setMessage(`${browserId === 'edge' ? '엣지' : '크롬'} 업무용 브라우저가 준비되었습니다. 시스템 연결은 웹 업무 실행 또는 업무 알림 확인 시 자동으로 진행합니다.`);
       } else {
         setConnectorError(browserId);
         setMessage(result.message);
@@ -493,36 +488,6 @@ export function SettingsModal({
                   </select>
                   <small>교육청을 바꾸면 등록된 웹 업무 키 주소도 함께 안전하게 바뀝니다.</small>
                 </label>
-                <section className="portal-auto-connect" aria-labelledby="portal-auto-connect-title">
-                  <div>
-                    <strong id="portal-auto-connect-title">나이스·K-에듀파인 직접 연결</strong>
-                    <small>업무포털 메뉴를 거치지 않고 선택한 교육청의 시스템 전용 탭을 각각 열어 세션을 준비합니다.</small>
-                  </div>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={config.webConnection.autoConnectAfterPortalLogin}
-                      onChange={(event) => setWebConnection({
-                        autoConnectAfterPortalLogin: event.target.checked,
-                      })}
-                    />
-                    자동 연결 사용
-                  </label>
-                  <label>
-                    연결 대상
-                    <select
-                      value={config.webConnection.autoConnectTarget}
-                      disabled={!config.webConnection.autoConnectAfterPortalLogin}
-                      onChange={(event) => setWebConnection({
-                        autoConnectTarget: event.target.value as AppConfig['webConnection']['autoConnectTarget'],
-                      })}
-                    >
-                      <option value="both">나이스와 K-에듀파인 — 기본</option>
-                      <option value="neis">나이스</option>
-                      <option value="edufine">K-에듀파인</option>
-                    </select>
-                  </label>
-                </section>
                 <div className="connector-browser-list">
                   {connectorCards.map((card) => (
                       <article className={`connector-browser-card connector-${card.state}`} key={card.browserId}>
@@ -551,13 +516,13 @@ export function SettingsModal({
                             type="button"
                             disabled={connectorBusy !== null}
                             onClick={() => void openConnectorSetup(card.browserId, 'pair')}
-                          >선택 시스템 열기</button>
+                          >업무용 브라우저 열기</button>
                           <button
                             className="primary-action"
                             type="button"
                             disabled={connectorBusy !== null}
                             onClick={() => void testConnector(card.browserId)}
-                          >{connectorBusy === card.browserId ? '확인 중…' : '연결 시험'}</button>
+                          >{connectorBusy === card.browserId ? '확인 중…' : '브라우저 확인'}</button>
                           {card.state === 'error' && (
                             <button
                               type="button"
@@ -573,9 +538,9 @@ export function SettingsModal({
                   <h3>사용 순서</h3>
                   <ol>
                     <li>소속 교육청과 사용할 엣지 또는 크롬을 고릅니다.</li>
-                    <li>선택 시스템 열기를 누르면 나이스와 K-에듀파인이 각각의 전용 탭에서 열립니다.</li>
-                    <li>추가 로그인이 필요한 시스템만 해당 탭에서 직접 로그인합니다.</li>
+                    <li>업무용 브라우저 열기를 눌러 교육청 전용 브라우저를 준비합니다.</li>
                     <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓고 실행합니다.</li>
+                    <li>업무 키나 업무 알림의 지금 확인을 누르면 필요한 시스템에만 연결하며, 추가 로그인이 필요하면 해당 탭에서 진행합니다.</li>
                   </ol>
                 </div>
                 <CustomWebWorkflowBuilder

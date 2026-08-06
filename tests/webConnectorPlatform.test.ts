@@ -259,7 +259,7 @@ describe('Windows managed web automation', () => {
     });
   });
 
-  it('ignores an existing work tab and closes only the background approval target created by the app', async () => {
+  it('reuses an existing authenticated work tab for approval checks without closing it', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     const protocol = {
       isClosed: false,
@@ -316,21 +316,15 @@ describe('Windows managed web automation', () => {
     await releasablePage.release?.();
 
     expect(commands).toContainEqual({
-      method: 'Target.createTarget',
-      params: { url: 'https://sen.neis.go.kr/', background: true },
-    });
-    expect(commands).toContainEqual({
       method: 'Target.attachToTarget',
-      params: { targetId: 'approval-target', flatten: true },
+      params: { targetId: 'user-work-target', flatten: true },
     });
     expect(commands).toContainEqual({
       method: 'Target.detachFromTarget',
       params: { sessionId: 'approval-session' },
     });
-    expect(commands).toContainEqual({
-      method: 'Target.closeTarget',
-      params: { targetId: 'approval-target' },
-    });
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
   });
 
   it('closes a managed browser session when target cleanup fails', async () => {

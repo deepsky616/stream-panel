@@ -22,6 +22,7 @@ const BUSINESS_PURCHASE_WORKFLOW: ManagedWorkflowDefinition = {
     {
       id: 'select-school-accounting',
       candidateLabels: ['학교회계'],
+      selection: 'first-available',
       interaction: 'mouse',
       postcondition: { kind: 'visible-any', labels: ['사업담당', '사업관리'] },
       ...COMMON_CHECKS,
@@ -61,6 +62,7 @@ const EXPENDITURE_PURCHASE_WORKFLOW: ManagedWorkflowDefinition = {
     {
       id: 'select-school-accounting',
       candidateLabels: ['학교회계'],
+      selection: 'first-available',
       interaction: 'mouse',
       postcondition: { kind: 'visible-any', labels: ['지출관리'] },
       ...COMMON_CHECKS,
@@ -68,6 +70,7 @@ const EXPENDITURE_PURCHASE_WORKFLOW: ManagedWorkflowDefinition = {
     {
       id: 'open-expenditure-management',
       candidateLabels: ['지출관리'],
+      selection: 'first-available',
       interaction: 'mouse',
       postcondition: { kind: 'visible-any', labels: ['지출처리'] },
       ...COMMON_CHECKS,
@@ -75,6 +78,7 @@ const EXPENDITURE_PURCHASE_WORKFLOW: ManagedWorkflowDefinition = {
     {
       id: 'open-expenditure-processing',
       candidateLabels: ['지출처리'],
+      selection: 'first-available',
       interaction: 'mouse',
       postcondition: { kind: 'visible-any', labels: ['지출품의', '품의등록', '품의 등록'] },
       ...COMMON_CHECKS,
@@ -112,6 +116,7 @@ export const EDUFINE_WORKFLOWS = {
       {
         id: 'select-business-management',
         candidateLabels: ['업무관리'],
+        selection: 'first-available',
         interaction: 'mouse',
         postcondition: { kind: 'visible-any', labels: ['문서관리'] },
         ...COMMON_CHECKS,
@@ -119,6 +124,7 @@ export const EDUFINE_WORKFLOWS = {
       {
         id: 'open-document-management',
         candidateLabels: ['문서관리'],
+        selection: 'first-available',
         interaction: 'mouse',
         postcondition: { kind: 'visible-any', labels: ['기안'] },
         ...COMMON_CHECKS,
@@ -126,6 +132,7 @@ export const EDUFINE_WORKFLOWS = {
       {
         id: 'open-draft-menu',
         candidateLabels: ['기안'],
+        selection: 'first-available',
         interaction: 'mouse',
         postcondition: { kind: 'visible-any', labels: ['공용서식', '공용 서식'] },
         ...COMMON_CHECKS,

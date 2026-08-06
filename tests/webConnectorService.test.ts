@@ -173,7 +173,7 @@ describe('managed web connector service', () => {
     });
   });
 
-  it('prepares both system sessions independently and broadcasts their states', async () => {
+  it('prepares only the managed browser and connects each system on demand', async () => {
     const inputs: unknown[] = [];
     const broadcasts: unknown[] = [];
     const config = createDefaultConfig(
@@ -203,15 +203,10 @@ describe('managed web connector service', () => {
     await expect(service.test('edge')).resolves.toEqual({ ok: true });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(inputs).toEqual([expect.objectContaining({
-      officeCode: 'goe',
-      browserId: 'edge',
-      systems: ['neis', 'edufine'],
-      foreground: true,
-    })]);
+    expect(inputs).toEqual([]);
     expect(service.getStatuses()[0].systems).toEqual([
-      { system: 'neis', state: 'connected', checkedAt: 1_800_000_000_001 },
-      { system: 'edufine', state: 'connected', checkedAt: 1_800_000_000_001 },
+      { system: 'neis', state: 'idle' },
+      { system: 'edufine', state: 'idle' },
     ]);
     expect(broadcasts.length).toBeGreaterThan(0);
   });

@@ -118,21 +118,18 @@ export function isForbiddenActionText(text: string): boolean {
   return FORBIDDEN_ACTION_TOKENS.some((token) => normalized.includes(token));
 }
 
-function candidateSurfaceTexts(candidate: CandidateSummary): string[] {
+function candidateMatchesLabel(candidate: CandidateSummary, label: string): boolean {
+  const expected = normalizeCandidateText(label);
+  return normalizeCandidateText(candidate.text) === expected;
+}
+
+function candidateOwnActionTexts(candidate: CandidateSummary): string[] {
   return [
     candidate.text,
-    candidate.visibleText,
     candidate.accessibleName,
     candidate.titleText,
     candidate.valueText,
   ].filter((text): text is string => typeof text === 'string' && text.trim() !== '');
-}
-
-function candidateMatchesLabel(candidate: CandidateSummary, label: string): boolean {
-  const expected = normalizeCandidateText(label);
-  return candidateSurfaceTexts(candidate).some((text) => (
-    normalizeCandidateText(text) === expected
-  ));
 }
 
 function candidateMatchesContext(
@@ -172,19 +169,24 @@ export function selectSafeCandidate(
     ))
   ));
   const exact = selection === 'first-available'
-    ? labels.reduce<CandidateSummary[]>((selected, label) => (
-        selected.length > 0
-          ? selected
-          : eligible.filter((candidate) => candidateMatchesLabel(candidate, label))
-      ), [])
+    ? labels.reduce<CandidateSummary[]>((selected, label) => {
+        if (selected.length > 0) return selected;
+        const matches = eligible.filter((candidate) => candidateMatchesLabel(candidate, label));
+        if (matches.length === 0) return selected;
+        return [[...matches].sort((left, right) => (
+          (left.top ?? Number.MAX_SAFE_INTEGER) - (right.top ?? Number.MAX_SAFE_INTEGER) ||
+          (left.left ?? Number.MAX_SAFE_INTEGER) - (right.left ?? Number.MAX_SAFE_INTEGER) ||
+          left.index - right.index
+        ))[0]];
+      }, [])
     : eligible.filter((candidate) => labels.some((label) => candidateMatchesLabel(candidate, label)));
   const allowedConfirmedLabels = new Set(labels.map(normalizeCandidateText));
-  const forbidden = exact.filter((candidate) => candidateSurfaceTexts(candidate).some((text) => (
+  const forbidden = exact.filter((candidate) => candidateOwnActionTexts(candidate).some((text) => (
     isForbiddenActionText(text) &&
     (!allowConfirmedAction || !allowedConfirmedLabels.has(normalizeCandidateText(text)))
   )));
   if (forbidden.length > 0) {
-    throw new Error('요청한 단계와 다른 저장·제출·상신·승인·결재·삭제·송금·인증 입력 같은 중요 동작 표식이 함께 보여 자동 실행을 중단했습니다. 화면에서 직접 확인해 주세요.');
+    throw new Error('지금 누르려는 항목 자체가 저장·제출·상신·승인·결재·삭제·송금·인증 입력 같은 중요 동작이어서 자동 실행을 중단했습니다. 화면에서 직접 확인해 주세요.');
   }
   if (exact.length > 1) {
     throw new Error('같은 이름의 메뉴가 둘 이상 보여 안전하게 고를 수 없습니다. 업무용 브라우저에서 직접 메뉴를 선택해 주세요.');

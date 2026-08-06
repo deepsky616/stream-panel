@@ -151,9 +151,11 @@ describe('managed web workflow definitions', () => {
       kind: 'new-page-any',
       labels: ['출장신청'],
     });
-    expect(Object.values(definitions).flatMap(({ steps }) => steps).every(
-      ({ skipWhenSatisfied }) => skipWhenSatisfied === true,
-    )).toBe(true);
+    expect(definitions['neis-leave'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
+    expect(definitions['neis-trip'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
+    expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
+      ({ id }) => id !== 'open-leave-form' && id !== 'open-trip-form',
+    ).every(({ skipWhenSatisfied }) => skipWhenSatisfied === true)).toBe(true);
   });
 
   it('never places forbidden action text in a clickable candidate label', () => {
