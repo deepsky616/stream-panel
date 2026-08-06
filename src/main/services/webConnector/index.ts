@@ -94,6 +94,11 @@ export interface CreateWebConnectorServiceOptions {
   openPortal?: (session: ManagedBrowserSession) => Promise<void>;
   diagnostics?: WebConnectorDiagnostics;
   now?: () => number;
+  confirmWorkflowStep?: (details: {
+    workflowName: string;
+    stepLabel: string;
+    system: WebWorkflowSystem;
+  }) => Promise<boolean>;
 }
 
 function diskStateIo(userDataPath: string): LoadManagedWebConnectorStateOptions {
@@ -141,7 +146,7 @@ function workflowSuccessMessage(workflowSpec: WebWorkflowSpec): string {
     case 'edufine-approval-inbox':
       return '에듀파인 결재함을 열었습니다. 승인, 반려와 서명은 화면에서 직접 진행해 주세요.';
     case 'custom':
-      return `${workflowSpec.custom.name} 화면을 열었습니다. 내용을 확인한 뒤 필요한 최종 동작은 직접 진행해 주세요.`;
+      return `${workflowSpec.custom.name} 이동을 완료했습니다. 확인이 필요한 중요 단계는 승인한 항목만 한 번 실행했습니다.`;
   }
 }
 
@@ -174,10 +179,24 @@ export function createWebConnectorService({
   openPortal,
   diagnostics: injectedDiagnostics,
   now = Date.now,
+  confirmWorkflowStep,
 }: CreateWebConnectorServiceOptions): WebConnectorService {
   const controller = sessionController ?? (
     platform === 'win32'
-      ? createWindowsManagedSessionManager({ userDataPath })
+      ? createWindowsManagedSessionManager({
+        userDataPath,
+        workflowDependencies: {
+          confirmStep: async (request, _step, candidate) => {
+            const spec = request.workflowSpec;
+            if (!spec || !confirmWorkflowStep) return false;
+            return confirmWorkflowStep({
+              workflowName: spec.id === 'custom' ? spec.custom.name : candidate.text,
+              stepLabel: candidate.text,
+              system: getWebWorkflowSystem(spec),
+            });
+          },
+        },
+      })
       : unavailableController()
   );
   const openOfficePortal = openPortal ?? (async (session) => {
@@ -472,14 +491,19 @@ export function createWebConnectorService({
           });
         } catch (error) {
           const detail = errorDetail(error);
+          const cancelledByUser = /단계 실행을 취소했습니다/.test(detail);
           setSystemStatus(officeCode, request.browserId, {
             system: workflowSystem,
-            state: /로그인|인증|기다리는 시간이 지났습니다/.test(detail)
-              ? 'login-required'
-              : 'error',
-            message: detail,
+            state: cancelledByUser
+              ? 'connected'
+              : (
+                /로그인|인증|기다리는 시간이 지났습니다/.test(detail)
+                  ? 'login-required'
+                  : 'error'
+              ),
+            ...(cancelledByUser ? { checkedAt: now() } : { message: detail }),
           });
-          notify(detail, 'error');
+          notify(detail, cancelledByUser ? 'info' : 'error');
           try {
             await diagnostics.record({
               at: now(),

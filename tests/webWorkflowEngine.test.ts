@@ -53,9 +53,40 @@ describe('managed web workflow engine', () => {
   it('never selects save, submit, approval, payment, or confirmation actions', () => {
     for (const text of ['저장', '제출', '결재', '결재 요청', '상신', '승인', '최종 확정']) {
       expect(isForbiddenActionText(text)).toBe(true);
-      expect(() => selectSafeCandidate([candidate(0, text)], [text])).toThrow(/누를 수 없는/);
+      expect(() => selectSafeCandidate([candidate(0, text)], [text])).toThrow(/중요 동작/);
     }
     expect(isForbiddenActionText('품의등록')).toBe(false);
+  });
+
+  it('runs a configured action step only after an explicit per-run confirmation', async () => {
+    const confirmedStep: WorkflowStep = {
+      ...step,
+      id: 'save-custom-form',
+      candidateLabels: ['저장'],
+      navigationOnly: false,
+      requiresConfirmation: true,
+      postcondition: { kind: 'visible-any', labels: ['저장 완료'] },
+    };
+    let presses = 0;
+    const adapter = (confirmed: boolean) => ({
+      inspectCandidates: async () => [candidate(0, '저장')],
+      confirmStep: async () => confirmed,
+      pressCandidate: async () => { presses += 1; },
+      checkPostcondition: async () => true,
+      wait: async () => undefined,
+    });
+
+    await expect(runWorkflow(
+      { id: 'custom', label: '사용자 지정 업무', finalState: 'ready', steps: [confirmedStep] },
+      adapter(false),
+    )).rejects.toThrow(/실행을 취소/);
+    expect(presses).toBe(0);
+
+    await expect(runWorkflow(
+      { id: 'custom', label: '사용자 지정 업무', finalState: 'ready', steps: [confirmedStep] },
+      adapter(true),
+    )).resolves.toEqual({ workflowId: 'custom', finalState: 'ready' });
+    expect(presses).toBe(1);
   });
 
   it('rejects a safe label when another visible or accessible name reveals an action', () => {
@@ -68,7 +99,14 @@ describe('managed web workflow engine', () => {
         titleText: '',
         valueText: '',
       } as Partial<CandidateSummary>),
-    ], ['결재함'], true)).toThrow(/누를 수 없는/);
+    ], ['결재함'], true)).toThrow(/중요 동작/);
+
+    expect(() => selectSafeCandidate([
+      candidate(0, '저장', {
+        visibleText: '저장',
+        accessibleName: '삭제',
+      } as Partial<CandidateSummary>),
+    ], ['저장'], false, 'unique-any', [], false, true)).toThrow(/중요 동작/);
   });
 
   it('presses a safe candidate once and advances only after the postcondition succeeds', async () => {

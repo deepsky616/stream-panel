@@ -5,7 +5,10 @@ import { NEIS_WORKFLOWS } from '../src/main/services/webConnector/workflows/neis
 import { isForbiddenActionText } from '../src/main/services/webConnector/workflows/common';
 import * as workflowCommon from '../src/main/services/webConnector/workflows/common';
 import type { WebWorkflowSpec } from '../src/shared/types';
-import { APPROVAL_INBOX_WORKFLOWS } from '../src/main/services/approvalMonitor/definitions';
+import {
+  APPROVAL_INBOX_WORKFLOW_ROUTES,
+  APPROVAL_INBOX_WORKFLOWS,
+} from '../src/main/services/approvalMonitor/definitions';
 
 const definitions = { ...NEIS_WORKFLOWS, ...EDUFINE_WORKFLOWS };
 const allDefinitions = { ...definitions, ...APPROVAL_INBOX_WORKFLOWS };
@@ -59,6 +62,32 @@ describe('managed web workflow definitions', () => {
         }),
       ],
     });
+  });
+
+  it('marks configured important custom steps for per-run confirmation', () => {
+    const createCustomManagedWorkflowDefinition = (
+      workflowCommon as unknown as {
+        createCustomManagedWorkflowDefinition(spec: WebWorkflowSpec): {
+          steps: Array<Record<string, unknown>>;
+        };
+      }
+    ).createCustomManagedWorkflowDefinition;
+    const definition = createCustomManagedWorkflowDefinition({
+      id: 'custom',
+      browserId: 'edge',
+      custom: {
+        name: '확인 후 저장',
+        system: 'edufine',
+        steps: [{ id: 'step-1', label: '저장' }],
+        finalText: '저장 완료',
+      },
+    });
+
+    expect(definition.steps[0]).toEqual(expect.objectContaining({
+      candidateLabels: ['저장'],
+      navigationOnly: false,
+      requiresConfirmation: true,
+    }));
   });
 
   it('defines only the four approved workflows and their final user-input states', () => {
@@ -135,6 +164,7 @@ describe('managed web workflow definitions', () => {
     for (const definition of Object.values(APPROVAL_INBOX_WORKFLOWS)) {
       for (const step of definition.steps) {
         if (!('labels' in step.postcondition)) continue;
+        if (step.postcondition.kind === 'tab-selected-any') continue;
         const clickedLabels = new Set(step.candidateLabels);
         expect(
           step.postcondition.labels.some((label) => clickedLabels.has(label)),
@@ -142,6 +172,33 @@ describe('managed web workflow definitions', () => {
         ).toBe(false);
       }
     }
+  });
+
+  it('treats NEIS approval and Edufine document management as section labels, not buttons', () => {
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis[0].steps.map((step) => (
+      step.candidateLabels
+    ))).toEqual([['미결/협조함', '미결 / 협조함']]);
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis[0].steps[0]).toEqual(expect.objectContaining({
+      contextLabels: ['승인사항'],
+      menuOnly: true,
+    }));
+
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map((step) => (
+      step.candidateLabels
+    ))).toEqual([['결재(긴급)', '결재 (긴급)']]);
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[1].steps.map((step) => (
+      step.candidateLabels
+    ))).toEqual([
+      ['결재'],
+      ['결재대기', '결재 대기'],
+    ]);
+    const clickedLabels = APPROVAL_INBOX_WORKFLOW_ROUTES.edufine.flatMap((route) => (
+      route.steps.flatMap((step) => step.candidateLabels)
+    ));
+    expect(clickedLabels).not.toContain('문서관리');
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis.flatMap((route) => (
+      route.steps.flatMap((step) => step.candidateLabels)
+    ))).not.toContain('승인사항');
   });
 
   it('does not expose a definition for an arbitrary workflow identifier', () => {

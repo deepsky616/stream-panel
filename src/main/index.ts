@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron';
 import { createDefaultConfig } from '../shared/defaults';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { isWebConnectorSupportedPlatform } from '../shared/webWorkflows';
@@ -73,6 +73,23 @@ app.whenReady().then(async () => {
         for (const window of createSafeWindowList()) {
           window.webContents.send(IPC_CHANNELS.WEB_CONNECTOR_CHANGED, statuses);
         }
+      },
+      confirmWorkflowStep: async ({ workflowName, stepLabel, system }) => {
+        const options = {
+          type: 'warning' as const,
+          buttons: ['취소', '이 단계 실행'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+          title: '웹 업무 단계 확인',
+          message: `'${workflowName}'에서 '${stepLabel}' 단계를 실행할까요?`,
+          detail: `${system === 'neis' ? '나이스' : 'K-에듀파인'}의 저장·제출·결재·등록·신청·확인 또는 인증 화면 단계는 실제 업무 자료를 변경할 수 있습니다. 화면의 내용을 먼저 확인하세요. 인증서와 비밀번호는 자동으로 입력하지 않습니다.`,
+        };
+        const parent = BrowserWindow.getFocusedWindow();
+        const result = parent
+          ? await dialog.showMessageBox(parent, options)
+          : await dialog.showMessageBox(options);
+        return result.response === 1;
       },
     });
     webConnectorService = connector;

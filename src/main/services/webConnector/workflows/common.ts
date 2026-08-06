@@ -1,4 +1,5 @@
 import type { WebWorkflowId, WebWorkflowSpec } from '../../../../shared/types';
+import { customWorkflowStepRequiresConfirmation } from '../../../../shared/webWorkflows';
 
 export interface CandidateSummary {
   index: number;
@@ -18,6 +19,7 @@ export interface CandidateSummary {
   accessibleName?: string;
   titleText?: string;
   valueText?: string;
+  contextText?: string;
 }
 
 export type WorkflowPostcondition =
@@ -34,6 +36,10 @@ export interface WorkflowStep {
   interaction: 'mouse' | 'dom-click';
   selection?: 'unique-any' | 'first-available';
   navigationOnly?: boolean;
+  menuOnly?: boolean;
+  contextLabels?: readonly string[];
+  requiresConfirmation?: boolean;
+  allowActionText?: boolean;
   postcondition: WorkflowPostcondition;
   maxChecks: number;
   checkDelayMs: number;
@@ -89,6 +95,10 @@ export const APPROVED_NON_ACTION_LABELS = new Set([
   '결재할 문서',
   '내 결재함',
   '결재문서함',
+  '미결/협조함',
+  '미결 / 협조함',
+  '결재(긴급)',
+  '결재 (긴급)',
 ]);
 
 export function normalizeCandidateText(value: unknown): string {
@@ -118,17 +128,36 @@ function candidateMatchesLabel(candidate: CandidateSummary, label: string): bool
   ));
 }
 
+function candidateMatchesContext(
+  candidate: CandidateSummary,
+  contextLabels: readonly string[],
+): boolean {
+  if (contextLabels.length === 0) return true;
+  const context = normalizeCandidateText(candidate.contextText);
+  return contextLabels.every((label) => context.includes(normalizeCandidateText(label)));
+}
+
 export function selectSafeCandidate(
   candidates: readonly CandidateSummary[],
   labels: readonly string[],
   navigationOnly = false,
   selection: WorkflowStep['selection'] = 'unique-any',
+  contextLabels: readonly string[] = [],
+  menuOnly = false,
+  allowConfirmedAction = false,
 ): CandidateSummary | null {
   const eligible = candidates.filter((candidate) => (
     candidate.visible &&
     candidate.enabled &&
     candidate.width > 0 &&
     candidate.height > 0 &&
+    candidateMatchesContext(candidate, contextLabels) &&
+    (!menuOnly || (
+      candidate.navigation === true &&
+      candidate.formAssociated !== true &&
+      candidate.inputType !== 'submit' &&
+      candidate.inputType !== 'image'
+    )) &&
     (!navigationOnly || (
       candidate.navigation === true &&
       candidate.safeNavigation === true
@@ -141,11 +170,13 @@ export function selectSafeCandidate(
           : eligible.filter((candidate) => candidateMatchesLabel(candidate, label))
       ), [])
     : eligible.filter((candidate) => labels.some((label) => candidateMatchesLabel(candidate, label)));
-  const forbidden = exact.filter((candidate) => (
-    candidateSurfaceTexts(candidate).some(isForbiddenActionText)
-  ));
+  const allowedConfirmedLabels = new Set(labels.map(normalizeCandidateText));
+  const forbidden = exact.filter((candidate) => candidateSurfaceTexts(candidate).some((text) => (
+    isForbiddenActionText(text) &&
+    (!allowConfirmedAction || !allowedConfirmedLabels.has(normalizeCandidateText(text)))
+  )));
   if (forbidden.length > 0) {
-    throw new Error('저장·제출·상신·승인·결재·확정·삭제·취소·확인·지급·송금·이체·발송·등록·신청·요청·완료·반려·서명·동의·전송·처리와 인증 입력은 자동으로 누를 수 없는 안전 제한 대상입니다. 화면에서 직접 진행해 주세요.');
+    throw new Error('요청한 단계와 다른 저장·제출·상신·승인·결재·삭제·송금·인증 입력 같은 중요 동작 표식이 함께 보여 자동 실행을 중단했습니다. 화면에서 직접 확인해 주세요.');
   }
   if (exact.length > 1) {
     throw new Error('같은 이름의 메뉴가 둘 이상 보여 안전하게 고를 수 없습니다. 업무용 브라우저에서 직접 메뉴를 선택해 주세요.');
@@ -163,17 +194,21 @@ export function createCustomManagedWorkflowDefinition(
     id: 'custom',
     label: spec.custom.name,
     finalState: 'custom-target-ready',
-    steps: spec.custom.steps.map((step, index) => ({
-      id: step.id,
-      candidateLabels: [step.label],
-      interaction: 'mouse',
-      navigationOnly: true,
-      postcondition: {
-        kind: 'visible-any',
-        labels: [spec.custom.steps[index + 1]?.label ?? spec.custom.finalText],
-      },
-      maxChecks: 20,
-      checkDelayMs: 500,
-    })),
+    steps: spec.custom.steps.map((step, index) => {
+      const requiresConfirmation = customWorkflowStepRequiresConfirmation(step.label);
+      return {
+        id: step.id,
+        candidateLabels: [step.label],
+        interaction: 'mouse',
+        navigationOnly: !requiresConfirmation,
+        ...(requiresConfirmation ? { requiresConfirmation: true } : {}),
+        postcondition: {
+          kind: 'visible-any' as const,
+          labels: [spec.custom.steps[index + 1]?.label ?? spec.custom.finalText],
+        },
+        maxChecks: 20,
+        checkDelayMs: 500,
+      };
+    }),
   };
 }

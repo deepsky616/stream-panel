@@ -81,15 +81,29 @@ describe('web workflow templates', () => {
     }) as { webWorkflow: unknown };
     expect(webWorkflows.isWebWorkflowSpec(safe.webWorkflow)).toBe(true);
 
-    for (const forbidden of [
+    for (const confirmed of [
       '저장',
       '제출하기',
-      '결재 요청',
-      '삭제',
+      '결재',
       '확인',
-      '인증서 선택',
       '등록',
       '신청',
+      '인증 입력',
+    ]) {
+      const created = createCustomWebWorkflowTemplate!({
+        name: '확인 후 실행 업무',
+        system: 'edufine',
+        browserId: 'edge',
+        stepLabels: ['업무관리', confirmed],
+        finalText: '도착 화면',
+      }) as { webWorkflow: unknown };
+      expect(webWorkflows.isWebWorkflowSpec(created.webWorkflow), confirmed).toBe(true);
+    }
+
+    for (const forbidden of [
+      '결재 요청',
+      '삭제',
+      '인증서 선택',
       '처리 요청',
       '업무 완료',
       '반려',

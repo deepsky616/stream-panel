@@ -8,6 +8,7 @@ import { selectSafeCandidate } from './common';
 export interface WorkflowPageAdapter {
   inspectCandidates(step: WorkflowStep): Promise<readonly CandidateSummary[]>;
   pressCandidate(candidate: CandidateSummary, step: WorkflowStep): Promise<void>;
+  confirmStep?(step: WorkflowStep, candidate: CandidateSummary): Promise<boolean>;
   checkPostcondition(step: WorkflowStep): Promise<boolean>;
   wait(delayMs: number): Promise<void>;
 }
@@ -40,6 +41,9 @@ async function findCandidate(
       step.candidateLabels,
       step.navigationOnly,
       step.selection,
+      step.contextLabels,
+      step.menuOnly,
+      Boolean(step.requiresConfirmation || step.allowActionText),
     );
     if (selected) {
       const candidateKey = `${selected.index}:${selected.text}`;
@@ -78,6 +82,12 @@ export async function runWorkflow(
   for (const step of definition.steps) {
     const selected = await findCandidate(step, adapter, signal);
     ensureActive(signal);
+    if (step.requiresConfirmation) {
+      const confirmed = await adapter.confirmStep?.(step, selected) ?? false;
+      if (!confirmed) {
+        throw new Error(`'${selected.text}' 단계 실행을 취소했습니다.`);
+      }
+    }
     await adapter.pressCandidate(selected, step);
     await waitForPostcondition(step, adapter, signal);
   }

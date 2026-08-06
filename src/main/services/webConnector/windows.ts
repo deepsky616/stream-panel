@@ -120,6 +120,11 @@ export interface ExecuteWindowsWorkflowDependencies {
   isWxsClientRegistered(): Promise<boolean>;
   listWxsClientWindows(): Promise<readonly WxsClientWindow[]>;
   focusWindow(id: number): Promise<boolean>;
+  confirmStep?(
+    request: ManagedWorkflowRequest,
+    step: WorkflowStep,
+    candidate: CandidateSummary,
+  ): Promise<boolean>;
 }
 
 const MANAGED_WORKFLOWS: Partial<Record<BuiltInWebWorkflowId, ManagedWorkflowDefinition>> = {
@@ -388,6 +393,11 @@ export async function executeWindowsWorkflow(
         await page.pressCandidate(candidate, step);
         await assertOrigin();
       },
+      confirmStep: (step, candidate) => dependencies.confirmStep?.(
+        request,
+        step,
+        candidate,
+      ) ?? Promise.resolve(false),
       async checkPostcondition(step) {
         await assertOrigin();
         const postcondition = step.postcondition;
@@ -491,6 +501,17 @@ const surfaceTextsOf=(element)=>[
   valueTextOf(element),
   imageAltTextOf(element)
 ].filter(Boolean);
+const contextTextOf=(element)=>{
+  const values=[];
+  let current=element?.parentElement;
+  for(let depth=0;current&&depth<6;depth+=1,current=current.parentElement){
+    const tag=String(current.tagName||'').toUpperCase();
+    if(tag==='BODY'||tag==='HTML')break;
+    const text=visibleTextOf(current);
+    if(text&&text.length<=2000)values.push(text);
+  }
+  return values.join('\\n').slice(0,4000);
+};
 const visible=(element)=>{
   if(element.hidden||element.getAttribute?.('aria-hidden')==='true')return false;
   const view=element.ownerDocument?.defaultView;
@@ -542,7 +563,8 @@ return clickable().slice(0,500).map(({element},index)=>{
   const rect=element.getBoundingClientRect();
   const role=normalize(element.getAttribute?.('role')).toLowerCase();
   const tag=String(element.tagName||'').toUpperCase();
-  const navigation=tag==='A'||role==='link'||role==='menuitem'||role==='tab'||element.getAttribute?.('aria-haspopup')==='menu';
+  const inputType=normalize(element.getAttribute?.('type')||element.type).toLowerCase();
+  const navigation=tag==='A'||role==='link'||role==='menuitem'||role==='tab'||element.getAttribute?.('aria-haspopup')==='menu'||((tag==='BUTTON'||role==='button'||inputType==='button')&&!formAssociated(element));
   return {
     index,
     text:textOf(element),
@@ -553,14 +575,15 @@ return clickable().slice(0,500).map(({element},index)=>{
     navigation,
     safeNavigation:safeNavigation(element),
     tag,
-    inputType:normalize(element.getAttribute?.('type')||element.type).toLowerCase(),
+    inputType,
     href:normalize(element.getAttribute?.('href')).slice(0,2048),
     formAssociated:formAssociated(element),
     inlineHandler:element.hasAttribute?.('onclick')===true,
     visibleText:visibleTextOf(element).slice(0,500),
     accessibleName:accessibleNameOf(element).slice(0,500),
     titleText:titleTextOf(element).slice(0,500),
-    valueText:valueTextOf(element).slice(0,500)
+    valueText:valueTextOf(element).slice(0,500),
+    contextText:contextTextOf(element)
   };
 });
 })()`;
@@ -571,6 +594,10 @@ function candidateActionExpression(
   domClick: boolean,
   navigationOnly: boolean,
   allowedNavigationOrigin?: string,
+  menuOnly = false,
+  contextLabels: readonly string[] = [],
+  allowActionText = false,
+  allowedActionLabels: readonly string[] = [],
 ): string {
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
@@ -578,10 +605,18 @@ const item=clickable()[${index}];
 if(!item)return {ok:false};
 const forbiddenTokens=${JSON.stringify(FORBIDDEN_ACTION_TOKENS)};
 const approvedNonActions=new Set(${JSON.stringify([...APPROVED_NON_ACTION_LABELS])});
+const allowedActionLabels=new Set(${JSON.stringify(allowedActionLabels)}.map(normalize));
 const forbiddenSurface=surfaceTextsOf(item.element).some(text=>{
   const normalized=normalize(text);
-  return !approvedNonActions.has(normalized)&&forbiddenTokens.some(token=>normalized.includes(token));
+  return !approvedNonActions.has(normalized)&&forbiddenTokens.some(token=>normalized.includes(token))&&(!${JSON.stringify(allowActionText)}||!allowedActionLabels.has(normalized));
 });
+const contextText=normalize(contextTextOf(item.element));
+const contextLabels=${JSON.stringify(contextLabels)}.map(normalize);
+const contextMatches=contextLabels.length===0||contextLabels.every(label=>contextText.includes(label));
+const itemRole=normalize(item.element.getAttribute?.('role')).toLowerCase();
+const itemTag=String(item.element.tagName||'').toUpperCase();
+const itemInputType=normalize(item.element.getAttribute?.('type')||item.element.type).toLowerCase();
+const menuCandidate=(itemTag==='A'||itemRole==='link'||itemRole==='menuitem'||itemRole==='tab'||item.element.getAttribute?.('aria-haspopup')==='menu'||itemTag==='BUTTON'||itemRole==='button'||itemInputType==='button')&&!formAssociated(item.element)&&itemInputType!=='submit'&&itemInputType!=='image';
 const allowedCrossOriginNavigation=(()=>{
   const allowedOrigin=${JSON.stringify(allowedNavigationOrigin ?? '')};
   if(!allowedOrigin||formAssociated(item.element)||item.element.hasAttribute?.('onclick')||item.element.hasAttribute?.('download'))return false;
@@ -595,7 +630,7 @@ const allowedCrossOriginNavigation=(()=>{
     return url.protocol==='https:'&&url.origin===allowedOrigin;
   }catch{return false;}
 })();
-if(textOf(item.element)!==${JSON.stringify(expectedText)}||!visible(item.element)||!enabled(item.element)||forbiddenSurface||(${JSON.stringify(navigationOnly)}&&!safeNavigation(item.element)&&!allowedCrossOriginNavigation))return {ok:false};
+if(textOf(item.element)!==${JSON.stringify(expectedText)}||!visible(item.element)||!enabled(item.element)||!contextMatches||(${JSON.stringify(menuOnly)}&&!menuCandidate)||forbiddenSurface||(${JSON.stringify(navigationOnly)}&&!safeNavigation(item.element)&&!allowedCrossOriginNavigation))return {ok:false};
 const rect=item.element.getBoundingClientRect();
 ${domClick
     ? "item.element.focus?.({preventScroll:false});item.element.click?.();return {ok:true};"
@@ -616,7 +651,7 @@ const labels=new Set(${labels}.map(normalize));
 const groups=${JSON.stringify(groups)}.map(group=>group.map(normalize));
 const selector=${JSON.stringify(
     condition.kind === 'tab-selected-any'
-      ? '[role="tab"][aria-selected="true"],[role="tab"].active,.tab.active'
+      ? '[role="tab"][aria-selected="true"],[aria-current="page"],[role="tab"].active,.tab.active,a.active,a.on,a.selected,li.active>a,li.on>a,li.selected>a'
       : 'h1,h2,h3,label,span,div,button,input,[role="button"],[role="dialog"],[aria-label],[title],[role="tab"]',
   )};
 const found=new Set();
@@ -640,8 +675,8 @@ return ${JSON.stringify(condition.kind)}==='visible-all'
 
 function approvalCounterExpression(system: WebWorkflowSystem): string {
   const labels = system === 'neis'
-    ? ['결재 대기', '결재대기', '미결문서', '대기문서', '미결']
-    : ['결재 대기', '결재대기', '결재할 문서', '미결문서', '대기문서'];
+    ? ['미결/협조함', '미결 / 협조함', '미결', '협조함', '결재 대기', '결재대기', '총', '전체']
+    : ['결재(긴급)', '결재 (긴급)', '결재 대기', '결재대기', '결재할 문서', '총', '전체'];
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const labels=${JSON.stringify(labels)}.map(value=>normalize(value).replace(/\\s+/g,''));
@@ -720,6 +755,10 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       || candidate.titleText.length > 500
       || typeof candidate.valueText !== 'string'
       || candidate.valueText.length > 500
+      || (
+        candidate.contextText !== undefined &&
+        (typeof candidate.contextText !== 'string' || candidate.contextText.length > 4_000)
+      )
     ) {
       return [];
     }
@@ -741,6 +780,7 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       accessibleName: candidate.accessibleName,
       titleText: candidate.titleText,
       valueText: candidate.valueText,
+      contextText: typeof candidate.contextText === 'string' ? candidate.contextText : '',
     }];
   });
 }
@@ -1028,6 +1068,10 @@ async function pressCandidateWithCdp(
   interaction: 'mouse' | 'dom-click',
   navigationOnly = false,
   allowedNavigationOrigin?: string,
+  menuOnly = false,
+  contextLabels: readonly string[] = [],
+  allowActionText = false,
+  allowedActionLabels: readonly string[] = [],
 ): Promise<void> {
   const protocol = session.connection.protocol;
   const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
@@ -1040,6 +1084,10 @@ async function pressCandidateWithCdp(
       interaction === 'dom-click',
       navigationOnly,
       allowedNavigationOrigin,
+      menuOnly,
+      contextLabels,
+      allowActionText,
+      allowedActionLabels,
     ),
     interaction === 'dom-click',
   );
@@ -1313,6 +1361,11 @@ function createWindowsWorkflowPage(
         candidate,
         step.interaction,
         Boolean(step.navigationOnly),
+        undefined,
+        Boolean(step.menuOnly),
+        step.contextLabels,
+        Boolean(step.requiresConfirmation || step.allowActionText),
+        step.candidateLabels,
       );
     },
     async checkPostcondition(step) {

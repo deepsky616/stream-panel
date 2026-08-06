@@ -72,16 +72,21 @@ const WORKFLOW_IDS = new Set<BuiltInWebWorkflowId>(
   ALL_WEB_WORKFLOW_DEFINITIONS.map((definition) => definition.id),
 );
 const BROWSER_IDS = new Set<WebConnectorBrowserId>(['chrome', 'edge']);
-const CUSTOM_FORBIDDEN_ACTION_TOKENS = [
+const CUSTOM_CONFIRMATION_ACTION_TOKENS = [
   '저장',
   '제출',
   '결재',
+  '등록',
+  '신청',
+  '확인',
+  '인증 입력',
+] as const;
+const CUSTOM_FORBIDDEN_ACTION_TOKENS = [
   '상신',
   '승인',
   '확정',
   '삭제',
   '취소',
-  '확인',
   '지급',
   '송금',
   '이체',
@@ -89,8 +94,6 @@ const CUSTOM_FORBIDDEN_ACTION_TOKENS = [
   '인증서',
   '비밀번호',
   '암호',
-  '등록',
-  '신청',
   '요청',
   '완료',
   '반려',
@@ -102,6 +105,11 @@ const CUSTOM_FORBIDDEN_ACTION_TOKENS = [
 
 function normalizeWorkflowText(value: unknown): string {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+export function customWorkflowStepRequiresConfirmation(value: unknown): boolean {
+  const label = normalizeWorkflowText(value);
+  return CUSTOM_CONFIRMATION_ACTION_TOKENS.some((token) => label.includes(token));
 }
 
 export function isForbiddenCustomWorkflowLabel(value: unknown): boolean {

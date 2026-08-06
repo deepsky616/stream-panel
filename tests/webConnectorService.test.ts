@@ -334,7 +334,7 @@ describe('managed web connector service', () => {
         level: 'info',
       },
       {
-        message: '에듀파인 문서함 화면을 열었습니다. 내용을 확인한 뒤 필요한 최종 동작은 직접 진행해 주세요.',
+        message: '에듀파인 문서함 이동을 완료했습니다. 확인이 필요한 중요 단계는 승인한 항목만 한 번 실행했습니다.',
         level: 'info',
       },
     ]);

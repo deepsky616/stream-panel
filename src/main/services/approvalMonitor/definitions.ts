@@ -12,14 +12,9 @@ export interface ApprovalScanInput {
 }
 
 const COMMON_CHECKS = { maxChecks: 60 as const, checkDelayMs: 500 };
-const APPROVAL_LABELS = ['결재함', '내 결재함', '결재문서함'] as const;
-const APPROVAL_READY_LABELS = [
-  '대기문서',
-  '미결문서',
-  '결재할 문서',
-  '결재 대기',
-  '결재대기',
-] as const;
+const NEIS_PENDING_COOPERATION_LABELS = ['미결/협조함', '미결 / 협조함'] as const;
+const EDUFINE_URGENT_LABELS = ['결재(긴급)', '결재 (긴급)'] as const;
+const EDUFINE_WAITING_LABELS = ['결재대기', '결재 대기'] as const;
 
 const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   id: 'neis-approval-inbox',
@@ -27,11 +22,13 @@ const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   finalState: 'approval-inbox-ready',
   steps: [
     {
-      id: 'open-approval-inbox',
-      candidateLabels: APPROVAL_LABELS,
+      id: 'open-pending-cooperation-inbox',
+      candidateLabels: NEIS_PENDING_COOPERATION_LABELS,
       selection: 'first-available',
       interaction: 'mouse',
-      postcondition: { kind: 'visible-any', labels: APPROVAL_READY_LABELS },
+      menuOnly: true,
+      contextLabels: ['승인사항'],
+      postcondition: { kind: 'tab-selected-any', labels: NEIS_PENDING_COOPERATION_LABELS },
       ...COMMON_CHECKS,
     },
   ],
@@ -43,18 +40,12 @@ const EDUFINE_DIRECT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   finalState: 'approval-inbox-ready',
   steps: [
     {
-      id: 'open-work-management',
-      candidateLabels: ['업무관리'],
-      interaction: 'mouse',
-      postcondition: { kind: 'visible-any', labels: APPROVAL_LABELS },
-      ...COMMON_CHECKS,
-    },
-    {
-      id: 'open-approval-inbox',
-      candidateLabels: APPROVAL_LABELS,
+      id: 'open-urgent-approval-inbox',
+      candidateLabels: EDUFINE_URGENT_LABELS,
       selection: 'first-available',
       interaction: 'mouse',
-      postcondition: { kind: 'visible-any', labels: APPROVAL_READY_LABELS },
+      menuOnly: true,
+      postcondition: { kind: 'tab-selected-any', labels: EDUFINE_URGENT_LABELS },
       ...COMMON_CHECKS,
     },
   ],
@@ -66,25 +57,23 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   finalState: 'approval-inbox-ready',
   steps: [
     {
-      id: 'open-work-management',
-      candidateLabels: ['업무관리'],
+      id: 'open-document-approval-menu',
+      candidateLabels: ['결재'],
       interaction: 'mouse',
-      postcondition: { kind: 'visible-any', labels: ['문서관리'] },
+      menuOnly: true,
+      contextLabels: ['문서관리'],
+      allowActionText: true,
+      postcondition: { kind: 'visible-any', labels: EDUFINE_WAITING_LABELS },
       ...COMMON_CHECKS,
     },
     {
-      id: 'open-document-management',
-      candidateLabels: ['문서관리'],
-      interaction: 'mouse',
-      postcondition: { kind: 'visible-any', labels: APPROVAL_LABELS },
-      ...COMMON_CHECKS,
-    },
-    {
-      id: 'open-approval-inbox',
-      candidateLabels: APPROVAL_LABELS,
+      id: 'open-waiting-approval-inbox',
+      candidateLabels: EDUFINE_WAITING_LABELS,
       selection: 'first-available',
       interaction: 'mouse',
-      postcondition: { kind: 'visible-any', labels: APPROVAL_READY_LABELS },
+      menuOnly: true,
+      contextLabels: ['문서관리', '결재'],
+      postcondition: { kind: 'tab-selected-any', labels: EDUFINE_WAITING_LABELS },
       ...COMMON_CHECKS,
     },
   ],

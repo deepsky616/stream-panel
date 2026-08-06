@@ -8,7 +8,7 @@ import {
 import { APPROVAL_INBOX_WORKFLOWS } from '../src/main/services/approvalMonitor/definitions';
 import * as approvalWindows from '../src/main/services/approvalMonitor/windows';
 
-function candidate(index: number, text: string): CandidateSummary {
+function candidate(index: number, text: string, contextText = ''): CandidateSummary {
   return {
     index,
     text,
@@ -18,13 +18,18 @@ function candidate(index: number, text: string): CandidateSummary {
     height: 30,
     navigation: true,
     safeNavigation: true,
+    contextText,
   };
 }
 
 function page(origin: string, count = 3): WindowsApprovalPage {
   return {
     currentOrigin: async () => origin,
-    inspectCandidates: async (step) => [candidate(0, step.candidateLabels[0])],
+    inspectCandidates: async (step) => [candidate(
+      0,
+      step.candidateLabels[0],
+      step.contextLabels?.join(' ') ?? '',
+    )],
     pressCandidate: async () => undefined,
     checkPostcondition: async () => true,
     wait: async () => undefined,
@@ -45,7 +50,7 @@ describe('Windows approval count reader', () => {
     expect(parseApprovalCounterCandidates).toBeTypeOf('function');
     expect(parseApprovalCounterCandidates!('neis', [
       {
-        text: '미결문서 (3)',
+        text: '미결/협조함 (3)',
         ariaLabel: '',
         title: '',
         className: 'menu-item',
@@ -55,7 +60,7 @@ describe('Windows approval count reader', () => {
     ])).toBe(3);
     expect(() => parseApprovalCounterCandidates!('neis', [
       {
-        text: '미결문서 2026',
+        text: '미결/협조함 2026',
         ariaLabel: '',
         title: '',
         className: 'menu-item',
@@ -73,7 +78,7 @@ describe('Windows approval count reader', () => {
         children: [],
       },
       {
-        text: '결재 대기 4건',
+        text: '결재(긴급) 4건',
         ariaLabel: '',
         title: '',
         className: 'status',
@@ -81,6 +86,29 @@ describe('Windows approval count reader', () => {
         children: [],
       },
     ])).toBe(4);
+    expect(parseApprovalCounterCandidates!('neis', [
+      {
+        text: '미결/협조함 5',
+        ariaLabel: '',
+        title: '',
+        className: 'menu-item',
+        role: 'link',
+        children: [
+          { text: '미결/협조함', ariaLabel: '', title: '', className: 'label', role: '' },
+          { text: '5', ariaLabel: '', title: '', className: 'badge-count', role: 'status' },
+        ],
+      },
+    ])).toBe(5);
+    expect(parseApprovalCounterCandidates!('edufine', [
+      {
+        text: '총 6건',
+        ariaLabel: '',
+        title: '',
+        className: 'grid-total',
+        role: 'status',
+        children: [],
+      },
+    ])).toBe(6);
   });
 
   it('never treats the generic approval action label as an inbox navigation target', () => {
@@ -115,7 +143,7 @@ describe('Windows approval count reader', () => {
     )).resolves.toBe(7);
 
     expect(pressed.length).toBeGreaterThan(0);
-    expect(pressed.join(' ')).toMatch(/결재함|대기문서|미결문서/);
+    expect(pressed.join(' ')).toMatch(/미결\/협조함/);
     expect(pressed.join(' ')).not.toMatch(/승인|반려|서명|처리/);
     expect(releases).toBe(1);
   });
