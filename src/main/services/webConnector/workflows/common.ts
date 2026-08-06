@@ -8,6 +8,8 @@ export interface CandidateSummary {
   enabled: boolean;
   width: number;
   height: number;
+  left?: number;
+  top?: number;
   navigation?: boolean;
   safeNavigation?: boolean;
   tag?: string;
@@ -20,6 +22,7 @@ export interface CandidateSummary {
   titleText?: string;
   valueText?: string;
   contextText?: string;
+  shadowedByEquivalentDescendant?: boolean;
 }
 
 export type WorkflowPostcondition =
@@ -28,6 +31,7 @@ export type WorkflowPostcondition =
   | { kind: 'visible-groups'; groups: readonly (readonly string[])[] }
   | { kind: 'dialog-title-any'; labels: readonly string[] }
   | { kind: 'tab-selected-any'; labels: readonly string[] }
+  | { kind: 'new-page-any'; labels: readonly string[] }
   | { kind: 'new-window'; processName: 'WXSClient'; titleIncludes: string };
 
 export interface WorkflowStep {
@@ -40,6 +44,8 @@ export interface WorkflowStep {
   contextLabels?: readonly string[];
   requiresConfirmation?: boolean;
   allowActionText?: boolean;
+  /** Resume a built-in workflow when this step's destination is already visible. */
+  skipWhenSatisfied?: boolean;
   postcondition: WorkflowPostcondition;
   maxChecks: number;
   checkDelayMs: number;
@@ -81,6 +87,7 @@ export const FORBIDDEN_ACTION_TOKENS = [
 ] as const;
 export const APPROVED_NON_ACTION_LABELS = new Set([
   '신청',
+  '신청(새 창 열기)',
   '품의등록',
   '품의 등록',
   '표준서식(결재4인,협조4인)',
@@ -151,6 +158,7 @@ export function selectSafeCandidate(
     candidate.enabled &&
     candidate.width > 0 &&
     candidate.height > 0 &&
+    candidate.shadowedByEquivalentDescendant !== true &&
     candidateMatchesContext(candidate, contextLabels) &&
     (!menuOnly || (
       candidate.navigation === true &&

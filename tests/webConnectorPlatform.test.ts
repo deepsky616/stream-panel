@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CandidateSummary } from '../src/main/services/webConnector/workflows/common';
 import type { WindowsWorkflowPage } from '../src/main/services/webConnector/windows';
 import {
+  connectWindowsOfficeSystems,
   createWindowsManagedBrowserSession,
   executeWindowsWorkflow,
   openCdpWindowsApprovalPage,
@@ -463,6 +464,7 @@ describe('Windows managed web automation', () => {
   it('enters K-Edufine through the official portal SSO menu instead of a direct login URL', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     let ssoClicked = false;
+    let selectedCandidate = -1;
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>) {
@@ -489,9 +491,13 @@ describe('Windows managed web automation', () => {
             } } };
           }
           if (expression.includes('clickable().slice')) {
-            return { result: { value: [safeCandidate(0, 'K-에듀파인')] } };
+            return { result: { value: [
+              { ...safeCandidate(0, 'K-에듀파인'), left: 20, top: 503 },
+              { ...safeCandidate(1, 'K-에듀파인'), left: 20, top: 148 },
+            ] } };
           }
           if (expression.includes('const item=clickable()')) {
+            selectedCandidate = expression.includes('clickable()[1]') ? 1 : 0;
             ssoClicked = true;
             return { result: { value: { ok: true, x: 2, y: 2 } } };
           }
@@ -521,11 +527,141 @@ describe('Windows managed web automation', () => {
     );
 
     expect(ssoClicked).toBe(true);
+    expect(selectedCandidate).toBe(1);
     expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
     expect(commands.some(({ method, params }) => (
       method === 'Page.navigate' && String(params.url).includes('klef.goe.go.kr')
     ))).toBe(false);
     await workflowPage.release?.();
+  });
+
+  it('switches to a newly opened NEIS request page and activates that target', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
+    let clicked = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'neis-main', type: 'page', url: 'https://goe.neis.go.kr/main' },
+            ...(clicked
+              ? [{ targetId: 'leave-form', type: 'page', url: 'https://goe.neis.go.kr/leave' }]
+              : []),
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: params.targetId === 'leave-form' ? 'leave-session' : 'main-session' };
+        }
+        if (method === 'Browser.getWindowForTarget') return { windowId: 12 };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://goe.neis.go.kr/main',
+              origin: 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes('const item=clickable()')) {
+            clicked = true;
+            return { result: { value: { ok: true } } };
+          }
+          if (expression.includes('근무상황신청')) {
+            return { result: { value: sessionId === 'leave-session' } };
+          }
+          if (expression === 'location.origin') {
+            return { result: { value: 'https://goe.neis.go.kr' } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+    const workflowPage = await openCdpWindowsWorkflowPage(session as never, 'neis-leave');
+    const step = {
+      id: 'open-leave-form',
+      candidateLabels: ['신청(새 창 열기)', '신청'],
+      selection: 'first-available' as const,
+      interaction: 'dom-click' as const,
+      allowActionText: true,
+      postcondition: {
+        kind: 'new-page-any' as const,
+        labels: ['근무상황신청', '개인근무상황신청'],
+      },
+      maxChecks: 20,
+      checkDelayMs: 500,
+    };
+
+    await workflowPage.pressCandidate(safeCandidate(0, '신청(새 창 열기)'), step);
+    await expect(workflowPage.checkPostcondition(step)).resolves.toBe(true);
+    await workflowPage.activate();
+
+    expect(commands).toContainEqual({
+      method: 'Target.activateTarget',
+      params: { targetId: 'leave-form' },
+      sessionId: undefined,
+    });
+    await workflowPage.release?.();
+  });
+
+  it('keeps an authenticated system tab and recreates only the background portal tab', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'neis-ready',
+            type: 'page',
+            url: 'https://goe.neis.go.kr/main',
+          }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'neis-session' };
+        if (method === 'Runtime.evaluate' && String(params.expression ?? '').includes('loginVisible')) {
+          return { result: { value: {
+            href: 'https://goe.neis.go.kr/main',
+            origin: 'https://goe.neis.go.kr',
+            readyState: 'complete',
+            loginVisible: false,
+          } } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(session as never, ['neis']);
+
+    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://goe.eduptl.kr/', background: true },
+    });
   });
 
   it('stops on a login portal or an unapproved origin before inspecting page content', async () => {

@@ -11,7 +11,11 @@ export interface ApprovalScanInput {
   browserId: WebConnectorBrowserId;
 }
 
-const COMMON_CHECKS = { maxChecks: 60 as const, checkDelayMs: 500 };
+const COMMON_CHECKS = {
+  maxChecks: 60 as const,
+  checkDelayMs: 500,
+  skipWhenSatisfied: true,
+};
 const NEIS_PENDING_COOPERATION_LABELS = ['미결/협조함', '미결 / 협조함'] as const;
 const EDUFINE_URGENT_LABELS = ['결재(긴급)', '결재 (긴급)'] as const;
 const EDUFINE_WAITING_LABELS = ['결재대기', '결재 대기'] as const;

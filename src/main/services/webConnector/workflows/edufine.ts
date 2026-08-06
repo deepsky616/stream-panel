@@ -1,6 +1,10 @@
 import type { ManagedWorkflowDefinition, WorkflowPostcondition } from './common';
 
-const COMMON_CHECKS = { maxChecks: 60, checkDelayMs: 500 };
+const COMMON_CHECKS = {
+  maxChecks: 60,
+  checkDelayMs: 500,
+  skipWhenSatisfied: true,
+};
 
 const PURCHASE_FORM_READY: WorkflowPostcondition = {
   kind: 'visible-groups',
@@ -19,12 +23,13 @@ const BUSINESS_PURCHASE_WORKFLOW: ManagedWorkflowDefinition = {
       id: 'select-school-accounting',
       candidateLabels: ['학교회계'],
       interaction: 'mouse',
-      postcondition: { kind: 'visible-any', labels: ['사업담당'] },
+      postcondition: { kind: 'visible-any', labels: ['사업담당', '사업관리'] },
       ...COMMON_CHECKS,
     },
     {
       id: 'open-business-owner',
-      candidateLabels: ['사업담당'],
+      candidateLabels: ['사업담당', '사업관리'],
+      selection: 'first-available',
       interaction: 'mouse',
       postcondition: { kind: 'visible-any', labels: ['품의/정산', '품의·정산'] },
       ...COMMON_CHECKS,

@@ -58,6 +58,13 @@ describe('managed web workflow engine', () => {
     expect(isForbiddenActionText('품의등록')).toBe(false);
   });
 
+  it('ignores only an equivalent ancestor that the page reports as covering the same menu item', () => {
+    expect(selectSafeCandidate([
+      candidate(0, '복무', { shadowedByEquivalentDescendant: true }),
+      candidate(1, '복무'),
+    ], ['복무'])).toEqual(candidate(1, '복무'));
+  });
+
   it('runs a configured action step only after an explicit per-run confirmation', async () => {
     const confirmedStep: WorkflowStep = {
       ...step,
@@ -129,6 +136,36 @@ describe('managed web workflow engine', () => {
 
     expect(result).toEqual({ workflowId: 'neis-leave', finalState: 'leave-form' });
     expect(events).toEqual(['wait', 'press:0', 'check:1', 'wait', 'check:2']);
+  });
+
+  it('resumes from the first already completed step without clicking its parent menu again', async () => {
+    const pressed: string[] = [];
+    const steps: WorkflowStep[] = [
+      { ...step, skipWhenSatisfied: true },
+      {
+        ...step,
+        id: 'open-management',
+        candidateLabels: ['개인근무상황관리'],
+        postcondition: { kind: 'visible-any', labels: ['신청'] },
+      },
+    ];
+    let currentStep = '';
+
+    await expect(runWorkflow(
+      { id: 'neis-leave', label: '나이스 복무', finalState: 'leave-form', steps },
+      {
+        inspectCandidates: async (current) => {
+          currentStep = current.id;
+          return [candidate(0, current.candidateLabels[0])];
+        },
+        pressCandidate: async (_selected, current) => { pressed.push(current.id); },
+        checkCurrentState: async (current) => current.id === 'open-duty',
+        checkPostcondition: async (current) => pressed.includes(current.id),
+        wait: async () => undefined,
+      },
+    )).resolves.toEqual({ workflowId: 'neis-leave', finalState: 'leave-form' });
+    expect(currentStep).toBe('open-management');
+    expect(pressed).toEqual(['open-management']);
   });
 
   it('does not press the next step when the current postcondition never succeeds', async () => {

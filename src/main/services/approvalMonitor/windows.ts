@@ -178,6 +178,10 @@ export async function scanWindowsApprovalCount(
         await page.pressCandidate(candidate, step);
         await assertOrigin();
       },
+      async checkCurrentState(step) {
+        await assertOrigin();
+        return page.checkCurrentState?.(step) ?? false;
+      },
       async checkPostcondition(step) {
         await assertOrigin();
         return page.checkPostcondition(step);

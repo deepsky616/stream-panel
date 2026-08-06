@@ -9,6 +9,7 @@ export interface WorkflowPageAdapter {
   inspectCandidates(step: WorkflowStep): Promise<readonly CandidateSummary[]>;
   pressCandidate(candidate: CandidateSummary, step: WorkflowStep): Promise<void>;
   confirmStep?(step: WorkflowStep, candidate: CandidateSummary): Promise<boolean>;
+  checkCurrentState?(step: WorkflowStep): Promise<boolean>;
   checkPostcondition(step: WorkflowStep): Promise<boolean>;
   wait(delayMs: number): Promise<void>;
 }
@@ -80,6 +81,11 @@ export async function runWorkflow(
   { signal }: WorkflowRunOptions = {},
 ): Promise<WorkflowRunResult> {
   for (const step of definition.steps) {
+    ensureActive(signal);
+    // Work portals keep prior menus and forms open. If this step's destination is
+    // already visible, resume from that state instead of forcing the user back
+    // through every parent menu.
+    if (step.skipWhenSatisfied && await adapter.checkCurrentState?.(step)) continue;
     const selected = await findCandidate(step, adapter, signal);
     ensureActive(signal);
     if (step.requiresConfirmation) {

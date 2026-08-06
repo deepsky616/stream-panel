@@ -1,6 +1,10 @@
 import type { ManagedWorkflowDefinition } from './common';
 
-const COMMON_CHECKS = { maxChecks: 20, checkDelayMs: 500 };
+const COMMON_CHECKS = {
+  maxChecks: 20,
+  checkDelayMs: 500,
+  skipWhenSatisfied: true,
+};
 
 export const NEIS_WORKFLOWS = {
   'neis-leave': {
@@ -27,9 +31,14 @@ export const NEIS_WORKFLOWS = {
       },
       {
         id: 'open-leave-form',
-        candidateLabels: ['신청'],
+        candidateLabels: ['신청(새 창 열기)', '신청'],
+        selection: 'first-available',
         interaction: 'dom-click',
-        postcondition: { kind: 'dialog-title-any', labels: ['근무상황신청'] },
+        allowActionText: true,
+        postcondition: {
+          kind: 'new-page-any',
+          labels: ['근무상황신청', '개인근무상황신청'],
+        },
         ...COMMON_CHECKS,
       },
     ],
@@ -58,9 +67,11 @@ export const NEIS_WORKFLOWS = {
       },
       {
         id: 'open-trip-form',
-        candidateLabels: ['신청'],
+        candidateLabels: ['신청(새 창 열기)', '신청'],
+        selection: 'first-available',
         interaction: 'dom-click',
-        postcondition: { kind: 'dialog-title-any', labels: ['출장신청'] },
+        allowActionText: true,
+        postcondition: { kind: 'new-page-any', labels: ['출장신청'] },
         ...COMMON_CHECKS,
       },
     ],

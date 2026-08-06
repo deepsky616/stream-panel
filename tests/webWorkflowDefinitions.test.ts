@@ -107,12 +107,12 @@ describe('managed web workflow definitions', () => {
     expect(definitions['neis-leave'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['복무'],
       ['개인근무상황관리', '개인근무상황'],
-      ['신청'],
+      ['신청(새 창 열기)', '신청'],
     ]);
     expect(definitions['neis-trip'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['복무'],
       ['개인출장관리', '출장관리'],
-      ['신청'],
+      ['신청(새 창 열기)', '신청'],
     ]);
     expect(definitions['edufine-draft'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['업무관리'],
@@ -132,7 +132,7 @@ describe('managed web workflow definitions', () => {
     });
     expect(definitions['edufine-purchase'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['학교회계'],
-      ['사업담당'],
+      ['사업담당', '사업관리'],
       ['품의/정산', '품의·정산'],
       ['품의등록', '품의 등록'],
     ]);
@@ -143,6 +143,17 @@ describe('managed web workflow definitions', () => {
         ['기본정보', '제목', '개요', '예산내역', '품목내역'],
       ],
     });
+    expect(definitions['neis-leave'].steps.at(-1)?.postcondition).toEqual({
+      kind: 'new-page-any',
+      labels: ['근무상황신청', '개인근무상황신청'],
+    });
+    expect(definitions['neis-trip'].steps.at(-1)?.postcondition).toEqual({
+      kind: 'new-page-any',
+      labels: ['출장신청'],
+    });
+    expect(Object.values(definitions).flatMap(({ steps }) => steps).every(
+      ({ skipWhenSatisfied }) => skipWhenSatisfied === true,
+    )).toBe(true);
   });
 
   it('never places forbidden action text in a clickable candidate label', () => {
@@ -181,6 +192,7 @@ describe('managed web workflow definitions', () => {
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis[0].steps[0]).toEqual(expect.objectContaining({
       contextLabels: ['승인사항'],
       menuOnly: true,
+      skipWhenSatisfied: true,
     }));
 
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map((step) => (
@@ -196,6 +208,9 @@ describe('managed web workflow definitions', () => {
       route.steps.flatMap((step) => step.candidateLabels)
     ));
     expect(clickedLabels).not.toContain('문서관리');
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine.flatMap(({ steps }) => steps).every(
+      ({ skipWhenSatisfied }) => skipWhenSatisfied === true,
+    )).toBe(true);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis.flatMap((route) => (
       route.steps.flatMap((step) => step.candidateLabels)
     ))).not.toContain('승인사항');

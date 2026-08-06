@@ -398,6 +398,10 @@ export async function executeWindowsWorkflow(
         step,
         candidate,
       ) ?? Promise.resolve(false),
+      async checkCurrentState(step) {
+        await assertOrigin();
+        return page.checkCurrentState?.(step) ?? false;
+      },
       async checkPostcondition(step) {
         await assertOrigin();
         const postcondition = step.postcondition;
@@ -501,6 +505,10 @@ const surfaceTextsOf=(element)=>[
   valueTextOf(element),
   imageAltTextOf(element)
 ].filter(Boolean);
+const surfaceSignatureOf=(element)=>Array.from(new Set(surfaceTextsOf(element).map(normalize)))
+  .filter(Boolean)
+  .sort()
+  .join('\n');
 const contextTextOf=(element)=>{
   const values=[];
   let current=element?.parentElement;
@@ -559,12 +567,23 @@ const clickable=()=>documents.flatMap(({document,offsetX,offsetY})=>
 
 const CANDIDATE_SCAN_EXPRESSION = `(()=>{
 ${PAGE_ELEMENT_HELPERS}
-return clickable().slice(0,500).map(({element},index)=>{
+const items=clickable().slice(0,500);
+return items.map(({element,offsetX,offsetY},index)=>{
   const rect=element.getBoundingClientRect();
   const role=normalize(element.getAttribute?.('role')).toLowerCase();
   const tag=String(element.tagName||'').toUpperCase();
   const inputType=normalize(element.getAttribute?.('type')||element.type).toLowerCase();
   const navigation=tag==='A'||role==='link'||role==='menuitem'||role==='tab'||element.getAttribute?.('aria-haspopup')==='menu'||((tag==='BUTTON'||role==='button'||inputType==='button')&&!formAssociated(element));
+  const signature=surfaceSignatureOf(element);
+  const shadowedByEquivalentDescendant=Boolean(signature)&&items.some(({element:other})=>{
+    if(other===element||!element.contains(other))return false;
+    const otherRect=other.getBoundingClientRect();
+    return Math.abs(rect.left-otherRect.left)<1&&
+      Math.abs(rect.top-otherRect.top)<1&&
+      Math.abs(rect.width-otherRect.width)<1&&
+      Math.abs(rect.height-otherRect.height)<1&&
+      signature===surfaceSignatureOf(other);
+  });
   return {
     index,
     text:textOf(element),
@@ -572,6 +591,8 @@ return clickable().slice(0,500).map(({element},index)=>{
     enabled:enabled(element),
     width:rect.width,
     height:rect.height,
+    left:offsetX+rect.left,
+    top:offsetY+rect.top,
     navigation,
     safeNavigation:safeNavigation(element),
     tag,
@@ -583,7 +604,8 @@ return clickable().slice(0,500).map(({element},index)=>{
     accessibleName:accessibleNameOf(element).slice(0,500),
     titleText:titleTextOf(element).slice(0,500),
     valueText:valueTextOf(element).slice(0,500),
-    contextText:contextTextOf(element)
+    contextText:contextTextOf(element),
+    shadowedByEquivalentDescendant
   };
 });
 })()`;
@@ -737,6 +759,8 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       typeof candidate.enabled !== 'boolean' ||
       typeof candidate.width !== 'number' ||
       typeof candidate.height !== 'number' ||
+      (candidate.left !== undefined && typeof candidate.left !== 'number') ||
+      (candidate.top !== undefined && typeof candidate.top !== 'number') ||
       typeof candidate.navigation !== 'boolean' ||
       typeof candidate.safeNavigation !== 'boolean' ||
       typeof candidate.tag !== 'string' ||
@@ -759,6 +783,10 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
         candidate.contextText !== undefined &&
         (typeof candidate.contextText !== 'string' || candidate.contextText.length > 4_000)
       )
+      || (
+        candidate.shadowedByEquivalentDescendant !== undefined &&
+        typeof candidate.shadowedByEquivalentDescendant !== 'boolean'
+      )
     ) {
       return [];
     }
@@ -769,6 +797,8 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       enabled: candidate.enabled,
       width: candidate.width,
       height: candidate.height,
+      left: typeof candidate.left === 'number' ? candidate.left : undefined,
+      top: typeof candidate.top === 'number' ? candidate.top : undefined,
       navigation: candidate.navigation,
       safeNavigation: candidate.safeNavigation,
       tag: candidate.tag,
@@ -781,6 +811,7 @@ function readCandidateSummaries(value: unknown): CandidateSummary[] {
       titleText: candidate.titleText,
       valueText: candidate.valueText,
       contextText: typeof candidate.contextText === 'string' ? candidate.contextText : '',
+      shadowedByEquivalentDescendant: candidate.shadowedByEquivalentDescendant === true,
     }];
   });
 }
@@ -1180,12 +1211,38 @@ function selectPortalSystemCandidate(
     candidate.inputType !== 'image' &&
     ['A', 'BUTTON'].includes(candidate.tag?.toUpperCase() ?? '')
   ));
-  return selectSafeCandidate(
-    clickable,
+  const matching = clickable.filter((candidate) => selectSafeCandidate(
+    [candidate],
     PORTAL_SYSTEM_LABELS[system],
     false,
     'first-available',
-  );
+  ) !== null);
+  if (matching.length <= 1) return matching[0] ?? null;
+
+  // The portal can repeat the same system name in a lower "나의 할 일" filter.
+  // Prefer the top navigation entry, but keep failing closed when two entries
+  // occupy the same top-most position.
+  const positioned = matching.filter((candidate) => (
+    typeof candidate.top === 'number' && Number.isFinite(candidate.top) &&
+    typeof candidate.left === 'number' && Number.isFinite(candidate.left)
+  ));
+  if (positioned.length > 0) {
+    const ordered = [...positioned].sort((left, right) => (
+      (left.top ?? 0) - (right.top ?? 0) || (left.left ?? 0) - (right.left ?? 0)
+    ));
+    const first = ordered[0];
+    const tied = ordered.filter((candidate) => (
+      Math.abs((candidate.top ?? 0) - (first.top ?? 0)) < 1 &&
+      Math.abs((candidate.left ?? 0) - (first.left ?? 0)) < 1
+    ));
+    return selectSafeCandidate(
+      tied,
+      PORTAL_SYSTEM_LABELS[system],
+      false,
+      'first-available',
+    );
+  }
+  return selectSafeCandidate(clickable, PORTAL_SYSTEM_LABELS[system], false, 'first-available');
 }
 
 async function acquireSystemWorkflowTarget(
@@ -1342,22 +1399,32 @@ function createWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   attached: AttachedWindowsTarget,
   release: () => Promise<void>,
+  workflowId: WebWorkflowId,
+  workflowSpec: WebWorkflowSpec | undefined,
+  lifecycle: WorkflowTargetLifecycle,
 ): WindowsWorkflowPage {
-  const { sessionId } = attached;
+  let active = attached;
+  let targetIdsBeforeNewPage: Set<string> | null = null;
+  const newPageAttachments = new Map<string, AttachedWindowsTarget>();
   return {
     async currentOrigin() {
-      const origin = await evaluateValue<unknown>(session, sessionId, 'location.origin');
+      const origin = await evaluateValue<unknown>(session, active.sessionId, 'location.origin');
       return typeof origin === 'string' ? origin : '';
     },
     async inspectCandidates() {
       return readCandidateSummaries(
-        await evaluateValue(session, sessionId, CANDIDATE_SCAN_EXPRESSION),
+        await evaluateValue(session, active.sessionId, CANDIDATE_SCAN_EXPRESSION),
       );
     },
     async pressCandidate(candidate, step) {
+      if (step.postcondition.kind === 'new-page-any') {
+        targetIdsBeforeNewPage = new Set(readTargetInfos(
+          await session.connection.protocol.send('Target.getTargets', {}),
+        ).map(({ targetId }) => targetId));
+      }
       await pressCandidateWithCdp(
         session,
-        sessionId,
+        active.sessionId,
         candidate,
         step.interaction,
         Boolean(step.navigationOnly),
@@ -1368,18 +1435,62 @@ function createWindowsWorkflowPage(
         step.candidateLabels,
       );
     },
-    async checkPostcondition(step) {
+    async checkCurrentState(step) {
       return Boolean(await evaluateValue(
         session,
-        sessionId,
+        active.sessionId,
         postconditionExpression(step),
       ));
+    },
+    async checkPostcondition(step) {
+      if (await evaluateValue(
+        session,
+        active.sessionId,
+        postconditionExpression(step),
+      )) return true;
+      if (step.postcondition.kind !== 'new-page-any' || !targetIdsBeforeNewPage) {
+        return false;
+      }
+      const targets = readTargetInfos(
+        await session.connection.protocol.send('Target.getTargets', {}),
+      ).filter((target) => (
+        target.type === 'page' &&
+        !targetIdsBeforeNewPage?.has(target.targetId) &&
+        workflowTargetAllowed(
+          target.url,
+          session.officeCode,
+          workflowId,
+          workflowSpec,
+        )
+      ));
+      for (const target of targets) {
+        let next = newPageAttachments.get(target.targetId);
+        if (!next) {
+          next = await attachWindowsTarget(session, target, lifecycle);
+          newPageAttachments.set(target.targetId, next);
+        } else {
+          next.target = target;
+        }
+        try {
+          if (!await evaluateValue(
+            session,
+            next.sessionId,
+            postconditionExpression(step),
+          )) continue;
+          active = next;
+          targetIdsBeforeNewPage = null;
+          return true;
+        } catch {
+          // The new page may still be loading. The workflow engine will poll again.
+        }
+      }
+      return false;
     },
     async wait(delayMs) {
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     },
     async activate() {
-      await restoreAndActivateTarget(session, attached.target.targetId, sessionId);
+      await restoreAndActivateTarget(session, active.target.targetId, active.sessionId);
     },
     release,
     async readApprovalCount(system) {
@@ -1387,7 +1498,7 @@ function createWindowsWorkflowPage(
         system,
         await evaluateValue<unknown>(
           session,
-          sessionId,
+          active.sessionId,
           approvalCounterExpression(system),
         ),
       );
@@ -1489,7 +1600,14 @@ export async function openCdpWindowsWorkflowPage(
       isManagedSystemRequest(workflowId, workflowSpec) ? 120_000 : 30_000,
     );
     if (!options.background) session.workflowState = 'NAVIGATING_DUTY_MENU';
-    return createWindowsWorkflowPage(session, attached, release);
+    return createWindowsWorkflowPage(
+      session,
+      attached,
+      release,
+      workflowId,
+      workflowSpec,
+      lifecycle,
+    );
   } catch (error) {
     await release();
     throw error;
@@ -1500,7 +1618,7 @@ function connectionProbeWorkflowId(system: WebWorkflowSystem): BuiltInWebWorkflo
   return system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox';
 }
 
-async function restorePortalAfterConnectionProbe(
+async function retainPreparedSystemTarget(
   session: WindowsManagedBrowserSession,
   beforeTargets: readonly WindowsTargetInfo[],
   system: WebWorkflowSystem,
@@ -1509,54 +1627,30 @@ async function restorePortalAfterConnectionProbe(
   const office = getEducationOffice(session.officeCode);
   const workflowId = connectionProbeWorkflowId(system);
   const beforeIds = new Set(beforeTargets.map(({ targetId }) => targetId));
-  const portalBefore = beforeTargets.find((target) => (
-    isPortalTarget(target, session.officeCode) ||
-    isIdentityProviderTarget(target, session.officeCode)
-  ));
   const currentTargets = readTargetInfos(await protocol.send('Target.getTargets', {}));
   const portalStillOpen = currentTargets.some((target) => isPortalTarget(
     target,
     session.officeCode,
   ));
-  const newlyCreatedSystemTargets = currentTargets.filter((target) => (
-    !beforeIds.has(target.targetId) &&
+  const systemTargets = currentTargets.filter((target) => (
     target.type === 'page' &&
     isAllowedWebWorkflowTarget(workflowId, target.url, session.officeCode)
   ));
-
-  if (portalStillOpen) {
-    for (const target of newlyCreatedSystemTargets) {
-      await protocol.send('Target.closeTarget', { targetId: target.targetId });
-    }
-    return;
-  }
-
-  const reusable = currentTargets.find((target) => (
-    target.type === 'page' &&
-    isAllowedWebWorkflowTarget(workflowId, target.url, session.officeCode) &&
-    (
-      target.targetId === portalBefore?.targetId ||
+  const keeper = systemTargets.find((target) => beforeIds.has(target.targetId)) ??
+    systemTargets[0];
+  for (const target of systemTargets) {
+    if (
+      target.targetId !== keeper?.targetId &&
       !beforeIds.has(target.targetId)
-    )
-  ));
-  if (!reusable) return;
-  const attached = await attachWindowsTarget(session, reusable);
-  try {
-    await navigateAttachedTarget(session, attached, office.portalUrl);
-    await waitForReadyPage(
-      session,
-      attached.sessionId,
-      (state) => state.origin === new URL(office.portalUrl).origin ||
-        isOfficeIdentityProviderUrl(state.href, session.officeCode),
-      30_000,
-    );
-  } finally {
-    await protocol.send('Target.detachFromTarget', { sessionId: attached.sessionId });
-  }
-  for (const target of newlyCreatedSystemTargets) {
-    if (target.targetId !== reusable.targetId) {
+    ) {
       await protocol.send('Target.closeTarget', { targetId: target.targetId });
     }
+  }
+  if (!portalStillOpen) {
+    await protocol.send('Target.createTarget', {
+      url: office.portalUrl,
+      background: true,
+    });
   }
 }
 
@@ -1605,7 +1699,7 @@ export async function connectWindowsOfficeSystems(
       await page?.release?.();
     }
     try {
-      await restorePortalAfterConnectionProbe(session, beforeTargets, system);
+      await retainPreparedSystemTarget(session, beforeTargets, system);
     } catch {
       // The authenticated session remains valid even if an auxiliary target closes late.
     }
