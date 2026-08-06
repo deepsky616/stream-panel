@@ -117,7 +117,6 @@ describe('managed web workflow definitions', () => {
     expect(definitions['edufine-draft'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['업무관리'],
       ['문서관리'],
-      ['기안'],
       ['공용서식', '공용 서식'],
       [
         '표준서식(결재4인,협조4인)',
@@ -133,7 +132,6 @@ describe('managed web workflow definitions', () => {
     expect(definitions['edufine-purchase'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['학교회계'],
       ['사업담당', '사업관리'],
-      ['품의/정산', '품의·정산'],
       ['품의등록', '품의 등록'],
     ]);
     expect(definitions['edufine-purchase'].steps.at(-1)?.postcondition).toEqual({
@@ -162,12 +160,16 @@ describe('managed web workflow definitions', () => {
     for (const definition of Object.values(allDefinitions)) {
       for (const step of definition.steps) {
         expect(step.candidateLabels.length).toBeGreaterThan(0);
-        expect(step.maxChecks).toBe(
-          definition.id === 'neis-leave' || definition.id === 'neis-trip' ? 20 : 60,
-        );
-        expect(step.checkDelayMs).toBe(500);
+        const isNeisNavigation = definition.id === 'neis-leave' || definition.id === 'neis-trip';
+        expect(step.maxChecks).toBe(isNeisNavigation ? 20 : 80);
+        expect(step.checkDelayMs).toBe(isNeisNavigation ? 500 : 250);
         for (const label of step.candidateLabels) {
-          expect(isForbiddenActionText(label), `${definition.id}:${step.id}:${label}`).toBe(false);
+          expect(
+            isForbiddenActionText(label) && !(
+              'allowActionText' in step && step.allowActionText
+            ),
+            `${definition.id}:${step.id}:${label}`,
+          ).toBe(false);
         }
       }
     }
@@ -197,12 +199,11 @@ describe('managed web workflow definitions', () => {
       skipWhenSatisfied: true,
     }));
 
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine).toHaveLength(1);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map((step) => (
       step.candidateLabels
-    ))).toEqual([['결재(긴급)', '결재 (긴급)']]);
-    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[1].steps.map((step) => (
-      step.candidateLabels
     ))).toEqual([
+      ['업무관리'],
       ['결재'],
       ['결재대기', '결재 대기'],
     ]);
@@ -210,6 +211,7 @@ describe('managed web workflow definitions', () => {
       route.steps.flatMap((step) => step.candidateLabels)
     ));
     expect(clickedLabels).not.toContain('문서관리');
+    expect(clickedLabels).not.toContain('결재(긴급)');
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine.flatMap(({ steps }) => steps).every(
       ({ skipWhenSatisfied }) => skipWhenSatisfied === true,
     )).toBe(true);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CandidateSummary } from '../src/main/services/webConnector/workflows/common';
 import type { WindowsWorkflowPage } from '../src/main/services/webConnector/windows';
 import {
@@ -101,6 +101,68 @@ describe('Windows managed web automation', () => {
     expect(session.workflowState).toBe('IDLE');
     await session.close();
     expect(protocol.isClosed).toBe(true);
+  });
+
+  it('extends sessions only on the selected office system origins', async () => {
+    vi.useFakeTimers();
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' },
+            { targetId: 'edufine', type: 'page', url: 'https://klef.goe.go.kr/main' },
+            { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/' },
+            { targetId: 'other', type: 'page', url: 'https://sen.neis.go.kr/' },
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Runtime.evaluate') {
+          return { result: { value: { handled: false } } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    try {
+      const session = await createWindowsManagedBrowserSession('goe', 'edge', {
+        userDataPath: 'C:\\StreamPanel',
+        env: { 'ProgramFiles(x86)': 'C:\\Program Files (x86)' },
+        exists: (path) => path.endsWith('Microsoft\\Edge\\Application\\msedge.exe'),
+        makeDirectory: async () => undefined,
+        connectBrowser: async () => ({
+          transportKind: 'pipe',
+          protocol: protocol as never,
+          process: {
+            pid: 42,
+            exited: false,
+            close: async () => undefined,
+          } as never,
+        }),
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const attachedTargets = commands
+        .filter(({ method }) => method === 'Target.attachToTarget')
+        .map(({ params }) => params.targetId);
+      expect(attachedTargets).toEqual(['neis', 'edufine']);
+      expect(commands.filter(({ method }) => method === 'Runtime.evaluate')).toHaveLength(2);
+      expect(commands.some(({ method, params }) => (
+        method === 'Target.setDiscoverTargets' && params.discover === true
+      ))).toBe(true);
+      await session.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reuses the bootstrap tab, restores the window, and opens NEIS directly', async () => {
@@ -512,7 +574,7 @@ describe('Windows managed web automation', () => {
               loginVisible: false,
             } } };
           }
-          if (expression.includes('#btnUseTimeExtn')) {
+          if (expression.includes("[id$='btnUseTimeExtn']")) {
             return { result: { value: { handled: true } } };
           }
           if (expression.includes('clickable().slice')) {
@@ -544,12 +606,134 @@ describe('Windows managed web automation', () => {
     expect(String(readiness?.expression)).toContain("querySelectorAll('iframe,frame')");
     expect(() => new Function(`return ${String(readiness?.expression)}`)).not.toThrow();
     const extension = evaluationParams.find(({ expression }) => (
-      String(expression).includes('#btnUseTimeExtn')
+      String(expression).includes("[id$='btnUseTimeExtn']")
     ));
     expect(String(extension?.expression)).toContain("classList?.contains('btn-primary')");
     expect(String(extension?.expression)).toContain("querySelectorAll('iframe,frame')");
     expect(() => new Function(`return ${String(extension?.expression)}`)).not.toThrow();
     expect(extension?.userGesture).toBe(true);
+    await workflowPage.release?.();
+  });
+
+  it('uses Nexacro job, top-menu, and mega-menu controls for Edufine navigation', async () => {
+    const expressions: string[] = [];
+    const inputCommands: string[] = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'edufine-main',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/main',
+          }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 19 };
+        if (method === 'Input.dispatchMouseEvent') {
+          inputCommands.push(String(params.type));
+          return {};
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          expressions.push(expression);
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://klef.goe.go.kr/main',
+              origin: 'https://klef.goe.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes("[id$='btnUseTimeExtn']")) {
+            return { result: { value: { handled: false } } };
+          }
+          if (expression.includes("'NEXACRO-COMBO'")) {
+            return { result: { value: [safeCandidate(0, '학교회계')] } };
+          }
+          if (expression.includes("'NEXACRO-TOP-MENU'")) {
+            return { result: { value: [safeCandidate(0, '사업관리')] } };
+          }
+          if (expression.includes("'NEXACRO-MEGA-MENU'")) {
+            return { result: { value: [safeCandidate(0, '품의등록')] } };
+          }
+          if (expression.includes('const interaction="edufine-top-menu"') ||
+            expression.includes('const interaction="edufine-mega-menu"')) {
+            return { result: { value: { ok: true, x: 100, y: 50 } } };
+          }
+          if (expression.includes('const interaction="edufine-job"')) {
+            return { result: { value: { ok: true, direct: true } } };
+          }
+          if (expression === 'location.origin') {
+            return { result: { value: 'https://klef.goe.go.kr' } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+    const workflowPage = await openCdpWindowsWorkflowPage(
+      session as never,
+      'edufine-purchase',
+    );
+    const jobStep = {
+      id: 'select-school-accounting',
+      candidateLabels: ['학교회계'],
+      interaction: 'edufine-job' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['사업관리'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+    const topStep = {
+      id: 'open-business-owner',
+      candidateLabels: ['사업관리'],
+      interaction: 'edufine-top-menu' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['품의등록'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+    const megaStep = {
+      id: 'open-purchase-registration',
+      candidateLabels: ['품의등록'],
+      interaction: 'edufine-mega-menu' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['예산내역'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+
+    await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(jobStep))[0],
+      jobStep,
+    );
+    await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(topStep))[0],
+      topStep,
+    );
+    await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(megaStep))[0],
+      megaStep,
+    );
+
+    expect(expressions.some((expression) => expression.includes('cboJobList'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('_on_value_change'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('[id*="TopFrame"]'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('[id*="pdvMegaMenu"]'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('forbiddenTokens'))).toBe(true);
+    expect(inputCommands).toEqual([
+      'mouseMoved', 'mousePressed', 'mouseReleased',
+      'mouseMoved', 'mousePressed', 'mouseReleased',
+    ]);
     await workflowPage.release?.();
   });
 

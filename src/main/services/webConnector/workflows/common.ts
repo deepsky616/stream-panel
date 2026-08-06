@@ -37,7 +37,13 @@ export type WorkflowPostcondition =
 export interface WorkflowStep {
   id: string;
   candidateLabels: readonly string[];
-  interaction: 'mouse' | 'dom-click';
+  interaction:
+    | 'mouse'
+    | 'dom-click'
+    | 'edufine-job'
+    | 'edufine-top-menu'
+    | 'edufine-mega-menu'
+    | 'edufine-exact-text';
   selection?: 'unique-any' | 'first-available';
   navigationOnly?: boolean;
   menuOnly?: boolean;

@@ -12,12 +12,11 @@ export interface ApprovalScanInput {
 }
 
 const COMMON_CHECKS = {
-  maxChecks: 60 as const,
-  checkDelayMs: 500,
+  maxChecks: 80 as const,
+  checkDelayMs: 250,
   skipWhenSatisfied: true,
 };
 const NEIS_PENDING_COOPERATION_LABELS = ['미결/협조함', '미결 / 협조함'] as const;
-const EDUFINE_URGENT_LABELS = ['결재(긴급)', '결재 (긴급)'] as const;
 const EDUFINE_WAITING_LABELS = ['결재대기', '결재 대기'] as const;
 
 const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
@@ -38,34 +37,23 @@ const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   ],
 };
 
-const EDUFINE_DIRECT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
-  id: 'edufine-approval-inbox',
-  label: '에듀파인 결재함',
-  finalState: 'approval-inbox-ready',
-  steps: [
-    {
-      id: 'open-urgent-approval-inbox',
-      candidateLabels: EDUFINE_URGENT_LABELS,
-      selection: 'first-available',
-      interaction: 'mouse',
-      menuOnly: true,
-      postcondition: { kind: 'tab-selected-any', labels: EDUFINE_URGENT_LABELS },
-      ...COMMON_CHECKS,
-    },
-  ],
-};
-
 const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   id: 'edufine-approval-inbox',
   label: '에듀파인 결재함',
   finalState: 'approval-inbox-ready',
   steps: [
     {
+      id: 'select-business-management',
+      candidateLabels: ['업무관리'],
+      selection: 'first-available',
+      interaction: 'edufine-job',
+      postcondition: { kind: 'visible-any', labels: ['결재'] },
+      ...COMMON_CHECKS,
+    },
+    {
       id: 'open-document-approval-menu',
       candidateLabels: ['결재'],
-      interaction: 'mouse',
-      menuOnly: true,
-      contextLabels: ['문서관리'],
+      interaction: 'edufine-top-menu',
       allowActionText: true,
       postcondition: { kind: 'visible-any', labels: EDUFINE_WAITING_LABELS },
       ...COMMON_CHECKS,
@@ -74,10 +62,14 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       id: 'open-waiting-approval-inbox',
       candidateLabels: EDUFINE_WAITING_LABELS,
       selection: 'first-available',
-      interaction: 'mouse',
-      menuOnly: true,
-      contextLabels: ['문서관리', '결재'],
-      postcondition: { kind: 'tab-selected-any', labels: EDUFINE_WAITING_LABELS },
+      interaction: 'edufine-mega-menu',
+      postcondition: {
+        kind: 'visible-groups',
+        groups: [
+          EDUFINE_WAITING_LABELS,
+          ['결재할 문서', '문서번호', '제목', '기안자', '총', '전체'],
+        ],
+      },
       ...COMMON_CHECKS,
     },
   ],
@@ -88,10 +80,10 @@ export const APPROVAL_INBOX_WORKFLOW_ROUTES: Record<
   readonly ManagedWorkflowDefinition[]
 > = {
   neis: [NEIS_APPROVAL_WORKFLOW],
-  edufine: [EDUFINE_DIRECT_APPROVAL_WORKFLOW, EDUFINE_DOCUMENT_APPROVAL_WORKFLOW],
+  edufine: [EDUFINE_DOCUMENT_APPROVAL_WORKFLOW],
 };
 
 export const APPROVAL_INBOX_WORKFLOWS: Record<WebWorkflowSystem, ManagedWorkflowDefinition> = {
   neis: NEIS_APPROVAL_WORKFLOW,
-  edufine: EDUFINE_DIRECT_APPROVAL_WORKFLOW,
+  edufine: EDUFINE_DOCUMENT_APPROVAL_WORKFLOW,
 };

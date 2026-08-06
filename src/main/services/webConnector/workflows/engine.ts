@@ -23,6 +23,16 @@ export interface WorkflowRunResult {
   finalState: string;
 }
 
+export class WorkflowStepError extends Error {
+  constructor(
+    readonly stepId: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'WorkflowStepError';
+  }
+}
+
 function ensureActive(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     throw new Error('웹 업무 이동이 취소되었습니다. 필요하면 키를 다시 눌러 주세요.');
@@ -55,7 +65,8 @@ async function findCandidate(
     }
     if (check < step.maxChecks) await adapter.wait(step.checkDelayMs);
   }
-  throw new Error(
+  throw new WorkflowStepError(
+    step.id,
     `'${step.candidateLabels.join(' 또는 ')}' 메뉴를 찾지 못했습니다. 화면 구성이 바뀌었거나 업무 권한이 없을 수 있으니 업무용 브라우저에서 직접 확인해 주세요.`,
   );
 }
@@ -70,7 +81,8 @@ async function waitForPostcondition(
     if (await adapter.checkPostcondition(step)) return;
     if (check < step.maxChecks) await adapter.wait(step.checkDelayMs);
   }
-  throw new Error(
+  throw new WorkflowStepError(
+    step.id,
     `'${step.id}' 단계 뒤 기대한 화면을 확인하지 못했습니다. 화면 구성이 바뀌었을 수 있으니 업무용 브라우저에서 직접 계속해 주세요.`,
   );
 }
@@ -91,7 +103,10 @@ export async function runWorkflow(
     if (step.requiresConfirmation) {
       const confirmed = await adapter.confirmStep?.(step, selected) ?? false;
       if (!confirmed) {
-        throw new Error(`'${selected.text}' 단계 실행을 취소했습니다.`);
+        throw new WorkflowStepError(
+          step.id,
+          `'${selected.text}' 단계 실행을 취소했습니다.`,
+        );
       }
     }
     await adapter.pressCandidate(selected, step);

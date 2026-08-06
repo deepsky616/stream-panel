@@ -255,6 +255,11 @@ export async function createWindowsManagedBrowserSession(
   const profilePath = resolveManagedProfilePath(userDataPath, officeCode, browserId, 'win32');
   await makeDirectory(profilePath, { recursive: true, mode: 0o700 });
   const connection = await connectBrowser({ browserId, executable, profilePath });
+  try {
+    await connection.protocol.send('Target.setDiscoverTargets', { discover: true });
+  } catch {
+    // Target.getTargets remains available on older managed Chromium builds.
+  }
   let bootstrapTargetId: string | undefined;
   try {
     bootstrapTargetId = readTargetInfos(
@@ -264,7 +269,8 @@ export async function createWindowsManagedBrowserSession(
     // A target can be created lazily if the browser has not published its first tab yet.
   }
   let closed = false;
-  return {
+  let extensionSweepRunning = false;
+  const managedSession: WindowsManagedBrowserSession = {
     officeCode,
     browserId,
     connection,
@@ -276,6 +282,7 @@ export async function createWindowsManagedBrowserSession(
     async close() {
       if (closed) return;
       closed = true;
+      clearInterval(keepAliveTimer);
       try {
         await connection.process.close(async () => {
           if (connection.protocol.isClosed) return;
@@ -290,6 +297,15 @@ export async function createWindowsManagedBrowserSession(
       }
     },
   };
+  const keepAliveTimer = setInterval(() => {
+    if (closed || extensionSweepRunning) return;
+    extensionSweepRunning = true;
+    void extendManagedSystemSessions(managedSession).finally(() => {
+      extensionSweepRunning = false;
+    });
+  }, 30_000);
+  keepAliveTimer.unref();
+  return managedSession;
 }
 
 function validateWorkflowOrigin(
@@ -694,6 +710,138 @@ return ${JSON.stringify(condition.kind)}==='visible-all'
 })()`;
 }
 
+function edufineCandidateScanExpression(step: WorkflowStep): string {
+  const labels = JSON.stringify(step.candidateLabels);
+  const interaction = JSON.stringify(step.interaction);
+  return `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const labels=${labels}.map(normalize);
+const interaction=${interaction};
+const summary=(element,index,text,tag)=>{
+  const rect=element?.getBoundingClientRect?.()??{width:1,height:1,left:0,top:0};
+  return {
+    index,text,visible:element?visible(element):true,enabled:element?enabled(element):true,
+    width:Math.max(1,Number(rect.width)||0),height:Math.max(1,Number(rect.height)||0),
+    left:Number(rect.left)||0,top:Number(rect.top)||0,navigation:true,safeNavigation:true,
+    tag,inputType:'',href:'',formAssociated:false,inlineHandler:false,
+    visibleText:text,accessibleName:'',titleText:'',valueText:'',contextText:'',
+    shadowedByEquivalentDescendant:false
+  };
+};
+if(interaction==='edufine-job'){
+  const application=globalThis.nexacro?.getApplication?.()||globalThis.application;
+  const combo=application?.mainframe?.MainVFrameSet?.TopFrame?.form?.cboJobList;
+  const dataset=combo?.getInnerDataset?.()||combo?._innerdataset;
+  const input=document.querySelector("[id$='cboJobList.comboedit:input']");
+  if(!combo||!dataset||!input||typeof dataset.getRowCount!=='function')return [];
+  const dataColumn=combo.datacolumn||'menuNm';
+  const result=[];
+  for(let row=0;row<dataset.getRowCount();row+=1){
+    const name=normalize(dataset.getColumn(row,dataColumn));
+    if(labels.includes(name))result.push(summary(input,row,name,'NEXACRO-COMBO'));
+  }
+  return result;
+}
+const choose=(selector,label,preferred)=>{
+  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(selector)))
+    .filter(element=>normalize(element.textContent)===label&&visible(element));
+  return matches.find(element=>String(element.id||'').endsWith(preferred))||matches.at(-1)||null;
+};
+if(interaction==='edufine-top-menu'){
+  return labels.flatMap((label,index)=>{
+    const element=choose('[id*="TopFrame"][id*="btnMenu_"]',label,':icontext');
+    return element?[summary(element,index,label,'NEXACRO-TOP-MENU')]:[];
+  });
+}
+if(interaction==='edufine-mega-menu'){
+  return labels.flatMap((label,index)=>{
+    const element=choose('[id*="pdvMegaMenu"]',label,':text');
+    return element?[summary(element,index,label,'NEXACRO-MEGA-MENU')]:[];
+  });
+}
+if(interaction==='edufine-exact-text'){
+  return labels.flatMap((label,index)=>{
+    const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll('*')))
+      .filter(element=>normalize(element.textContent)===label&&visible(element))
+      .sort((left,right)=>left.children.length-right.children.length);
+    const exact=matches[0];
+    const element=exact?.closest?.('a,button')||exact;
+    return element&&visible(element)?[summary(element,index,label,'EXACT-TEXT')]:[];
+  });
+}
+return [];
+})()`;
+}
+
+function candidateScanExpression(step: WorkflowStep): string {
+  return step.interaction?.startsWith('edufine-')
+    ? edufineCandidateScanExpression(step)
+    : CANDIDATE_SCAN_EXPRESSION;
+}
+
+function edufineCandidateActionExpression(
+  interaction: WorkflowStep['interaction'],
+  expectedText: string,
+  allowActionText: boolean,
+  allowedActionLabels: readonly string[],
+): string {
+  return `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const wanted=${JSON.stringify(expectedText)};
+const interaction=${JSON.stringify(interaction)};
+const forbiddenTokens=${JSON.stringify(FORBIDDEN_ACTION_TOKENS)};
+const approvedNonActions=new Set(${JSON.stringify([...APPROVED_NON_ACTION_LABELS])});
+const allowedActionLabels=new Set(${JSON.stringify(allowedActionLabels)}.map(normalize));
+const normalizedWanted=normalize(wanted);
+const forbidden=forbiddenTokens.some(token=>normalizedWanted.includes(token))&&
+  !approvedNonActions.has(normalizedWanted)&&
+  (!${JSON.stringify(allowActionText)}||!allowedActionLabels.has(normalizedWanted));
+if(forbidden)return {ok:false};
+if(interaction==='edufine-job'){
+  const application=globalThis.nexacro?.getApplication?.()||globalThis.application;
+  const combo=application?.mainframe?.MainVFrameSet?.TopFrame?.form?.cboJobList;
+  const dataset=combo?.getInnerDataset?.()||combo?._innerdataset;
+  if(!combo||!dataset||typeof combo._on_value_change!=='function'||typeof dataset.getRowCount!=='function')return {ok:false};
+  const dataColumn=combo.datacolumn||'menuNm',codeColumn=combo.codecolumn||'menuId';
+  let targetIndex=-1;
+  for(let row=0;row<dataset.getRowCount();row+=1){
+    if(normalize(dataset.getColumn(row,dataColumn))===wanted){targetIndex=row;break;}
+  }
+  if(targetIndex<0)return {ok:false};
+  const postText=normalize(dataset.getColumn(targetIndex,dataColumn));
+  const postValue=dataset.getColumn(targetIndex,codeColumn);
+  const changed=combo._on_value_change(combo.index,combo.text,combo.value,targetIndex,postText,postValue);
+  combo.redraw?.();
+  return {ok:changed!==false,direct:true};
+}
+const choose=(selector,preferred)=>{
+  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(selector)))
+    .filter(element=>normalize(element.textContent)===wanted&&visible(element));
+  return matches.find(element=>String(element.id||'').endsWith(preferred))||matches.at(-1)||null;
+};
+if(interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
+  const element=interaction==='edufine-top-menu'
+    ? choose('[id*="TopFrame"][id*="btnMenu_"]',':icontext')
+    : choose('[id*="pdvMegaMenu"]',':text');
+  if(!element)return {ok:false};
+  const rect=element.getBoundingClientRect();
+  return {ok:true,x:rect.left+rect.width/2,y:rect.top+rect.height/2};
+}
+if(interaction==='edufine-exact-text'){
+  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll('*')))
+    .filter(element=>normalize(element.textContent)===wanted&&visible(element))
+    .sort((left,right)=>left.children.length-right.children.length);
+  const exact=matches[0];
+  const element=exact?.closest?.('a,button')||exact;
+  if(!element||!visible(element))return {ok:false};
+  element.focus?.({preventScroll:false});
+  element.click?.();
+  return {ok:true,direct:true};
+}
+return {ok:false};
+})()`;
+}
+
 const SESSION_EXTENSION_EXPRESSION = `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const allowedLabels=new Set([
@@ -701,8 +849,10 @@ const allowedLabels=new Set([
   '세션연장','세션 연장','계속사용','계속 사용'
 ].map(normalize));
 const candidates=documents.flatMap(({document})=>
-  Array.from(document.querySelectorAll('#btnUseTimeExtn'))
-).filter(element=>visible(element)&&enabled(element)&&allowedLabels.has(textOf(element)));
+  Array.from(document.querySelectorAll("[id$='btnUseTimeExtn']"))
+).filter(element=>visible(element)&&enabled(element)&&(
+  String(element.id||'').endsWith('btnUseTimeExtn')||allowedLabels.has(textOf(element))
+));
 const primary=candidates.filter(element=>element.classList?.contains('btn-primary'));
 const eligible=primary.length>0?primary:candidates;
 if(eligible.length!==1)return {handled:false};
@@ -714,7 +864,7 @@ return {handled:true};
 function approvalCounterExpression(system: WebWorkflowSystem): string {
   const labels = system === 'neis'
     ? ['미결/협조함', '미결 / 협조함', '미결', '협조함', '결재 대기', '결재대기', '총', '전체']
-    : ['결재(긴급)', '결재 (긴급)', '결재 대기', '결재대기', '결재할 문서', '총', '전체'];
+    : ['결재 대기', '결재대기', '결재할 문서', '총', '전체'];
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const labels=${JSON.stringify(labels)}.map(value=>normalize(value).replace(/\\s+/g,''));
@@ -777,6 +927,56 @@ async function extendSystemSessionIfPrompted(
   } catch {
     // A cross-origin frame or a document reload can make the prompt unavailable briefly.
     return false;
+  }
+}
+
+async function extendManagedSystemSessions(
+  session: WindowsManagedBrowserSession,
+): Promise<void> {
+  if (!session.isAlive()) return;
+  const office = getEducationOffice(session.officeCode);
+  const allowedOrigins = new Set([
+    new URL(office.neisUrl).origin,
+    new URL(office.edufineUrl).origin,
+  ]);
+  let targets: WindowsTargetInfo[];
+  try {
+    targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    ).filter((target) => {
+      if (target.type !== 'page') return false;
+      try {
+        return allowedOrigins.has(new URL(target.url).origin);
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return;
+  }
+  for (const target of targets) {
+    let attachedSessionId: string | undefined;
+    try {
+      const attached = await session.connection.protocol.send<{ sessionId?: unknown }>(
+        'Target.attachToTarget',
+        { targetId: target.targetId, flatten: true },
+      );
+      if (typeof attached.sessionId !== 'string') continue;
+      attachedSessionId = attached.sessionId;
+      await extendSystemSessionIfPrompted(session, attachedSessionId);
+    } catch {
+      // A page can reload or close while the safe session-extension sweep is running.
+    } finally {
+      if (attachedSessionId) {
+        try {
+          await session.connection.protocol.send('Target.detachFromTarget', {
+            sessionId: attachedSessionId,
+          });
+        } catch {
+          // The target may already be detached after a navigation.
+        }
+      }
+    }
   }
 }
 
@@ -951,11 +1151,20 @@ async function attachWindowsTarget(
   lifecycle?: WorkflowTargetLifecycle,
 ): Promise<AttachedWindowsTarget> {
   const protocol = session.connection.protocol;
-  const attached = await protocol.send<{ sessionId?: unknown }>('Target.attachToTarget', {
-    targetId: target.targetId,
-    flatten: true,
-  });
-  if (typeof attached.sessionId !== 'string') {
+  let attached: { sessionId?: unknown } | undefined;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      attached = await protocol.send<{ sessionId?: unknown }>('Target.attachToTarget', {
+        targetId: target.targetId,
+        flatten: true,
+      });
+      break;
+    } catch {
+      if (attempt === 9) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  if (typeof attached?.sessionId !== 'string') {
     throw new Error('업무용 브라우저 탭에 연결하지 못했습니다. 브라우저를 다시 열어 주세요.');
   }
   lifecycle?.attachedSessionIds.push(attached.sessionId);
@@ -1076,7 +1285,7 @@ async function pressCandidateWithCdp(
   session: WindowsManagedBrowserSession,
   sessionId: string,
   candidate: CandidateSummary,
-  interaction: 'mouse' | 'dom-click',
+  interaction: WorkflowStep['interaction'],
   navigationOnly = false,
   allowedNavigationOrigin?: string,
   menuOnly = false,
@@ -1086,26 +1295,44 @@ async function pressCandidateWithCdp(
 ): Promise<void> {
   const protocol = session.connection.protocol;
   const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
-  const action = await evaluateValue<{ ok?: unknown; x?: unknown; y?: unknown }>(
+  const isEdufineInteraction = interaction.startsWith('edufine-');
+  const action = await evaluateValue<{
+    ok?: unknown;
+    direct?: unknown;
+    x?: unknown;
+    y?: unknown;
+  }>(
     session,
     sessionId,
-    candidateActionExpression(
-      candidate.index,
-      normalizedText,
-      interaction === 'dom-click',
-      navigationOnly,
-      allowedNavigationOrigin,
-      menuOnly,
-      contextLabels,
-      allowActionText,
-      allowedActionLabels,
-    ),
-    interaction === 'dom-click',
+    isEdufineInteraction
+      ? edufineCandidateActionExpression(
+          interaction,
+          normalizedText,
+          allowActionText,
+          allowedActionLabels,
+        )
+      : candidateActionExpression(
+          candidate.index,
+          normalizedText,
+          interaction === 'dom-click',
+          navigationOnly,
+          allowedNavigationOrigin,
+          menuOnly,
+          contextLabels,
+          allowActionText,
+          allowedActionLabels,
+        ),
+    interaction === 'dom-click' || interaction === 'edufine-job' || interaction === 'edufine-exact-text',
   );
   if (!action?.ok) {
     throw new Error(`'${normalizedText}' 메뉴의 위치가 바뀌었습니다. 화면을 확인한 뒤 다시 시도해 주세요.`);
   }
-  if (interaction === 'dom-click') return;
+  if (
+    action.direct === true ||
+    interaction === 'dom-click' ||
+    interaction === 'edufine-job' ||
+    interaction === 'edufine-exact-text'
+  ) return;
   if (typeof action.x !== 'number' || typeof action.y !== 'number') {
     throw new Error(`'${normalizedText}' 메뉴 위치를 확인하지 못했습니다. 화면에서 직접 눌러 주세요.`);
   }
@@ -1196,10 +1423,10 @@ function createWindowsWorkflowPage(
       const origin = await evaluateValue<unknown>(session, active.sessionId, 'location.origin');
       return typeof origin === 'string' ? origin : '';
     },
-    async inspectCandidates() {
+    async inspectCandidates(step) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
       return readCandidateSummaries(
-        await evaluateValue(session, active.sessionId, CANDIDATE_SCAN_EXPRESSION),
+        await evaluateValue(session, active.sessionId, candidateScanExpression(step)),
       );
     },
     async pressCandidate(candidate, step) {

@@ -133,7 +133,7 @@ export function ApprovalMonitorSettings({
                 <span className="approval-source-state">{statusText(status)}</span>
                 <small>{system === 'neis'
                   ? '확인 위치: 승인사항 영역의 미결/협조함'
-                  : '확인 위치: 결재(긴급) 또는 문서관리 영역의 결재 → 결재대기'}</small>
+                  : '확인 위치: 결재 → 결재대기'}</small>
                 {status?.lastCheckedAt !== undefined && (
                   <small>마지막 확인: {formatLastCheckedAt(status.lastCheckedAt)}</small>
                 )}

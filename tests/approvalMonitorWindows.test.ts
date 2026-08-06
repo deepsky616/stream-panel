@@ -85,7 +85,7 @@ describe('Windows approval count reader', () => {
         role: 'status',
         children: [],
       },
-    ])).toBe(4);
+    ])).toBe(2);
     expect(parseApprovalCounterCandidates!('neis', [
       {
         text: '미결/협조함 5',
@@ -111,10 +111,17 @@ describe('Windows approval count reader', () => {
     ])).toBe(6);
   });
 
-  it('never treats the generic approval action label as an inbox navigation target', () => {
-    for (const workflow of Object.values(APPROVAL_INBOX_WORKFLOWS)) {
-      expect(workflow.steps.flatMap((step) => step.candidateLabels)).not.toContain('결재');
-    }
+  it('allows 결재 only as the fixed Edufine top-menu route, never as a form action', () => {
+    expect(APPROVAL_INBOX_WORKFLOWS.neis.steps.flatMap(
+      (step) => step.candidateLabels,
+    )).not.toContain('결재');
+    const edufineApproval = APPROVAL_INBOX_WORKFLOWS.edufine.steps.find(
+      (step) => step.candidateLabels.includes('결재'),
+    );
+    expect(edufineApproval).toMatchObject({
+      interaction: 'edufine-top-menu',
+      allowActionText: true,
+    });
   });
 
   it('accepts only a bounded non-negative integer returned by the page', () => {

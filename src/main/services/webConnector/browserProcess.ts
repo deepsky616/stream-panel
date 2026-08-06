@@ -70,6 +70,8 @@ export function buildManagedBrowserLaunch({
   }
   const args = [
     `--user-data-dir=${profilePath}`,
+    '--no-first-run',
+    '--no-default-browser-check',
     '--new-window',
     transport === 'pipe' ? '--remote-debugging-pipe' : '--remote-debugging-port=0',
   ];

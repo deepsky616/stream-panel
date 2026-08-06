@@ -43,7 +43,7 @@ interface ApprovalCounterCandidate extends ApprovalCounterSignal {
 
 const COUNTER_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
   neis: ['미결/협조함', '미결 / 협조함', '미결', '협조함', '결재 대기', '결재대기', '총', '전체'],
-  edufine: ['결재(긴급)', '결재 (긴급)', '결재 대기', '결재대기', '결재할 문서', '총', '전체'],
+  edufine: ['결재 대기', '결재대기', '결재할 문서', '총', '전체'],
 };
 
 function compactText(value: string): string {
@@ -57,6 +57,7 @@ function inlineCount(text: string, label: string): number | null {
     const remainder = compact.slice(compactLabel.length);
     const match = remainder.match(/^(?:[:：·])?[([{](\d{1,4})[)\]}]$/) ??
       remainder.match(/^(?:[:：·])?(\d{1,4})건$/) ??
+      remainder.match(/^(?:[:：·]|총)?(\d{1,4})건(?:$|[^\d])/) ??
       remainder.match(/^(?:[:：·])?(\d{1,3})$/);
     if (match) return Number(match[1]);
   }

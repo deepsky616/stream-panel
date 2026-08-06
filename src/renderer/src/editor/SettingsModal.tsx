@@ -318,28 +318,6 @@ export function SettingsModal({
       setConnectorBusy(null);
     }
   };
-  const testConnector = async (browserId: WebConnectorBrowserId) => {
-    setConnectorBusy(browserId);
-    setConnectorError(null);
-    setMessage('업무용 브라우저 연결을 확인하고 있습니다.');
-    try {
-      const result = await window.api.webConnector.test({ browserId });
-      if (result.ok) {
-        setMessage(`${browserId === 'edge' ? '엣지' : '크롬'} 업무용 브라우저가 준비되었습니다. 시스템 연결은 웹 업무 실행 또는 업무 알림 확인 시 자동으로 진행합니다.`);
-      } else {
-        setConnectorError(browserId);
-        setMessage(result.message);
-      }
-      await refreshConnectorStatuses();
-    } catch (error) {
-      setConnectorError(browserId);
-      setMessage(error instanceof Error
-        ? error.message
-        : '업무용 브라우저 연결을 확인하지 못했습니다. 브라우저 설치 상태를 확인해 주세요.');
-    } finally {
-      setConnectorBusy(null);
-    }
-  };
   const checkApprovals = async (system: WebWorkflowSystem) => {
     setApprovalBusy(system);
     setMessage(null);
@@ -513,16 +491,11 @@ export function SettingsModal({
                         </div>
                         <div className="connector-actions">
                           <button
-                            type="button"
-                            disabled={connectorBusy !== null}
-                            onClick={() => void openConnectorSetup(card.browserId, 'pair')}
-                          >업무용 브라우저 열기</button>
-                          <button
                             className="primary-action"
                             type="button"
                             disabled={connectorBusy !== null}
-                            onClick={() => void testConnector(card.browserId)}
-                          >{connectorBusy === card.browserId ? '확인 중…' : '브라우저 확인'}</button>
+                            onClick={() => void openConnectorSetup(card.browserId, 'pair')}
+                          >{connectorBusy === card.browserId ? '여는 중…' : '업무용 브라우저 열기'}</button>
                           {card.state === 'error' && (
                             <button
                               type="button"

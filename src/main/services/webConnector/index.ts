@@ -165,6 +165,14 @@ function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : '알 수 없는 오류';
 }
 
+function diagnosticStepId(error: unknown): string {
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return 'workflow-failed';
+  const stepId = (error as { stepId?: unknown }).stepId;
+  return typeof stepId === 'string' && /^[a-z0-9-]{1,64}$/.test(stepId)
+    ? stepId
+    : 'workflow-failed';
+}
+
 export function createWebConnectorService({
   userDataPath,
   platform = process.platform,
@@ -421,7 +429,7 @@ export function createWebConnectorService({
               browserId: request.browserId,
               officeCode,
               workflowId: request.workflowId,
-              stepId: 'workflow-failed',
+              stepId: diagnosticStepId(error),
               sequence: 0,
               outcome: 'failed',
               durationMs: Math.max(0, now() - startedAt),
@@ -447,6 +455,9 @@ export function createWebConnectorService({
     async test(browserId) {
       try {
         await prepareAndMark(browserId);
+        // A successful browser probe proves the managed browser transport is healthy.
+        // Do not leave a previous NEIS/Edufine workflow error painted on the browser card.
+        connectionStates.delete(connectionKey(currentOffice(), browserId));
         publishStatuses();
         return { ok: true };
       } catch (error) {

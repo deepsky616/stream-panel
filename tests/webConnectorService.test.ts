@@ -211,6 +211,45 @@ describe('managed web connector service', () => {
     expect(broadcasts.length).toBeGreaterThan(0);
   });
 
+  it('clears stale system failures after the managed browser is opened successfully', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController() as WebConnectorSessionController & {
+      checkApproval(input: unknown): Promise<number>;
+    };
+    controller.checkApproval = async () => {
+      throw new Error("'결재대기' 메뉴를 찾지 못했습니다.");
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+    });
+    await service.start();
+
+    await expect(service.scanApproval({
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+    })).rejects.toThrow(/결재대기/);
+    expect(service.getStatuses()[0].systems).toContainEqual(expect.objectContaining({
+      system: 'edufine',
+      state: 'error',
+    }));
+
+    await expect(service.test('edge')).resolves.toEqual({ ok: true });
+    expect(service.getStatuses()[0].systems).toEqual([
+      { system: 'neis', state: 'idle' },
+      { system: 'edufine', state: 'idle' },
+    ]);
+  });
+
   it('accepts a validated workflow immediately and reports its later result through notifications', async () => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });

@@ -61,7 +61,13 @@ describe('managed browser process', () => {
 
     expect(pipe).toEqual({
       executable,
-      args: [`--user-data-dir=${profile}`, '--new-window', '--remote-debugging-pipe'],
+      args: [
+        `--user-data-dir=${profile}`,
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--new-window',
+        '--remote-debugging-pipe',
+      ],
       options: {
         detached: false,
         stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'],
@@ -71,6 +77,8 @@ describe('managed browser process', () => {
     });
     expect(port.args).toEqual([
       `--user-data-dir=${profile}`,
+      '--no-first-run',
+      '--no-default-browser-check',
       '--new-window',
       '--remote-debugging-port=0',
     ]);

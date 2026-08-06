@@ -192,7 +192,7 @@ describe('managed web workflow engine', () => {
       candidateLabels: ['개인근무상황관리'],
     };
 
-    await expect(runWorkflow(
+    const failure = runWorkflow(
       {
         id: 'neis-leave',
         label: '나이스 복무',
@@ -205,7 +205,9 @@ describe('managed web workflow engine', () => {
         checkPostcondition: async () => false,
         wait: async () => undefined,
       },
-    )).rejects.toThrow(/화면을 확인하지 못했습니다/);
+    );
+    await expect(failure).rejects.toThrow(/화면을 확인하지 못했습니다/);
+    await expect(failure).rejects.toMatchObject({ stepId: 'open-duty' });
     expect(pressed).toEqual(['open-duty']);
   });
 
