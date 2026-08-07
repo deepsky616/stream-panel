@@ -13,7 +13,6 @@ interface ApprovalMonitorSettingsProps {
     update: (current: ApprovalMonitorConfig) => ApprovalMonitorConfig,
   ) => void;
   onCheck: (system: WebWorkflowSystem) => void;
-  onAddKey: (system: WebWorkflowSystem, browserId: WebConnectorBrowserId) => void;
 }
 
 const SYSTEM_LABELS: Record<WebWorkflowSystem, string> = {
@@ -45,7 +44,6 @@ export function ApprovalMonitorSettings({
   busySystem,
   onChange,
   onCheck,
-  onAddKey,
 }: ApprovalMonitorSettingsProps) {
   const setSource = (
     system: WebWorkflowSystem,
@@ -132,8 +130,8 @@ export function ApprovalMonitorSettings({
                 </label>
                 <span className="approval-source-state">{statusText(status)}</span>
                 <small>{system === 'neis'
-                  ? '확인 위치: 미결/협조함 화면의 Total 숫자'
-                  : '확인 위치: 화면 상단 결재(긴급) 옆 숫자'}</small>
+                  ? '확인 위치: 미결/협조함 목록의 전체 건수'
+                  : '확인 위치: 결재 → 결재대기 목록의 전체 건수'}</small>
                 {status?.lastCheckedAt !== undefined && (
                   <small>마지막 확인: {formatLastCheckedAt(status.lastCheckedAt)}</small>
                 )}
@@ -159,10 +157,6 @@ export function ApprovalMonitorSettings({
                   aria-busy={busySystem === system}
                   onClick={() => onCheck(system)}
                 >{busySystem === system ? '확인 중…' : '지금 확인'}</button>
-                <button
-                  type="button"
-                  onClick={() => onAddKey(system, source.browserId)}
-                >결재함 키 추가</button>
               </div>
             </article>
           );

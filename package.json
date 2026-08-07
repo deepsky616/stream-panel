@@ -1,7 +1,7 @@
 {
   "name": "stream-panel",
   "productName": "Stream Panel",
-  "version": "1.5.11",
+  "version": "1.5.12",
   "description": "Windows와 macOS 바탕화면에서 쓰는 Stream Deck 스타일 실행 패널",
   "main": "./out/main/index.js",
   "author": "deepsky616",

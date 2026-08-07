@@ -39,7 +39,7 @@ function page(origin: string, count = 3): WindowsApprovalPage {
 }
 
 describe('Windows approval count reader', () => {
-  it('reads only NEIS Total and the Edufine 결재(긴급) badge', () => {
+  it('prefers the list total and falls back to rendered list rows', () => {
     const parseApprovalCounterCandidates = (
       approvalWindows as unknown as {
         parseApprovalCounterCandidates?: (
@@ -79,7 +79,7 @@ describe('Windows approval count reader', () => {
         children: [],
       },
       {
-        text: '결재(긴급) 4건',
+        text: '총 4건',
         ariaLabel: '',
         title: '',
         className: 'status',
@@ -87,6 +87,16 @@ describe('Windows approval count reader', () => {
         children: [],
       },
     ])).toBe(4);
+    expect(parseApprovalCounterCandidates!('edufine', {
+      candidates: [],
+      rowCounts: [7],
+      emptyList: false,
+    })).toBe(7);
+    expect(parseApprovalCounterCandidates!('edufine', {
+      candidates: [],
+      rowCounts: [],
+      emptyList: true,
+    })).toBe(0);
     expect(parseApprovalCounterCandidates!('neis', [
       {
         text: 'Total 5',
@@ -100,7 +110,7 @@ describe('Windows approval count reader', () => {
         ],
       },
     ])).toBe(5);
-    expect(() => parseApprovalCounterCandidates!('edufine', [
+    expect(parseApprovalCounterCandidates!('edufine', [
       {
         text: '총 6건',
         ariaLabel: '',
@@ -109,7 +119,7 @@ describe('Windows approval count reader', () => {
         role: 'status',
         children: [],
       },
-    ])).toThrow(/안전하게 읽지 못했습니다/);
+    ])).toBe(6);
   });
 
   it('allows 결재 only as the fixed Edufine exact-text route, never as a form action', () => {
@@ -125,7 +135,7 @@ describe('Windows approval count reader', () => {
     });
   });
 
-  it('reads the Edufine header badge without opening the approval inbox', async () => {
+  it('opens 결재 then 결재대기 before reading the Edufine list count', async () => {
     let presses = 0;
     const workflowPage = page('https://klef.goe.go.kr', 8);
     workflowPage.pressCandidate = async () => { presses += 1; };
@@ -135,10 +145,10 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(8);
-    expect(presses).toBe(0);
+    expect(presses).toBe(2);
   });
 
-  it('waits briefly for a dynamically rendered header badge', async () => {
+  it('waits briefly for a dynamically rendered list count', async () => {
     let reads = 0;
     let waits = 0;
     const workflowPage = page('https://klef.goe.go.kr', 6);
@@ -154,7 +164,7 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(6);
-    expect({ reads, waits }).toEqual({ reads: 3, waits: 2 });
+    expect({ reads, waits }).toEqual({ reads: 3, waits: 4 });
   });
 
   it('accepts only a bounded non-negative integer returned by the page', () => {

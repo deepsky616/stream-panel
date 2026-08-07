@@ -16,7 +16,6 @@ import type {
   WebConnectorStatus,
   WebWorkflowSystem,
 } from '../../../shared/types';
-import { createApprovalInboxTemplate } from '../../../shared/webWorkflows';
 import {
   createEducationOfficePatch,
   createWebWorkBrowserCards,
@@ -321,16 +320,25 @@ export function SettingsModal({
     }
   };
   const checkApprovals = async (system: WebWorkflowSystem) => {
+    const label = system === 'neis' ? '나이스' : '에듀파인';
     setApprovalBusy(system);
-    setMessage(null);
+    setMessage(`${label} 결재 목록으로 이동해 대기 건수를 확인하고 있습니다…`);
     try {
       const statuses = await window.api.approvalMonitor.check({ system });
       setApprovalStatuses(statuses);
       const status = statuses.find((candidate) => candidate.system === system);
       if (status?.state === 'ready') {
-        setMessage(`${system === 'neis' ? '나이스' : '에듀파인'} 결재 대기 ${status.pendingCount ?? 0}건을 확인했습니다.`);
-      } else if (status?.message) {
-        setMessage(status.message);
+        setMessage(`${label} 결재 대기 ${status.pendingCount ?? 0}건을 확인했습니다.`);
+      } else if (status?.state === 'checking') {
+        setMessage(`${label} 결재 목록을 이미 확인하고 있습니다. 잠시만 기다려 주세요.`);
+      } else if (status?.state === 'login-required') {
+        setMessage(status.message ?? `${label} 업무용 브라우저에서 로그인 또는 인증을 완료해 주세요.`);
+      } else if (status?.state === 'disabled') {
+        setMessage(`${label} 업무 알림이 꺼져 있습니다. 시스템 왼쪽의 체크 상자를 켜 주세요.`);
+      } else if (status?.state === 'error') {
+        setMessage(status.message ?? `${label} 결재 목록의 대기 건수를 읽지 못했습니다.`);
+      } else {
+        setMessage(`${label} 결재 확인이 시작되지 않았습니다. 업무용 브라우저를 다시 연 뒤 확인해 주세요.`);
       }
     } catch (error) {
       setMessage(error instanceof Error
@@ -528,9 +536,6 @@ export function SettingsModal({
                   busySystem={approvalBusy}
                   onChange={setApprovalMonitor}
                   onCheck={(system) => void checkApprovals(system)}
-                  onAddKey={(system, browserId) => void onAddWebWorkflow(
-                    createApprovalInboxTemplate(system, browserId, config.educationOfficeCode),
-                  ).then(() => setMessage(`${system === 'neis' ? '나이스' : '에듀파인'} 결재함 키를 맨 앞 화면에 추가했습니다.`))}
                 />
                 <p className="connector-legacy-note">
                   예전 확장 기능은 더 이상 필요하지 않습니다. 설치되어 있다면 브라우저에서 직접 제거해도 됩니다.

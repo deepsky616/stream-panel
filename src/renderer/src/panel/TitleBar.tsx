@@ -62,7 +62,7 @@ export function TitleBar({ config, approvalStatuses }: TitleBarProps) {
       </span>
       <strong>Stream Panel</strong>
       <div className="title-actions">
-        {config.platform === 'win32' && (['neis', 'edufine'] as const).map((system) => {
+        {config.platform === 'win32' && (['edufine', 'neis'] as const).map((system) => {
           const status = approvalStatuses.find((candidate) => candidate.system === system);
           return (
             <button

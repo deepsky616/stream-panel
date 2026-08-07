@@ -184,6 +184,10 @@ describe('managed web workflow definitions', () => {
         ['기본정보', '제목', '개요', '예산내역', '품목내역'],
       ],
     });
+    expect(definitions['edufine-purchase'].steps.at(-1)).toEqual(expect.objectContaining({
+      allowActionText: true,
+      skipWhenSatisfied: false,
+    }));
     expect(definitions['neis-leave'].steps.at(-1)?.postcondition).toEqual({
       kind: 'new-page-any',
       labels: ['근무상황신청', '개인근무상황신청'],
@@ -195,7 +199,7 @@ describe('managed web workflow definitions', () => {
     expect(definitions['neis-leave'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
     expect(definitions['neis-trip'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
     expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
-      ({ id }) => id !== 'open-leave-form' && id !== 'open-trip-form',
+      ({ id }) => !['open-leave-form', 'open-trip-form', 'open-purchase-registration'].includes(id),
     ).every(({ skipWhenSatisfied }) => skipWhenSatisfied === true)).toBe(true);
   });
 

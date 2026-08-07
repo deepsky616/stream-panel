@@ -621,6 +621,65 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
+  it('creates a new rightmost tab when an interactive workflow requests a fresh target', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'old-edufine', type: 'page', url: 'https://klef.goe.go.kr/old' },
+            { targetId: 'bootstrap', type: 'page', url: 'about:blank' },
+          ] };
+        }
+        if (method === 'Target.createTarget') return { targetId: 'fresh-edufine' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'fresh-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 9 };
+        if (method === 'Runtime.evaluate' && String(params.expression ?? '').includes('loginVisible')) {
+          return { result: { value: {
+            href: 'https://klef.goe.go.kr/main',
+            origin: 'https://klef.goe.go.kr',
+            readyState: 'complete',
+            loginVisible: false,
+          } } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      bootstrapTargetId: 'bootstrap',
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    const workflowPage = await openCdpWindowsWorkflowPage(
+      session as never,
+      'edufine-purchase',
+      undefined,
+      { forceNewTarget: true },
+    );
+
+    expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://klef.goe.go.kr/' },
+    });
+    expect(commands).toContainEqual({
+      method: 'Target.attachToTarget',
+      params: { targetId: 'fresh-edufine', flatten: true },
+    });
+    expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
+    await workflowPage.release?.();
+  });
+
   it('scans nested frames and safely extends an exact session timeout prompt', async () => {
     const evaluationParams: Record<string, unknown>[] = [];
     const protocol = {

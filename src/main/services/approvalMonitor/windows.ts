@@ -40,12 +40,20 @@ interface ApprovalCounterSignal {
 
 interface ApprovalCounterCandidate extends ApprovalCounterSignal {
   children: ApprovalCounterSignal[];
+  previous?: ApprovalCounterSignal;
   next?: ApprovalCounterSignal;
+  parent?: ApprovalCounterSignal;
+}
+
+interface ApprovalListSnapshot {
+  candidates: ApprovalCounterCandidate[];
+  rowCounts: number[];
+  emptyList: boolean;
 }
 
 const COUNTER_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
   neis: ['Total', 'TOTAL', 'total'],
-  edufine: ['결재(긴급)', '결재 (긴급)'],
+  edufine: ['총', '전체', 'Total', 'TOTAL', 'total', '결재대기', '결재 대기'],
 };
 
 function compactText(value: string): string {
@@ -74,7 +82,9 @@ function bareSignalCount(
   signal: ApprovalCounterSignal,
   allowUnmarked = false,
 ): number | null {
-  const match = compactText(signal.text).match(/^(?:[([{])?(\d{1,4})(?:[)\]}]|건)?$/);
+  const match = [signal.text, signal.ariaLabel, signal.title].map(compactText).map((text) => (
+    text.match(/^(?:[([{])?(\d{1,4})(?:[)\]}]|건)?$/)
+  )).find(Boolean);
   if (!match) return null;
   const markedAsCount = /badge|count|counter|cnt|number|num|alarm|noti/i.test(signal.className) ||
     signal.role === 'status' ||
@@ -97,36 +107,77 @@ function isCounterCandidate(value: unknown): value is ApprovalCounterCandidate {
   return Array.isArray(record.children) &&
     record.children.length <= 16 &&
     record.children.every(isCounterSignal) &&
-    (record.next === undefined || isCounterSignal(record.next));
+    (record.previous === undefined || isCounterSignal(record.previous)) &&
+    (record.next === undefined || isCounterSignal(record.next)) &&
+    (record.parent === undefined || isCounterSignal(record.parent));
+}
+
+function readApprovalListSnapshot(value: unknown): ApprovalListSnapshot {
+  if (Array.isArray(value)) {
+    if (value.length > 100 || !value.every(isCounterCandidate)) {
+      throw new Error('결재 목록 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
+    }
+    return { candidates: value, rowCounts: [], emptyList: false };
+  }
+  if (!value || typeof value !== 'object') {
+    throw new Error('결재 목록 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    !Array.isArray(record.candidates) ||
+    record.candidates.length > 100 ||
+    !record.candidates.every(isCounterCandidate) ||
+    !Array.isArray(record.rowCounts) ||
+    record.rowCounts.length > 50 ||
+    !record.rowCounts.every((count) => Number.isSafeInteger(count) && Number(count) >= 0 && Number(count) <= 9_999) ||
+    typeof record.emptyList !== 'boolean'
+  ) {
+    throw new Error('결재 목록 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
+  }
+  return {
+    candidates: record.candidates,
+    rowCounts: record.rowCounts.map(Number),
+    emptyList: record.emptyList,
+  };
 }
 
 export function parseApprovalCounterCandidates(
   system: WebWorkflowSystem,
   value: unknown,
 ): number {
-  if (!Array.isArray(value) || value.length > 100 || !value.every(isCounterCandidate)) {
-    throw new Error('결재 대기 수 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
-  }
+  const snapshot = readApprovalListSnapshot(value);
   for (const label of COUNTER_LABELS[system]) {
     const counts = new Set<number>();
-    for (const candidate of value) {
+    for (const candidate of snapshot.candidates) {
       const candidateTexts = [candidate.text, candidate.ariaLabel, candidate.title];
       for (const text of candidateTexts) {
         const count = inlineCount(text, label);
         if (count !== null) counts.add(parseApprovalCounterValue(count));
       }
-      const relatedSignals = candidate.next
-        ? [candidate, ...candidate.children, candidate.next]
-        : [candidate, ...candidate.children];
+      const relatedSignals = [
+        candidate,
+        ...candidate.children,
+        ...(candidate.previous ? [candidate.previous] : []),
+        ...(candidate.next ? [candidate.next] : []),
+        ...(candidate.parent ? [candidate.parent] : []),
+      ];
+      for (const signal of relatedSignals) {
+        for (const text of [signal.text, signal.ariaLabel, signal.title]) {
+          const count = inlineCount(text, label);
+          if (count !== null) counts.add(parseApprovalCounterValue(count));
+        }
+      }
       const hasExactLabel = relatedSignals.some((signal) => (
         [signal.text, signal.ariaLabel, signal.title].some((text) => (
           compactText(text) === compactText(label)
         ))
       ));
       if (!hasExactLabel) continue;
-      const signals = candidate.next
-        ? [...candidate.children, candidate.next]
-        : candidate.children;
+      const signals = [
+        ...candidate.children,
+        ...(candidate.previous ? [candidate.previous] : []),
+        ...(candidate.next ? [candidate.next] : []),
+      ];
       for (const signal of signals) {
         const count = bareSignalCount(signal, true);
         if (count !== null) counts.add(parseApprovalCounterValue(count));
@@ -137,6 +188,13 @@ export function parseApprovalCounterCandidates(
     }
     if (counts.size === 1) return [...counts][0];
   }
+  // A semantic table/grid normally contains only the rows rendered for the
+  // current page, so its value is a fallback. The list's own Total/총/전체
+  // value above remains authoritative when pagination is present.
+  if (snapshot.rowCounts.length > 0) {
+    return parseApprovalCounterValue(Math.max(...snapshot.rowCounts));
+  }
+  if (snapshot.emptyList) return 0;
   throw new Error('결재 대기 수를 안전하게 읽지 못했습니다. 결재함 화면을 직접 확인해 주세요.');
 }
 
@@ -204,12 +262,7 @@ export async function scanWindowsApprovalCount(
         throwIfApprovalCheckCancelled(signal);
       },
     };
-    // K-에듀파인의 대기 건수는 어느 업무 화면에서나 보이는 상단
-    // '결재(긴급)' 배지에서 직접 읽는다. 결재대기 메뉴 이동은 사용자가
-    // 결재함을 열 때만 수행하고 배경 알림 확인에서는 수행하지 않는다.
-    const routes = input.system === 'edufine'
-      ? []
-      : APPROVAL_INBOX_WORKFLOW_ROUTES[input.system];
+    const routes = APPROVAL_INBOX_WORKFLOW_ROUTES[input.system];
     let completed = routes.length === 0;
     let routeError: unknown;
     for (const [index, route] of routes.entries()) {

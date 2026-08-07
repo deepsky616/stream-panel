@@ -1,14 +1,11 @@
 import { ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
-import type { WebWorkflowSystem } from '../../shared/types';
 import {
   assertApprovalMonitorCheckInput,
   assertApprovalMonitorStatusInput,
 } from '../security/inputValidation';
 import type { ApprovalMonitorService } from '../services/approvalMonitor';
 import { getEditorWindow } from '../windows/editorWindow';
-
-const SYSTEMS = ['neis', 'edufine'] as const;
 
 interface ApprovalMonitorCheckEvent {
   sender: { mainFrame: unknown };
@@ -34,26 +31,12 @@ export function assertApprovalMonitorCheckSender(
 
 export function createApprovalMonitorHandlerActions(
   service: ApprovalMonitorService,
-  {
-    now = Date.now,
-    cooldownMs = 2_000,
-  }: { now?: () => number; cooldownMs?: number } = {},
 ) {
-  const lastCheckAt = new Map<WebWorkflowSystem, number>();
   return {
     status: () => service.getStatuses(),
-    check: (input: { system?: WebWorkflowSystem }) => {
-      const requested = input.system ? [input.system] : [...SYSTEMS];
-      const checkedAt = now();
-      if (
-        cooldownMs > 0 &&
-        requested.some((system) => checkedAt - (lastCheckAt.get(system) ?? -Infinity) < cooldownMs)
-      ) {
-        return Promise.resolve(service.getStatuses());
-      }
-      for (const system of requested) lastCheckAt.set(system, checkedAt);
-      return service.check(input);
-    },
+    // The service already coalesces checks that are in flight. A renderer-side
+    // cooldown returned stale "idle" states and made the button look inert.
+    check: (input: Parameters<ApprovalMonitorService['check']>[0]) => service.check(input),
   };
 }
 

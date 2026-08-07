@@ -79,9 +79,9 @@ describe('approval monitor settings UI', () => {
     expect(html).toContain('업무용 브라우저 열기');
     expect(html).not.toContain('브라우저 확인');
     expect(html).toContain('업무 알림');
-    expect(html).toContain('결재함 키 추가');
-    expect(html).toContain('확인 위치: 미결/협조함 화면의 Total 숫자');
-    expect(html).toContain('확인 위치: 화면 상단 결재(긴급) 옆 숫자');
+    expect(html).not.toContain('결재함 키 추가');
+    expect(html).toContain('확인 위치: 미결/협조함 목록의 전체 건수');
+    expect(html).toContain('확인 위치: 결재 → 결재대기 목록의 전체 건수');
   });
 
   it('shows read-only NEIS and Edufine monitor controls without approval actions', () => {
@@ -99,7 +99,6 @@ describe('approval monitor settings UI', () => {
       busySystem: null,
       onChange: () => undefined,
       onCheck: () => undefined,
-      onAddKey: () => undefined,
     }));
 
     expect(html).toContain('업무 알림');
@@ -108,7 +107,7 @@ describe('approval monitor settings UI', () => {
     expect(html).toContain('10분');
     expect(html).toContain('새 결재가 늘었을 때만 알림');
     expect(html).toContain('지금 확인');
-    expect(html).toContain('결재함 키 추가');
+    expect(html).not.toContain('결재함 키 추가');
     expect(html).toContain('대기 3건');
     expect(html).toContain('마지막 확인');
     expect(html).not.toContain('자동 승인');
@@ -178,7 +177,7 @@ describe('approval monitor settings UI', () => {
     });
   });
 
-  it('always places both approval totals immediately before the title controls', () => {
+  it('places Edufine then NEIS immediately to the left of the lock control', () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
@@ -193,6 +192,9 @@ describe('approval monitor settings UI', () => {
     }));
     expect(html).toContain('나이스 결재함 총 4건 열기');
     expect(html).toContain('에듀파인 결재함 총 7건 열기');
+    expect(html.indexOf('에듀파인 결재함 총 7건 열기')).toBeLessThan(
+      html.indexOf('나이스 결재함 총 4건 열기'),
+    );
     expect(html.indexOf('나이스 결재함 총 4건 열기')).toBeLessThan(html.indexOf('잠금'));
   });
 });

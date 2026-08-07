@@ -991,10 +991,18 @@ return {handled:true};
 function approvalCounterExpression(system: WebWorkflowSystem): string {
   const labels = system === 'neis'
     ? ['Total', 'TOTAL', 'total']
-    : ['결재(긴급)', '결재 (긴급)'];
+    : ['총', '전체', 'Total', 'TOTAL', 'total', '결재대기', '결재 대기'];
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const labels=${JSON.stringify(labels)}.map(value=>normalize(value).replace(/\\s+/g,''));
+const matchesLabel=(value,label)=>{
+  const compact=normalize(value).replace(/\\s+/g,'');
+  if(label==='총'||label==='전체'){
+    const remainder=compact.slice(label.length);
+    return compact===label||(compact.startsWith(label)&&/^(?:[:：·]|[([{]|\\d)/.test(remainder));
+  }
+  return compact.includes(label);
+};
 const signal=(element)=>({
   text:normalize(element?.innerText||element?.textContent||'').slice(0,256),
   ariaLabel:normalize(element?.getAttribute?.('aria-label')).slice(0,256),
@@ -1003,22 +1011,73 @@ const signal=(element)=>({
   role:normalize(element?.getAttribute?.('role')).toLowerCase().slice(0,64)
 });
 const candidates=[];
+const rowCounts=[];
+let emptyList=false;
 for(const {document} of documents){
-  const elements=Array.from(document.querySelectorAll('[aria-label],[title],span,em,strong,b,a,button,div')).slice(0,2500);
+  const elements=Array.from(document.querySelectorAll('[aria-label],[title],span,em,strong,b,a,button,div,td,th')).slice(0,5000);
   for(const element of elements){
     if(!visible(element))continue;
     const candidate=signal(element);
     const children=Array.from(element.children||[]).slice(0,16).filter(visible).map(signal);
+    const previous=element.previousElementSibling&&visible(element.previousElementSibling)
+      ? signal(element.previousElementSibling)
+      : undefined;
     const next=element.nextElementSibling&&visible(element.nextElementSibling)
       ? signal(element.nextElementSibling)
       : undefined;
-    const values=[candidate.text,candidate.ariaLabel,candidate.title,...children.flatMap(child=>[child.text,child.ariaLabel,child.title]),...(next?[next.text,next.ariaLabel,next.title]:[])];
-    if(!values.some(value=>labels.some(label=>value.replace(/\\s+/g,'').includes(label))))continue;
-    candidates.push({...candidate,children,...(next?{next}:{})});
-    if(candidates.length>=100)return candidates;
+    const parentText=normalize(element.parentElement?.innerText||element.parentElement?.textContent||'');
+    const parent=element.parentElement&&parentText.length<=160&&visible(element.parentElement)
+      ? signal(element.parentElement)
+      : undefined;
+    const values=[candidate.text,candidate.ariaLabel,candidate.title,...children.flatMap(child=>[child.text,child.ariaLabel,child.title]),...(previous?[previous.text,previous.ariaLabel,previous.title]:[]),...(next?[next.text,next.ariaLabel,next.title]:[]),...(parent?[parent.text,parent.ariaLabel,parent.title]:[])];
+    if(!values.some(value=>labels.some(label=>matchesLabel(value,label))))continue;
+    candidates.push({...candidate,children,...(previous?{previous}:{}),...(next?{next}:{}),...(parent?{parent}:{})});
+    if(candidates.length>=100)break;
   }
+  const containers=Array.from(document.querySelectorAll('table,[role="grid"],[role="table"]')).filter(visible).slice(0,50);
+  for(const container of containers){
+    const semanticRows=Array.from(container.querySelectorAll('tbody>tr,[role="row"]')).filter(row=>{
+      if(!visible(row))return false;
+      if(row.querySelector?.('th,[role="columnheader"]'))return false;
+      const text=normalize(row.innerText||row.textContent||'');
+      if(!text||/^(조회|검색)?된?\\s*(자료|데이터|문서|목록).*(없습니다|없음)|^내역이\\s*없습니다/.test(text))return false;
+      return Boolean(row.querySelector?.('td,[role="gridcell"],[role="cell"]'));
+    });
+    if(semanticRows.length>0)rowCounts.push(semanticRows.length);
+  }
+  const emptyElements=Array.from(document.querySelectorAll('td,[role="gridcell"],[role="cell"],.empty,.no-data')).filter(visible).slice(0,500);
+  if(emptyElements.some(element=>{
+    const text=normalize(element.innerText||element.textContent||'');
+    return text.length<=120&&/(조회|검색)?된?\\s*(자료|데이터|문서|목록).*(없습니다|없음)|내역이\\s*없습니다/.test(text);
+  }))emptyList=true;
+  try{
+    const view=document.defaultView;
+    const application=view?.nexacro?.getApplication?.();
+    const roots=[application?.mainframe,application?._mainframe,view?._application].filter(Boolean);
+    const seen=new Set();
+    const visitComponent=(component,depth=0)=>{
+      if(!component||typeof component!=='object'||depth>24||seen.has(component))return;
+      seen.add(component);
+      if(component.visible===false||(typeof component._isVisible==='function'&&component._isVisible()===false))return;
+      const type=normalize(component._type_name||component._classname||component.constructor?.name);
+      if(/grid/i.test(type)){
+        const dataset=component.getBindDataset?.()||component._binddataset;
+        const count=Number(dataset?.getRowCount?.());
+        if(Number.isSafeInteger(count)&&count>=0&&count<=9999)rowCounts.push(count);
+      }
+      for(const collection of [component.components,component.frames,component.all]){
+        if(!collection)continue;
+        const length=Math.min(Number(collection.length)||0,500);
+        for(let index=0;index<length;index+=1)visitComponent(collection[index],depth+1);
+      }
+      for(const child of [component.form,component.frame,component.mainframe,component.childframe]){
+        visitComponent(child,depth+1);
+      }
+    };
+    for(const root of roots)visitComponent(root);
+  }catch{}
 }
-return candidates;
+return {candidates:candidates.slice(0,100),rowCounts:[...new Set(rowCounts)],emptyList};
 })()`;
 }
 
@@ -2004,6 +2063,7 @@ export function createWindowsManagedSessionManager(
         windowsSession,
         workflowId,
         workflowSpec,
+        { forceNewTarget: FRESH_START_WORKFLOW_IDS.has(workflowId) },
       );
     },
     isWxsClientRegistered,

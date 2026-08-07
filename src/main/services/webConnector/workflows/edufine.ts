@@ -60,6 +60,10 @@ const BUSINESS_PURCHASE_WORKFLOW: ManagedWorkflowDefinition = {
       interaction: 'frame-exact-text',
       postcondition: PURCHASE_FORM_READY,
       ...COMMON_CHECKS,
+      // '등록' is normally protected as a consequential action. This fixed,
+      // exact menu label only opens the registration form; it never saves it.
+      allowActionText: true,
+      skipWhenSatisfied: false,
     },
   ],
 };
