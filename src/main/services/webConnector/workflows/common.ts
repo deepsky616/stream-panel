@@ -227,8 +227,8 @@ export function createCustomManagedWorkflowDefinition(
           kind: 'visible-any' as const,
           labels: [spec.custom.steps[index + 1]?.label ?? spec.custom.finalText],
         },
-        maxChecks: 40,
-        checkDelayMs: 250,
+        maxChecks: 67,
+        checkDelayMs: 150,
       };
     }),
   };

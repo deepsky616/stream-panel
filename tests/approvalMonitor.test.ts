@@ -11,6 +11,7 @@ import {
 } from '../src/main/services/approvalMonitor';
 import * as approvalMonitorModule from '../src/main/services/approvalMonitor';
 import { createMacosApprovalScanner } from '../src/main/services/approvalMonitor/macos';
+import { createApprovalCheckCancelledError } from '../src/main/services/approvalMonitor/cancellation';
 
 function windowsConfig(): AppConfig {
   let id = 0;
@@ -165,6 +166,23 @@ describe('approval monitor rules', () => {
 });
 
 describe('approval monitor service', () => {
+  it('returns to the previous state instead of showing an error when a key preempts a scan', async () => {
+    const config = windowsConfig();
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => { throw createApprovalCheckCancelledError(); } },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+    await service.start();
+
+    await expect(service.check({ system: 'neis' })).resolves.toEqual(
+      expect.arrayContaining([{ system: 'neis', state: 'idle' }]),
+    );
+  });
+
   it('shows a recoverable error for a corrupt state file instead of silently resetting it', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;

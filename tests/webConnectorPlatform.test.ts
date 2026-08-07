@@ -139,6 +139,42 @@ describe('Windows managed web automation', () => {
     expect(targets.map(({ targetId }) => targetId)).toEqual(['edufine', 'personal']);
   });
 
+  it('closes every existing Edufine page before draft or purchase starts again', async () => {
+    let targets = [
+      { targetId: 'edufine-main', type: 'page', url: 'https://klef.goe.go.kr/main' },
+      { targetId: 'edufine-form', type: 'page', url: 'https://klef.goe.go.kr/purchase/popup' },
+      { targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' },
+      { targetId: 'personal', type: 'page', url: 'https://mail.example.com/' },
+    ];
+    const closed: string[] = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') return { targetInfos: targets };
+        if (method === 'Target.closeTarget') {
+          const targetId = String(params.targetId);
+          closed.push(targetId);
+          targets = targets.filter((target) => target.targetId !== targetId);
+          return { success: true };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+
+    await resetWindowsWorkflowTargets({
+      officeCode: 'goe',
+      browserId: 'edge',
+      connection: { protocol, process: { exited: false }, transportKind: 'pipe' },
+      workflowState: 'IDLE',
+      isAlive: () => true,
+      close: async () => undefined,
+    } as never, 'edufine-purchase');
+
+    expect(closed).toEqual(['edufine-main', 'edufine-form']);
+    expect(targets.map(({ targetId }) => targetId)).toEqual(['neis', 'personal']);
+  });
+
   it('extends sessions only on the selected office system origins', async () => {
     vi.useFakeTimers();
     const commands: Array<{
@@ -1197,6 +1233,37 @@ describe('Windows managed web automation', () => {
     })).resolves.toMatchObject({ finalState: 'standard-form-editor' });
     expect(reusedChecks).toBeGreaterThanOrEqual(9);
     expect(reusedFocus).toEqual([22]);
+  });
+
+  it('closes the previous Edufine draft editor before opening and focusing a new one', async () => {
+    let windows = [{ id: 30, title: '기존 표준서식', handle: 300 }];
+    const closed: number[] = [];
+    const focused: number[] = [];
+    const workflowPage = page('https://klef.goe.go.kr');
+    workflowPage.pressCandidate = async (_candidate, step) => {
+      if (step.id === 'open-standard-form') {
+        windows = [{ id: 31, title: '새 표준서식', handle: 310 }];
+      }
+    };
+
+    await expect(executeWindowsWorkflow(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { officeCode: 'goe', browserId: 'edge', workflowId: 'edufine-draft' },
+      {
+        openWorkflowPage: async () => workflowPage,
+        isWxsClientRegistered: async () => true,
+        listWxsClientWindows: async () => windows,
+        closeWxsClientWindow: async (id) => {
+          closed.push(id);
+          windows = windows.filter((window) => window.id !== id);
+          return true;
+        },
+        focusWindow: async (id) => { focused.push(id); return true; },
+      },
+    )).resolves.toMatchObject({ finalState: 'standard-form-editor' });
+
+    expect(closed).toEqual([30]);
+    expect(focused).toEqual([31]);
   });
 });
 

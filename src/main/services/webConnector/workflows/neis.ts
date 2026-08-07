@@ -1,8 +1,9 @@
 import type { ManagedWorkflowDefinition } from './common';
 
 const COMMON_CHECKS = {
-  maxChecks: 20,
-  checkDelayMs: 500,
+  // Keep the same 10-second tolerance while detecting stable menus twice as fast.
+  maxChecks: 40,
+  checkDelayMs: 250,
   skipWhenSatisfied: true,
 };
 

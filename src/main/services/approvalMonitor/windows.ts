@@ -7,6 +7,7 @@ import type { ManagedBrowserSession } from '../webConnector/sessionManager';
 import type { WorkflowPageAdapter } from '../webConnector/workflows/engine';
 import { runWorkflow } from '../webConnector/workflows/engine';
 import { APPROVAL_INBOX_WORKFLOW_ROUTES, type ApprovalScanInput } from './definitions';
+import { throwIfApprovalCheckCancelled } from './cancellation';
 
 export interface WindowsApprovalPage extends WorkflowPageAdapter {
   currentOrigin(): Promise<string>;
@@ -18,6 +19,7 @@ export interface WindowsApprovalScanDependencies {
   openPage(
     session: ManagedBrowserSession,
     input: ApprovalScanInput,
+    signal?: AbortSignal,
   ): Promise<WindowsApprovalPage>;
 }
 
@@ -164,13 +166,19 @@ export async function scanWindowsApprovalCount(
   session: ManagedBrowserSession,
   input: ApprovalScanInput,
   dependencies: WindowsApprovalScanDependencies,
+  signal?: AbortSignal,
 ): Promise<number> {
+  throwIfApprovalCheckCancelled(signal);
   if (session.officeCode !== input.officeCode || session.browserId !== input.browserId) {
     throw new Error('결재 대기 확인 요청과 업무용 브라우저 세션이 다릅니다. 브라우저 연결을 다시 시험해 주세요.');
   }
-  const page = await dependencies.openPage(session, input);
+  const page = await dependencies.openPage(session, input, signal);
   try {
-    const assertOrigin = async () => assertApprovalOrigin(await page.currentOrigin(), input);
+    const assertOrigin = async () => {
+      throwIfApprovalCheckCancelled(signal);
+      assertApprovalOrigin(await page.currentOrigin(), input);
+      throwIfApprovalCheckCancelled(signal);
+    };
     await assertOrigin();
     const guardedPage: WorkflowPageAdapter = {
       async inspectCandidates(step) {
@@ -190,7 +198,11 @@ export async function scanWindowsApprovalCount(
         await assertOrigin();
         return page.checkPostcondition(step);
       },
-      wait: (delayMs) => page.wait(delayMs),
+      async wait(delayMs) {
+        throwIfApprovalCheckCancelled(signal);
+        await page.wait(delayMs);
+        throwIfApprovalCheckCancelled(signal);
+      },
     };
     // K-에듀파인의 대기 건수는 어느 업무 화면에서나 보이는 상단
     // '결재(긴급)' 배지에서 직접 읽는다. 결재대기 메뉴 이동은 사용자가
@@ -202,7 +214,7 @@ export async function scanWindowsApprovalCount(
     let routeError: unknown;
     for (const [index, route] of routes.entries()) {
       try {
-        await runWorkflow(route, guardedPage);
+        await runWorkflow(route, guardedPage, { signal });
         completed = true;
         routeError = undefined;
         break;
@@ -216,6 +228,7 @@ export async function scanWindowsApprovalCount(
     if (!completed) throw routeError;
     let countError: unknown;
     for (let attempt = 0; attempt < 20; attempt += 1) {
+      throwIfApprovalCheckCancelled(signal);
       await assertOrigin();
       try {
         const count = parseApprovalCounterValue(await page.readApprovalCount(input.system));

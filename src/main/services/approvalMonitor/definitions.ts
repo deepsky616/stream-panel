@@ -12,8 +12,8 @@ export interface ApprovalScanInput {
 }
 
 const COMMON_CHECKS = {
-  maxChecks: 80 as const,
-  checkDelayMs: 250,
+  maxChecks: 134 as const,
+  checkDelayMs: 150,
   skipWhenSatisfied: true,
 };
 const NEIS_PENDING_COOPERATION_LABELS = ['미결/협조함', '미결 / 협조함'] as const;

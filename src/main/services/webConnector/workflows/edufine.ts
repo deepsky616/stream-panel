@@ -1,8 +1,10 @@
 import type { ManagedWorkflowDefinition, WorkflowPostcondition } from './common';
 
 const COMMON_CHECKS = {
-  maxChecks: 80,
-  checkDelayMs: 250,
+  // Edufine frames often appear quickly but can take up to 20 seconds on busy days.
+  // Poll sooner without shortening the existing recovery window.
+  maxChecks: 134,
+  checkDelayMs: 150,
   skipWhenSatisfied: true,
 };
 

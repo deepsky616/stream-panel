@@ -5,6 +5,7 @@ import {
   scanWindowsApprovalCount,
   type WindowsApprovalPage,
 } from '../src/main/services/approvalMonitor/windows';
+import { createApprovalCheckCancelledError } from '../src/main/services/approvalMonitor/cancellation';
 import { APPROVAL_INBOX_WORKFLOWS } from '../src/main/services/approvalMonitor/definitions';
 import * as approvalWindows from '../src/main/services/approvalMonitor/windows';
 
@@ -267,5 +268,25 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => page('https://klef.goe.go.kr') },
     )).rejects.toThrow(/세션/);
+  });
+
+  it('stops an approval scan before opening a page when an interactive key takes priority', async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    let opened = false;
+    const expected = createApprovalCheckCancelledError();
+
+    await expect(scanWindowsApprovalCount(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
+      {
+        openPage: async () => {
+          opened = true;
+          return page('https://klef.goe.go.kr');
+        },
+      },
+      abortController.signal,
+    )).rejects.toThrow(expected.message);
+    expect(opened).toBe(false);
   });
 });

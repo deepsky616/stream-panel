@@ -12,6 +12,7 @@ import type {
 import { isEducationOfficeCode } from '../../../shared/educationOffices';
 import { isWebConnectorBrowserId } from '../../../shared/webWorkflows';
 import type { ApprovalScanInput } from './definitions';
+import { isApprovalCheckCancelled } from './cancellation';
 
 const SYSTEMS = ['neis', 'edufine'] as const;
 
@@ -394,6 +395,18 @@ export function createApprovalMonitorService({
             if (!started) return;
             if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
               statuses = createStatuses();
+              publish();
+              return;
+            }
+            if (isApprovalCheckCancelled(error)) {
+              statuses[index] = previous
+                ? {
+                    system,
+                    state: 'ready',
+                    pendingCount: previous.pendingCount,
+                    lastCheckedAt: previous.lastCheckedAt,
+                  }
+                : { system, state: 'idle' };
               publish();
               return;
             }

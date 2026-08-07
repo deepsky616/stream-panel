@@ -33,6 +33,7 @@ import {
 import { createWindowsManagedSessionManager } from './windows';
 import type { WorkflowRunResult } from './workflows/engine';
 import type { ApprovalScanInput } from '../approvalMonitor/definitions';
+import { isApprovalCheckCancelled } from '../approvalMonitor/cancellation';
 
 export type ConnectorReply = { ok: true } | { ok: false; message: string };
 
@@ -54,6 +55,18 @@ export interface WebConnectorSessionController {
   closeOtherOffices(officeCode: EducationOfficeCode): Promise<void>;
   closeAll(): Promise<void>;
   checkApproval?(input: ApprovalScanInput): Promise<number>;
+  cancelApprovalChecks?(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): void;
+  beginInteractiveWork?(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): void;
+  endInteractiveWork?(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): void;
   connectSystems?(
     input: {
       officeCode: EducationOfficeCode;
@@ -321,6 +334,7 @@ export function createWebConnectorService({
       throw new Error('웹 업무 자동 이동은 윈도우에서만 사용할 수 있습니다. 윈도우에서 다시 시도해 주세요.');
     }
     const officeCode = currentOffice();
+    controller.cancelApprovalChecks?.(officeCode, browserId);
     await controller.closeOtherOffices(officeCode);
     const session = await controller.prepare(officeCode, browserId);
     state = markManagedHandshake(state, officeCode, browserId, now());
@@ -373,6 +387,9 @@ export function createWebConnectorService({
         workflowId: workflowSpec.id,
         workflowSpec,
       };
+      // Interactive button presses must not wait behind a background approval
+      // scan that can spend tens of seconds waiting for portal frames.
+      controller.cancelApprovalChecks?.(officeCode, request.browserId);
       const workflowKey = [
         officeCode,
         request.browserId,
@@ -383,6 +400,7 @@ export function createWebConnectorService({
         void controller.focus?.(request).catch(() => undefined);
         return { queued: true };
       }
+      controller.beginInteractiveWork?.(officeCode, request.browserId);
       const startedAt = now();
       notify(workflowProgressMessage(workflowSpec), 'info');
       const task = (async () => {
@@ -439,6 +457,8 @@ export function createWebConnectorService({
           } catch {
             // A diagnostic write failure must not hide the actionable workflow error.
           }
+        } finally {
+          controller.endInteractiveWork?.(officeCode, request.browserId);
         }
       })();
       inFlightWorkflows.set(workflowKey, task);
@@ -455,6 +475,8 @@ export function createWebConnectorService({
       return readStatuses();
     },
     async test(browserId) {
+      const officeCode = currentOffice();
+      controller.beginInteractiveWork?.(officeCode, browserId);
       try {
         await prepareAndMark(browserId);
         // A successful browser probe proves the managed browser transport is healthy.
@@ -464,6 +486,8 @@ export function createWebConnectorService({
         return { ok: true };
       } catch (error) {
         return { ok: false, message: errorDetail(error) };
+      } finally {
+        controller.endInteractiveWork?.(officeCode, browserId);
       }
     },
     async openSetup(browserId, target) {
@@ -478,8 +502,9 @@ export function createWebConnectorService({
         );
         return { ok: true };
       }
+      const officeCode = currentOffice();
+      controller.beginInteractiveWork?.(officeCode, browserId);
       try {
-        const officeCode = currentOffice();
         await prepareAndMark(browserId);
         connectionStates.delete(connectionKey(officeCode, browserId));
         publishStatuses();
@@ -494,6 +519,8 @@ export function createWebConnectorService({
         return { ok: true };
       } catch (error) {
         return { ok: false, message: errorDetail(error) };
+      } finally {
+        controller.endInteractiveWork?.(officeCode, browserId);
       }
     },
     openApprovalInbox(system) {
@@ -536,6 +563,9 @@ export function createWebConnectorService({
       if (!controller.checkApproval) {
         throw new Error('결재 대기 확인 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
       }
+      const previousStatus = connectionStates
+        .get(connectionKey(input.officeCode, input.browserId))
+        ?.get(input.system);
       setSystemStatus(input.officeCode, input.browserId, {
         system: input.system,
         state: 'connecting',
@@ -550,6 +580,14 @@ export function createWebConnectorService({
         });
         return count;
       } catch (error) {
+        if (isApprovalCheckCancelled(error)) {
+          setSystemStatus(
+            input.officeCode,
+            input.browserId,
+            previousStatus ?? { system: input.system, state: 'idle' },
+          );
+          throw error;
+        }
         const message = errorDetail(error);
         setSystemStatus(input.officeCode, input.browserId, {
           system: input.system,

@@ -53,6 +53,10 @@ import {
   APPROVAL_INBOX_WORKFLOWS,
   type ApprovalScanInput,
 } from '../approvalMonitor/definitions';
+import {
+  createApprovalCheckCancelledError,
+  throwIfApprovalCheckCancelled,
+} from '../approvalMonitor/cancellation';
 
 export interface ResolveWindowsManagedBrowserOptions {
   env?: NodeJS.ProcessEnv;
@@ -1367,11 +1371,13 @@ async function waitForReadyPage(
   accepts: (state: PageReadinessState) => boolean,
   timeoutMs = 30_000,
   rejectState?: (state: PageReadinessState) => Error | null,
+  signal?: AbortSignal,
 ): Promise<PageReadinessState> {
   const deadline = Date.now() + timeoutMs;
   let stableHref = '';
   let stableCount = 0;
   while (Date.now() < deadline) {
+    throwIfApprovalCheckCancelled(signal);
     let state: PageReadinessState | null = null;
     try {
       state = readPageReadinessState(
@@ -1399,8 +1405,9 @@ async function waitForReadyPage(
       stableHref = '';
       stableCount = 0;
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 250));
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
   }
+  throwIfApprovalCheckCancelled(signal);
   throw new Error('업무 시스템 화면이 열리는 시간이 지났습니다. 네트워크와 로그인 화면을 확인해 주세요.');
 }
 
@@ -1651,6 +1658,7 @@ function createWindowsWorkflowPage(
 export async function openCdpWindowsApprovalPage(
   session: WindowsManagedBrowserSession,
   input: ApprovalScanInput,
+  signal?: AbortSignal,
 ): Promise<WindowsApprovalPage> {
   const page = await openCdpWindowsWorkflowPage(
     session,
@@ -1661,6 +1669,7 @@ export async function openCdpWindowsApprovalPage(
       closeCreatedTargetOnRelease: false,
       failFastOnLoginRequired: true,
       forceNewTarget: false,
+      signal,
     },
   );
   if (!page.readApprovalCount) {
@@ -1739,8 +1748,10 @@ export async function openCdpWindowsWorkflowPage(
             ? new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 전용 탭에서 로그인 또는 인증을 완료해 주세요.`)
             : null
           : undefined,
+        options.signal,
       );
     } catch (error) {
+      if (options.signal?.aborted) throw error;
       if (options.failFastOnLoginRequired && system) {
         const label = system === 'neis' ? '나이스' : 'K-에듀파인';
         const message = error instanceof Error ? error.message : '';
@@ -1777,7 +1788,7 @@ export async function connectWindowsOfficeSystems(
   foreground = false,
 ): Promise<void> {
   for (const system of [...new Set(systems)]) {
-    if (signal?.aborted) return;
+    throwIfApprovalCheckCancelled(signal);
     const label = system === 'neis' ? '나이스' : 'K-에듀파인';
     report({ system, state: 'connecting', message: `${label}에 연결하고 있습니다.` });
     let page: WindowsWorkflowPage | undefined;
@@ -1788,6 +1799,7 @@ export async function connectWindowsOfficeSystems(
         undefined,
         { background: !foreground, failFastOnLoginRequired: true, signal },
       );
+      throwIfApprovalCheckCancelled(signal);
       report({ system, state: 'connected', checkedAt: Date.now() });
     } catch (error) {
       if (signal?.aborted) throw error;
@@ -1960,6 +1972,18 @@ export type WindowsManagedSessionController = ManagedBrowserSessionManager<
   WorkflowRunResult
 > & {
   checkApproval(input: ApprovalScanInput): Promise<number>;
+  cancelApprovalChecks(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): void;
+  beginInteractiveWork(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): void;
+  endInteractiveWork(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): void;
   connectSystems(
     input: WindowsSystemConnectionRequest,
     report?: WindowsSystemConnectionReporter,
@@ -2001,6 +2025,12 @@ export function createWindowsManagedSessionManager(
     ),
     focusSession: focusWindowsWorkflow,
   });
+  const approvalChecks = new Map<string, AbortController>();
+  const interactiveWork = new Map<string, number>();
+  const approvalKey = (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ) => `${officeCode}:${browserId}`;
   return Object.assign(manager, {
     connectSystems(
       input: WindowsSystemConnectionRequest,
@@ -2017,11 +2047,23 @@ export function createWindowsManagedSessionManager(
       ));
     },
     checkApproval(input: ApprovalScanInput) {
-      return manager.use(input.officeCode, input.browserId, async (session) => {
+      const key = approvalKey(input.officeCode, input.browserId);
+      if ((interactiveWork.get(key) ?? 0) > 0) {
+        return Promise.reject(createApprovalCheckCancelledError());
+      }
+      approvalChecks.get(key)?.abort();
+      const abortController = new AbortController();
+      approvalChecks.set(key, abortController);
+      const check = manager.use(input.officeCode, input.browserId, async (session) => {
+        throwIfApprovalCheckCancelled(abortController.signal);
+        if ((interactiveWork.get(key) ?? 0) > 0) {
+          throw createApprovalCheckCancelledError();
+        }
         let connectionStatus: WebSystemConnectionStatus | undefined;
         await connectWindowsOfficeSystems(session, [input.system], (status) => {
           if (status.system === input.system) connectionStatus = status;
-        });
+        }, abortController.signal);
+        throwIfApprovalCheckCancelled(abortController.signal);
         if (connectionStatus?.state !== 'connected') {
           throw new Error(
             connectionStatus?.message ??
@@ -2029,12 +2071,39 @@ export function createWindowsManagedSessionManager(
           );
         }
         return scanWindowsApprovalCount(session, input, {
-          openPage: (managedSession, scanInput) => openCdpWindowsApprovalPage(
+          openPage: (managedSession, scanInput, signal) => openCdpWindowsApprovalPage(
             managedSession as WindowsManagedBrowserSession,
             scanInput,
+            signal,
           ),
-        });
+        }, abortController.signal);
       });
+      return check.finally(() => {
+        if (approvalChecks.get(key) === abortController) approvalChecks.delete(key);
+      });
+    },
+    cancelApprovalChecks(
+      officeCode: EducationOfficeCode,
+      browserId: WebConnectorBrowserId,
+    ) {
+      approvalChecks.get(approvalKey(officeCode, browserId))?.abort();
+    },
+    beginInteractiveWork(
+      officeCode: EducationOfficeCode,
+      browserId: WebConnectorBrowserId,
+    ) {
+      const key = approvalKey(officeCode, browserId);
+      interactiveWork.set(key, (interactiveWork.get(key) ?? 0) + 1);
+      approvalChecks.get(key)?.abort();
+    },
+    endInteractiveWork(
+      officeCode: EducationOfficeCode,
+      browserId: WebConnectorBrowserId,
+    ) {
+      const key = approvalKey(officeCode, browserId);
+      const remaining = Math.max(0, (interactiveWork.get(key) ?? 0) - 1);
+      if (remaining === 0) interactiveWork.delete(key);
+      else interactiveWork.set(key, remaining);
     },
   });
 }

@@ -6,6 +6,7 @@ import {
   type WebConnectorSessionController,
 } from '../src/main/services/webConnector';
 import type { ManagedBrowserSession } from '../src/main/services/webConnector/sessionManager';
+import { createApprovalCheckCancelledError } from '../src/main/services/approvalMonitor/cancellation';
 
 function workflowAction(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -50,6 +51,69 @@ function createController(): WebConnectorSessionController {
 }
 
 describe('managed web connector service', () => {
+  it('cancels a background approval scan and keeps later scans out until the key finishes', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    let rejectApproval: ((error: Error) => void) | undefined;
+    let interactive = 0;
+    const events: string[] = [];
+    controller.checkApproval = async () => new Promise<number>((_resolve, reject) => {
+      rejectApproval = reject;
+      events.push('approval-started');
+    });
+    controller.cancelApprovalChecks = () => {
+      events.push('approval-cancelled');
+      rejectApproval?.(createApprovalCheckCancelledError());
+    };
+    controller.beginInteractiveWork = () => { interactive += 1; events.push('interactive-begin'); };
+    controller.endInteractiveWork = () => { interactive -= 1; events.push('interactive-end'); };
+    controller.run = async () => {
+      events.push(`workflow-run:${interactive}`);
+      return { workflowId: 'neis-leave', finalState: 'leave-request-form' };
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async () => undefined,
+      },
+    });
+    await service.start();
+    const scan = service.scanApproval({
+      system: 'neis',
+      officeCode: 'goe',
+      browserId: 'edge',
+    });
+    const rejectedScan = expect(scan).rejects.toThrow(/배경 업무 알림/);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(service.queue(workflowAction())).toEqual({ queued: true });
+    await rejectedScan;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(events).toEqual([
+      'approval-started',
+      'approval-cancelled',
+      'interactive-begin',
+      'workflow-run:1',
+      'interactive-end',
+    ]);
+    expect(service.getStatuses()[0].systems).toContainEqual({
+      system: 'neis',
+      state: 'connected',
+      checkedAt: expect.any(Number),
+    });
+  });
+
   it('serializes an approval count read through the current managed office session', async () => {
     const inputs: unknown[] = [];
     const config = createDefaultConfig(

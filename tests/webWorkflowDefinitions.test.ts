@@ -204,8 +204,8 @@ describe('managed web workflow definitions', () => {
       for (const step of definition.steps) {
         expect(step.candidateLabels.length).toBeGreaterThan(0);
         const isNeisNavigation = definition.id === 'neis-leave' || definition.id === 'neis-trip';
-        expect(step.maxChecks).toBe(isNeisNavigation ? 20 : 80);
-        expect(step.checkDelayMs).toBe(isNeisNavigation ? 500 : 250);
+        expect(step.maxChecks).toBe(isNeisNavigation ? 40 : 134);
+        expect(step.checkDelayMs).toBe(isNeisNavigation ? 250 : 150);
         for (const label of step.candidateLabels) {
           expect(
             isForbiddenActionText(label) && !(
