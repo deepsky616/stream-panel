@@ -651,6 +651,12 @@ describe('Windows managed web automation', () => {
           if (expression.includes("'NEXACRO-COMBO'")) {
             return { result: { value: [safeCandidate(0, '학교회계')] } };
           }
+          if (expression.includes("'NEXACRO-JOB-TOGGLE'")) {
+            return { result: { value: [safeCandidate(0, '업무관리')] } };
+          }
+          if (expression.includes("'NEXACRO-JOB-OPTION'")) {
+            return { result: { value: [safeCandidate(0, '학교회계')] } };
+          }
           if (expression.includes("'NEXACRO-TOP-MENU'")) {
             return { result: { value: [safeCandidate(0, '사업관리')] } };
           }
@@ -660,6 +666,10 @@ describe('Windows managed web automation', () => {
           if (expression.includes('const interaction="edufine-top-menu"') ||
             expression.includes('const interaction="edufine-mega-menu"')) {
             return { result: { value: { ok: true, x: 100, y: 50 } } };
+          }
+          if (expression.includes('const interaction="edufine-job-toggle"') ||
+            expression.includes('const interaction="edufine-job-option"')) {
+            return { result: { value: { ok: true, x: 90, y: 40 } } };
           }
           if (expression.includes('const interaction="edufine-job"')) {
             return { result: { value: { ok: true, direct: true } } };
@@ -687,6 +697,22 @@ describe('Windows managed web automation', () => {
       session as never,
       'edufine-purchase',
     );
+    const jobToggleStep = {
+      id: 'open-job-selector',
+      candidateLabels: ['업무관리'],
+      interaction: 'edufine-job-toggle' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['학교회계'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+    const jobOptionStep = {
+      id: 'select-school-accounting-option',
+      candidateLabels: ['학교회계'],
+      interaction: 'edufine-job-option' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['사업담당'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
     const jobStep = {
       id: 'select-school-accounting',
       candidateLabels: ['학교회계'],
@@ -713,6 +739,14 @@ describe('Windows managed web automation', () => {
     };
 
     await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(jobToggleStep))[0],
+      jobToggleStep,
+    );
+    await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(jobOptionStep))[0],
+      jobOptionStep,
+    );
+    await workflowPage.pressCandidate(
       (await workflowPage.inspectCandidates(jobStep))[0],
       jobStep,
     );
@@ -726,11 +760,15 @@ describe('Windows managed web automation', () => {
     );
 
     expect(expressions.some((expression) => expression.includes('cboJobList'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes("[id*='cboJobList'][id*='dropbutton']"))).toBe(true);
+    expect(expressions.some((expression) => expression.includes("[id*='combolist']"))).toBe(true);
     expect(expressions.some((expression) => expression.includes('_on_value_change'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="TopFrame"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="pdvMegaMenu"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('forbiddenTokens'))).toBe(true);
     expect(inputCommands).toEqual([
+      'mouseMoved', 'mousePressed', 'mouseReleased',
+      'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
     ]);

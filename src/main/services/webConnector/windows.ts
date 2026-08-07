@@ -742,6 +742,38 @@ if(interaction==='edufine-job'){
   }
   return result;
 }
+const jobInput=()=>documents.flatMap(({document})=>
+  Array.from(document.querySelectorAll("[id$='cboJobList.comboedit:input']"))
+).find(element=>visible(element))||null;
+const jobToggle=()=>{
+  const input=jobInput();
+  if(!input)return null;
+  const doc=input.ownerDocument||document;
+  const controls=Array.from(doc.querySelectorAll(
+    "[id*='cboJobList'][id*='dropbutton'],[id*='cboJobList'][id$=':button'],[id*='cboJobList'][role='button']"
+  )).filter(element=>visible(element)&&enabled(element));
+  return controls.find(element=>String(element.id||'').endsWith('dropbutton'))||
+    controls.find(element=>String(element.id||'').includes('dropbutton'))||input;
+};
+const jobOption=(label)=>{
+  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+    "[id*='cboJobList'],[id*='ComboPopup'],[id*='combolist']"
+  ))).filter(element=>normalize(element.textContent||element.value)===label&&visible(element)&&enabled(element));
+  return matches.find(element=>String(element.id||'').endsWith(':text'))||
+    matches.sort((left,right)=>left.children.length-right.children.length)[0]||null;
+};
+if(interaction==='edufine-job-toggle'){
+  const input=jobInput();
+  const current=normalize(input?.value||input?.textContent);
+  const element=labels.includes(current)?jobToggle():null;
+  return element?[summary(element,0,current,'NEXACRO-JOB-TOGGLE')]:[];
+}
+if(interaction==='edufine-job-option'){
+  return labels.flatMap((label,index)=>{
+    const element=jobOption(label);
+    return element?[summary(element,index,label,'NEXACRO-JOB-OPTION')]:[];
+  });
+}
 const choose=(selector,label,preferred)=>{
   const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(selector)))
     .filter(element=>normalize(element.textContent)===label&&visible(element));
@@ -813,6 +845,35 @@ if(interaction==='edufine-job'){
   const changed=combo._on_value_change(combo.index,combo.text,combo.value,targetIndex,postText,postValue);
   combo.redraw?.();
   return {ok:changed!==false,direct:true};
+}
+const jobInput=()=>documents.flatMap(({document})=>
+  Array.from(document.querySelectorAll("[id$='cboJobList.comboedit:input']"))
+).find(element=>visible(element))||null;
+const jobToggle=()=>{
+  const input=jobInput();
+  if(!input)return null;
+  const doc=input.ownerDocument||document;
+  const controls=Array.from(doc.querySelectorAll(
+    "[id*='cboJobList'][id*='dropbutton'],[id*='cboJobList'][id$=':button'],[id*='cboJobList'][role='button']"
+  )).filter(element=>visible(element)&&enabled(element));
+  return controls.find(element=>String(element.id||'').endsWith('dropbutton'))||
+    controls.find(element=>String(element.id||'').includes('dropbutton'))||input;
+};
+const jobOption=()=>{
+  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+    "[id*='cboJobList'],[id*='ComboPopup'],[id*='combolist']"
+  ))).filter(element=>normalize(element.textContent||element.value)===wanted&&visible(element)&&enabled(element));
+  return matches.find(element=>String(element.id||'').endsWith(':text'))||
+    matches.sort((left,right)=>left.children.length-right.children.length)[0]||null;
+};
+if(interaction==='edufine-job-toggle'||interaction==='edufine-job-option'){
+  const input=jobInput();
+  const element=interaction==='edufine-job-toggle'&&normalize(input?.value||input?.textContent)===wanted
+    ? jobToggle()
+    : interaction==='edufine-job-option'?jobOption():null;
+  if(!element)return {ok:false};
+  const rect=element.getBoundingClientRect();
+  return {ok:true,x:rect.left+rect.width/2,y:rect.top+rect.height/2};
 }
 const choose=(selector,preferred)=>{
   const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(selector)))

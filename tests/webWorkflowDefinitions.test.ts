@@ -115,8 +115,7 @@ describe('managed web workflow definitions', () => {
       ['신청(새 창 열기)', '신청'],
     ]);
     expect(definitions['edufine-draft'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
-      ['업무관리'],
-      ['문서관리'],
+      ['기안'],
       ['공용서식', '공용 서식'],
       [
         '표준서식(결재4인,협조4인)',
@@ -130,9 +129,18 @@ describe('managed web workflow definitions', () => {
       titleIncludes: '표준서식',
     });
     expect(definitions['edufine-purchase'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
+      ['업무관리'],
       ['학교회계'],
-      ['사업담당', '사업관리'],
+      ['사업담당'],
+      ['품의/정산', '품의 / 정산'],
       ['품의등록', '품의 등록'],
+    ]);
+    expect(definitions['edufine-purchase'].steps.map(({ interaction }) => interaction)).toEqual([
+      'edufine-job-toggle',
+      'edufine-job-option',
+      'edufine-top-menu',
+      'edufine-mega-menu',
+      'edufine-mega-menu',
     ]);
     expect(definitions['edufine-purchase'].steps.at(-1)?.postcondition).toEqual({
       kind: 'visible-groups',

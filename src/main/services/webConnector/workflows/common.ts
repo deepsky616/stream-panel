@@ -41,6 +41,8 @@ export interface WorkflowStep {
     | 'mouse'
     | 'dom-click'
     | 'edufine-job'
+    | 'edufine-job-toggle'
+    | 'edufine-job-option'
     | 'edufine-top-menu'
     | 'edufine-mega-menu'
     | 'edufine-exact-text';
