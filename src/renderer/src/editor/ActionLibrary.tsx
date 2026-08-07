@@ -7,7 +7,7 @@ import type {
   LibraryEntry,
 } from '../../../shared/types';
 import { createWebWorkflowTemplatesForPlatform } from '../../../shared/webWorkflows';
-import type { DragData } from './dndTypes';
+import { getLibraryDragId, type DragData } from './dndTypes';
 
 type TemplateEntry = Exclude<LibraryEntry, { kind: 'installed-app' }>;
 
@@ -29,7 +29,7 @@ interface ActionLibraryProps {
 function DraggableTemplate({ entry, onAdd }: { entry: TemplateEntry; onAdd: () => void }) {
   const data: DragData = { source: 'library', entry };
   const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
-    id: `library:${entry.kind}:${entry.kind === 'action-template' ? entry.type : 'folder'}`,
+    id: getLibraryDragId(entry),
     data,
   });
   return (
@@ -52,7 +52,7 @@ function InstalledAppRow({ app, top, onAdd }: { app: InstalledApp; top: number; 
   const entry: LibraryEntry = { kind: 'installed-app', app };
   const data: DragData = { source: 'library', entry };
   const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
-    id: `installed:${app.type}:${app.target}`,
+    id: getLibraryDragId(entry),
     data,
   });
   useEffect(() => {

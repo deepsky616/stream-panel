@@ -42,7 +42,10 @@ export interface ApprovalMonitorService {
   start(): Promise<void>;
   stop(): Promise<void>;
   getStatuses(): ApprovalMonitorStatus[];
-  check(input: { system?: WebWorkflowSystem }): Promise<ApprovalMonitorStatus[]>;
+  check(
+    input: { system?: WebWorkflowSystem },
+    options?: { interactive?: boolean },
+  ): Promise<ApprovalMonitorStatus[]>;
   onConfigChanged(config: AppConfig): void;
 }
 
@@ -212,6 +215,7 @@ export function createApprovalMonitorService({
   let timer: unknown = null;
   let tail: Promise<void> = Promise.resolve();
   const inFlightBySystem = new Map<WebWorkflowSystem, Promise<void>>();
+  const interactiveChecks = new Set<WebWorkflowSystem>();
   const establishedBaselines = new Set<WebWorkflowSystem>();
   let sourceSignatures = new Map<WebWorkflowSystem, string>();
   const sourceRevisions = new Map<WebWorkflowSystem, number>(
@@ -304,12 +308,13 @@ export function createApprovalMonitorService({
     getStatuses() {
       return statuses.map((status) => ({ ...status }));
     },
-    async check(input) {
+    async check(input, options) {
       if (!started || platform !== 'win32') return service.getStatuses();
+      const interactive = options?.interactive === true;
       const selected = input.system ? [input.system] : [...SYSTEMS];
       const runs = selected.map((system) => {
         const inFlight = inFlightBySystem.get(system);
-        if (inFlight) return inFlight;
+        if (inFlight && (!interactive || interactiveChecks.has(system))) return inFlight;
         const operation = async () => {
           const config = getConfig();
           const source = config.approvalMonitor.sources[system];
@@ -331,6 +336,7 @@ export function createApprovalMonitorService({
               system,
               browserId: source.browserId,
               officeCode: config.educationOfficeCode,
+              ...(interactive ? { interactive: true } : {}),
             });
             if (!started) return;
             if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
@@ -428,9 +434,11 @@ export function createApprovalMonitorService({
         const tracked = run.finally(() => {
           if (inFlightBySystem.get(system) === tracked) {
             inFlightBySystem.delete(system);
+            interactiveChecks.delete(system);
           }
         });
         inFlightBySystem.set(system, tracked);
+        if (interactive) interactiveChecks.add(system);
         return tracked;
       });
       try {

@@ -592,7 +592,7 @@ describe('approval monitor service', () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;
     config.approvalMonitor.sources.edufine.enabled = false;
-    const counts = [2, 4];
+    const counts = [2, 4, 4];
     const scans: unknown[] = [];
     const notifications: unknown[] = [];
     const broadcasts: unknown[] = [];
@@ -627,9 +627,11 @@ describe('approval monitor service', () => {
     ]);
 
     await service.check({ system: 'neis' });
+    await service.check({ system: 'neis' }, { interactive: true });
     expect(scans).toEqual([
       { system: 'neis', browserId: 'edge', officeCode: 'goe' },
       { system: 'neis', browserId: 'edge', officeCode: 'goe' },
+      { system: 'neis', browserId: 'edge', officeCode: 'goe', interactive: true },
     ]);
     expect(notifications).toEqual([{ system: 'neis', count: 4 }]);
     expect(broadcasts.length).toBeGreaterThan(1);

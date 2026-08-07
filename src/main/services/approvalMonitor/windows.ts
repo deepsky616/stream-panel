@@ -11,7 +11,8 @@ import { throwIfApprovalCheckCancelled } from './cancellation';
 
 export interface WindowsApprovalPage extends WorkflowPageAdapter {
   currentOrigin(): Promise<string>;
-  release?(): Promise<void>;
+  activate?(): Promise<void>;
+  release?(options?: { keepCreatedTargets?: boolean }): Promise<void>;
   readApprovalCount(system: WebWorkflowSystem): Promise<number>;
 }
 
@@ -47,13 +48,20 @@ interface ApprovalCounterCandidate extends ApprovalCounterSignal {
 
 interface ApprovalListSnapshot {
   candidates: ApprovalCounterCandidate[];
-  rowCounts: number[];
+  rowCounts: ApprovalRowCountCandidate[];
   emptyList: boolean;
+}
+
+interface ApprovalRowCountCandidate {
+  count: number;
+  area: number;
+  relevant: boolean;
+  source: 'dom' | 'nexacro';
 }
 
 const COUNTER_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
   neis: ['Total', 'TOTAL', 'total'],
-  edufine: ['총', '전체', 'Total', 'TOTAL', 'total', '결재대기', '결재 대기'],
+  edufine: ['총', 'Total', 'TOTAL', 'total'],
 };
 
 function compactText(value: string): string {
@@ -68,6 +76,7 @@ function inlineCount(text: string, label: string): number | null {
     const match = remainder.match(/^(?:[:：·])?[([{](\d{1,4})[)\]}]$/) ??
       remainder.match(/^(?:[:：·])?(\d{1,4})건$/) ??
       remainder.match(/^(?:[:：·]|총)?(\d{1,4})건(?:$|[^\d])/) ??
+      remainder.match(/^(?:[:：·])?(\d{1,4})(?:건)?(?:[([/]|$)/) ??
       remainder.match(/^(?:[:：·])?(\d{1,4})$/);
     if (match) return Number(match[1]);
   }
@@ -112,6 +121,15 @@ function isCounterCandidate(value: unknown): value is ApprovalCounterCandidate {
     (record.parent === undefined || isCounterSignal(record.parent));
 }
 
+function isRowCountCandidate(value: unknown): value is ApprovalRowCountCandidate {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Number.isSafeInteger(record.count) && Number(record.count) >= 0 && Number(record.count) <= 9_999 &&
+    typeof record.area === 'number' && Number.isFinite(record.area) && record.area >= 0 && record.area <= 100_000_000 &&
+    typeof record.relevant === 'boolean' &&
+    (record.source === 'dom' || record.source === 'nexacro');
+}
+
 function readApprovalListSnapshot(value: unknown): ApprovalListSnapshot {
   if (Array.isArray(value)) {
     if (value.length > 100 || !value.every(isCounterCandidate)) {
@@ -129,14 +147,21 @@ function readApprovalListSnapshot(value: unknown): ApprovalListSnapshot {
     !record.candidates.every(isCounterCandidate) ||
     !Array.isArray(record.rowCounts) ||
     record.rowCounts.length > 50 ||
-    !record.rowCounts.every((count) => Number.isSafeInteger(count) && Number(count) >= 0 && Number(count) <= 9_999) ||
+    !record.rowCounts.every((count) => (
+      isRowCountCandidate(count) ||
+      (Number.isSafeInteger(count) && Number(count) >= 0 && Number(count) <= 9_999)
+    )) ||
     typeof record.emptyList !== 'boolean'
   ) {
     throw new Error('결재 목록 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
   }
   return {
     candidates: record.candidates,
-    rowCounts: record.rowCounts.map(Number),
+    rowCounts: record.rowCounts.map((candidate): ApprovalRowCountCandidate => (
+      isRowCountCandidate(candidate)
+        ? candidate
+        : { count: Number(candidate), area: 0, relevant: true, source: 'dom' }
+    )),
     emptyList: record.emptyList,
   };
 }
@@ -169,7 +194,7 @@ export function parseApprovalCounterCandidates(
       }
       const hasExactLabel = relatedSignals.some((signal) => (
         [signal.text, signal.ariaLabel, signal.title].some((text) => (
-          compactText(text) === compactText(label)
+          compactText(text).replace(/[:：·]$/, '') === compactText(label)
         ))
       ));
       if (!hasExactLabel) continue;
@@ -189,12 +214,23 @@ export function parseApprovalCounterCandidates(
     if (counts.size === 1) return [...counts][0];
   }
   // A semantic table/grid normally contains only the rows rendered for the
-  // current page, so its value is a fallback. The list's own Total/총/전체
-  // value above remains authoritative when pagination is present.
-  if (snapshot.rowCounts.length > 0) {
-    return parseApprovalCounterValue(Math.max(...snapshot.rowCounts));
-  }
+  // current page, so its value is a fallback. The list's own Total/총 value
+  // above remains authoritative when pagination is present. When multiple
+  // Nexacro datasets exist, choose the approval-like visible grid with the
+  // largest on-screen area, never the dataset with the largest row count.
   if (snapshot.emptyList) return 0;
+  if (snapshot.rowCounts.length > 0) {
+    const relevant = snapshot.rowCounts.filter((candidate) => candidate.relevant);
+    const pool = relevant.length > 0 ? relevant : snapshot.rowCounts;
+    const largestArea = Math.max(...pool.map((candidate) => candidate.area));
+    const counts = new Set(pool.filter((candidate) => candidate.area === largestArea).map(
+      (candidate) => parseApprovalCounterValue(candidate.count),
+    ));
+    if (counts.size === 1) return [...counts][0];
+    if (counts.size > 1) {
+      throw new Error('결재 목록 표가 둘 이상 보여 대기 건수를 안전하게 고를 수 없습니다. 결재함 화면을 직접 확인해 주세요.');
+    }
+  }
   throw new Error('결재 대기 수를 안전하게 읽지 못했습니다. 결재함 화면을 직접 확인해 주세요.');
 }
 
@@ -231,6 +267,7 @@ export async function scanWindowsApprovalCount(
     throw new Error('결재 대기 확인 요청과 업무용 브라우저 세션이 다릅니다. 브라우저 연결을 다시 시험해 주세요.');
   }
   const page = await dependencies.openPage(session, input, signal);
+  let releaseHandled = false;
   try {
     const assertOrigin = async () => {
       throwIfApprovalCheckCancelled(signal);
@@ -295,7 +332,24 @@ export async function scanWindowsApprovalCount(
       if (attempt < 19) await page.wait(250);
     }
     throw countError;
+  } catch (error) {
+    if (input.interactive && !signal?.aborted) {
+      try {
+        await page.activate?.();
+      } catch {
+        // The original check error is more useful than a best-effort focus failure.
+      }
+      if (page.release) {
+        releaseHandled = true;
+        try {
+          await page.release({ keepCreatedTargets: true });
+        } catch {
+          // Preserve the original check error.
+        }
+      }
+    }
+    throw error;
   } finally {
-    await page.release?.();
+    if (!releaseHandled) await page.release?.();
   }
 }

@@ -9,6 +9,8 @@ export interface ApprovalScanInput {
   system: WebWorkflowSystem;
   officeCode: EducationOfficeCode;
   browserId: WebConnectorBrowserId;
+  /** Keep and show the temporary check tab when a user-triggered check needs attention. */
+  interactive?: boolean;
 }
 
 const COMMON_CHECKS = {
@@ -19,6 +21,15 @@ const COMMON_CHECKS = {
 const NEIS_PENDING_COOPERATION_LABELS = ['미결/협조함', '미결 / 협조함'] as const;
 const EDUFINE_WAITING_LABELS = ['결재대기', '결재 대기'] as const;
 const NEIS_TOTAL_LABELS = ['Total', 'TOTAL', 'total'] as const;
+const NEIS_EMPTY_OR_LIST_LABELS = [
+  ...NEIS_TOTAL_LABELS,
+  '문서번호',
+  '기안일자',
+  '기안자',
+  '조회 결과가 없습니다',
+  '조회된 자료가 없습니다',
+  '조회된 내역이 없습니다',
+] as const;
 
 const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   id: 'neis-approval-inbox',
@@ -30,8 +41,9 @@ const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       candidateLabels: NEIS_PENDING_COOPERATION_LABELS,
       selection: 'first-available',
       interaction: 'frame-exact-text',
-      postcondition: { kind: 'visible-any', labels: NEIS_TOTAL_LABELS },
+      postcondition: { kind: 'visible-any', labels: NEIS_EMPTY_OR_LIST_LABELS },
       ...COMMON_CHECKS,
+      skipWhenSatisfied: false,
     },
   ],
 };

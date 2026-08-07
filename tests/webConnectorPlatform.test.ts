@@ -393,7 +393,7 @@ describe('Windows managed web automation', () => {
     });
   });
 
-  it('reuses an existing authenticated work tab for approval checks without closing it', async () => {
+  it('uses a new temporary tab for approval checks and closes it after release', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     const protocol = {
       isClosed: false,
@@ -450,14 +450,70 @@ describe('Windows managed web automation', () => {
     await releasablePage.release?.();
 
     expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://sen.neis.go.kr/', background: true },
+    });
+    expect(commands).toContainEqual({
       method: 'Target.attachToTarget',
-      params: { targetId: 'user-work-target', flatten: true },
+      params: { targetId: 'approval-target', flatten: true },
     });
     expect(commands).toContainEqual({
       method: 'Target.detachFromTarget',
       params: { sessionId: 'approval-session' },
     });
-    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'approval-target' },
+    });
+  });
+
+  it('keeps and activates a manual approval tab when login is required', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') return { targetInfos: [] };
+        if (method === 'Target.createTarget') return { targetId: 'approval-login-target' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'approval-login-session' };
+        if (method === 'Browser.getWindowForTarget') {
+          return { windowId: 7, bounds: { windowState: 'normal' } };
+        }
+        if (method === 'Runtime.evaluate') {
+          return { result: { value: {
+            href: 'https://sen.neis.go.kr/login',
+            origin: 'https://sen.neis.go.kr',
+            readyState: 'complete',
+            loginVisible: true,
+          } } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const managedSession = {
+      officeCode: 'sen' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await expect(openCdpWindowsApprovalPage(managedSession as never, {
+      system: 'neis',
+      officeCode: 'sen',
+      browserId: 'edge',
+      interactive: true,
+    })).rejects.toThrow();
+
+    expect(commands).toContainEqual({
+      method: 'Target.activateTarget',
+      params: { targetId: 'approval-login-target' },
+    });
     expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
   });
 

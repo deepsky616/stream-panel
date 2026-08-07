@@ -108,7 +108,7 @@ export interface WxsClientWindow {
 export interface WindowsWorkflowPage extends WorkflowPageAdapter {
   currentOrigin(): Promise<string>;
   activate(): Promise<void>;
-  release?(): Promise<void>;
+  release?(options?: { keepCreatedTargets?: boolean }): Promise<void>;
   readApprovalCount?(system: WebWorkflowSystem): Promise<number>;
 }
 
@@ -991,13 +991,17 @@ return {handled:true};
 function approvalCounterExpression(system: WebWorkflowSystem): string {
   const labels = system === 'neis'
     ? ['Total', 'TOTAL', 'total']
-    : ['총', '전체', 'Total', 'TOTAL', 'total', '결재대기', '결재 대기'];
+    : ['총', 'Total', 'TOTAL', 'total'];
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
+const approvalSystem=${JSON.stringify(system)};
+const approvalHeaders=approvalSystem==='edufine'
+  ? ['문서번호','제목','기안자','문서명','결재상태']
+  : ['문서번호','제목','기안자','신청자'];
 const labels=${JSON.stringify(labels)}.map(value=>normalize(value).replace(/\\s+/g,''));
 const matchesLabel=(value,label)=>{
   const compact=normalize(value).replace(/\\s+/g,'');
-  if(label==='총'||label==='전체'){
+  if(label==='총'){
     const remainder=compact.slice(label.length);
     return compact===label||(compact.startsWith(label)&&/^(?:[:：·]|[([{]|\\d)/.test(remainder));
   }
@@ -1043,12 +1047,27 @@ for(const {document} of documents){
       if(!text||/^(조회|검색)?된?\\s*(자료|데이터|문서|목록).*(없습니다|없음)|^내역이\\s*없습니다/.test(text))return false;
       return Boolean(row.querySelector?.('td,[role="gridcell"],[role="cell"]'));
     });
-    if(semanticRows.length>0)rowCounts.push(semanticRows.length);
+    const rect=container.getBoundingClientRect();
+    const headerText=normalize(Array.from(container.querySelectorAll('th,[role="columnheader"]')).map(element=>element.innerText||element.textContent||'').join(' '));
+    const headerRelevant=approvalHeaders.some(label=>headerText.includes(label));
+    if(semanticRows.length>0||headerRelevant){
+      rowCounts.push({
+        count:semanticRows.length,
+        area:Math.max(0,Math.round(rect.width*rect.height)),
+        relevant:headerRelevant||(semanticRows.length>0&&containers.length===1),
+        source:'dom'
+      });
+    }
   }
   const emptyElements=Array.from(document.querySelectorAll('td,[role="gridcell"],[role="cell"],.empty,.no-data')).filter(visible).slice(0,500);
   if(emptyElements.some(element=>{
     const text=normalize(element.innerText||element.textContent||'');
-    return text.length<=120&&/(조회|검색)?된?\\s*(자료|데이터|문서|목록).*(없습니다|없음)|내역이\\s*없습니다/.test(text);
+    return text.length<=120&&(
+      /(조회|검색)?된?\\s*(자료|데이터|문서|목록|내역).*(없습니다|없음)/.test(text)||
+      /(조회|검색)\\s*(결과|내역).*(없습니다|없음|0건)/.test(text)||
+      /데이터가?\\s*존재하지\\s*않/.test(text)||
+      /no\\s*(data|rows?)/i.test(text)
+    );
   }))emptyList=true;
   try{
     const view=document.defaultView;
@@ -1063,7 +1082,17 @@ for(const {document} of documents){
       if(/grid/i.test(type)){
         const dataset=component.getBindDataset?.()||component._binddataset;
         const count=Number(dataset?.getRowCount?.());
-        if(Number.isSafeInteger(count)&&count>=0&&count<=9999)rowCounts.push(count);
+        const headCount=Math.min(Number(component.getCellCount?.('head'))||0,100);
+        const headerText=normalize(Array.from({length:headCount},(_,index)=>component.getCellProperty?.('head',index,'text')||'').join(' '));
+        const handle=component._control_element?.handle;
+        const rect=handle?.getBoundingClientRect?.();
+        const width=Number(rect?.width)||Number(component.getOffsetWidth?.())||Number(component._adjust_width)||0;
+        const height=Number(rect?.height)||Number(component.getOffsetHeight?.())||Number(component._adjust_height)||0;
+        const area=Math.max(0,Math.round(width*height));
+        const relevant=approvalHeaders.some(label=>headerText.includes(label));
+        if(Number.isSafeInteger(count)&&count>=0&&count<=9999&&area>0&&headCount>=2){
+          rowCounts.push({count,area,relevant,source:'nexacro'});
+        }
       }
       for(const collection of [component.components,component.frames,component.all]){
         if(!collection)continue;
@@ -1077,7 +1106,7 @@ for(const {document} of documents){
     for(const root of roots)visitComponent(root);
   }catch{}
 }
-return {candidates:candidates.slice(0,100),rowCounts:[...new Set(rowCounts)],emptyList};
+return {candidates:candidates.slice(0,100),rowCounts:rowCounts.slice(0,50),emptyList};
 })()`;
 }
 
@@ -1269,6 +1298,7 @@ interface WorkflowTargetOptions {
   closeCreatedTargetOnRelease?: boolean;
   failFastOnLoginRequired?: boolean;
   forceNewTarget?: boolean;
+  keepCreatedTargetOnFailure?: boolean;
   signal?: AbortSignal;
 }
 
@@ -1599,7 +1629,7 @@ async function acquireDirectWorkflowTarget(
 function createWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   attached: AttachedWindowsTarget,
-  release: () => Promise<void>,
+  release: (options?: { keepCreatedTargets?: boolean }) => Promise<void>,
   workflowId: WebWorkflowId,
   workflowSpec: WebWorkflowSpec | undefined,
   lifecycle: WorkflowTargetLifecycle,
@@ -1725,9 +1755,10 @@ export async function openCdpWindowsApprovalPage(
     undefined,
     {
       background: true,
-      closeCreatedTargetOnRelease: false,
+      closeCreatedTargetOnRelease: true,
       failFastOnLoginRequired: true,
-      forceNewTarget: false,
+      forceNewTarget: true,
+      keepCreatedTargetOnFailure: input.interactive === true,
       signal,
     },
   );
@@ -1750,7 +1781,7 @@ export async function openCdpWindowsWorkflowPage(
     closeTargetIds: [],
   };
   let released = false;
-  const release = async (): Promise<void> => {
+  const release = async (releaseOptions: { keepCreatedTargets?: boolean } = {}): Promise<void> => {
     if (released) return;
     released = true;
     let cleanupFailed = false;
@@ -1761,14 +1792,16 @@ export async function openCdpWindowsWorkflowPage(
         cleanupFailed = true;
       }
     }
-    for (const targetId of [...new Set(lifecycle.closeTargetIds)]) {
-      try {
-        await protocol.send('Target.closeTarget', { targetId });
-      } catch {
-        cleanupFailed = true;
+    if (!releaseOptions.keepCreatedTargets) {
+      for (const targetId of [...new Set(lifecycle.closeTargetIds)]) {
+        try {
+          await protocol.send('Target.closeTarget', { targetId });
+        } catch {
+          cleanupFailed = true;
+        }
       }
     }
-    if (cleanupFailed) {
+    if (cleanupFailed && !releaseOptions.keepCreatedTargets) {
       try {
         await session.close();
       } catch {
@@ -1776,9 +1809,10 @@ export async function openCdpWindowsWorkflowPage(
       }
     }
   };
+  let attached: AttachedWindowsTarget | undefined;
   try {
     const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-    const attached = await acquireDirectWorkflowTarget(
+    attached = await acquireDirectWorkflowTarget(
       session,
       targets,
       workflowId,
@@ -1830,7 +1864,20 @@ export async function openCdpWindowsWorkflowPage(
       lifecycle,
     );
   } catch (error) {
-    await release();
+    if (options.keepCreatedTargetOnFailure && attached && !options.signal?.aborted) {
+      try {
+        await restoreAndActivateTarget(
+          session,
+          attached.target.targetId,
+          attached.sessionId,
+        );
+      } catch {
+        // Keep reporting the original workflow error if foreground activation fails.
+      }
+      await release({ keepCreatedTargets: true });
+    } else {
+      await release();
+    }
     throw error;
   }
 }
@@ -2118,17 +2165,6 @@ export function createWindowsManagedSessionManager(
         throwIfApprovalCheckCancelled(abortController.signal);
         if ((interactiveWork.get(key) ?? 0) > 0) {
           throw createApprovalCheckCancelledError();
-        }
-        let connectionStatus: WebSystemConnectionStatus | undefined;
-        await connectWindowsOfficeSystems(session, [input.system], (status) => {
-          if (status.system === input.system) connectionStatus = status;
-        }, abortController.signal);
-        throwIfApprovalCheckCancelled(abortController.signal);
-        if (connectionStatus?.state !== 'connected') {
-          throw new Error(
-            connectionStatus?.message ??
-            `${input.system === 'neis' ? '나이스' : 'K-에듀파인'}에 연결하지 못했습니다. 해당 시스템 전용 탭의 로그인 상태를 확인해 주세요.`,
-          );
         }
         return scanWindowsApprovalCount(session, input, {
           openPage: (managedSession, scanInput, signal) => openCdpWindowsApprovalPage(

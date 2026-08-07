@@ -242,8 +242,18 @@ describe('managed web workflow definitions', () => {
     ))).toEqual([['미결/협조함', '미결 / 협조함']]);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis[0].steps[0]).toEqual(expect.objectContaining({
       interaction: 'frame-exact-text',
-      postcondition: { kind: 'visible-any', labels: ['Total', 'TOTAL', 'total'] },
-      skipWhenSatisfied: true,
+      postcondition: { kind: 'visible-any', labels: [
+        'Total',
+        'TOTAL',
+        'total',
+        '문서번호',
+        '기안일자',
+        '기안자',
+        '조회 결과가 없습니다',
+        '조회된 자료가 없습니다',
+        '조회된 내역이 없습니다',
+      ] },
+      skipWhenSatisfied: false,
     }));
 
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine).toHaveLength(1);

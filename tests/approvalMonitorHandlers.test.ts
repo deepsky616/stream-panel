@@ -28,14 +28,20 @@ describe('approval monitor IPC actions', () => {
     ];
     const service = {
       getStatuses: () => statuses,
-      check: async (input: unknown) => { calls.push(input); return statuses; },
+      check: async (input: unknown, options: unknown) => {
+        calls.push([input, options]);
+        return statuses;
+      },
     } as unknown as ApprovalMonitorService;
     const actions = createApprovalMonitorHandlerActions(service);
 
     expect(actions.status()).toEqual(statuses);
     await expect(actions.check({ system: 'neis' })).resolves.toEqual(statuses);
     await expect(actions.check({})).resolves.toEqual(statuses);
-    expect(calls).toEqual([{ system: 'neis' }, {}]);
+    expect(calls).toEqual([
+      [{ system: 'neis' }, { interactive: true }],
+      [{}, { interactive: true }],
+    ]);
   });
 
   it('allows checks only from the editor main frame and forwards every manual request', async () => {
@@ -68,14 +74,20 @@ describe('approval monitor IPC actions', () => {
     const statuses = [{ system: 'neis' as const, state: 'idle' as const }];
     const service = {
       getStatuses: () => statuses,
-      check: async (input: unknown) => { calls.push(input); return statuses; },
+      check: async (input: unknown, options: unknown) => {
+        calls.push([input, options]);
+        return statuses;
+      },
     } as unknown as ApprovalMonitorService;
     const actions = createApprovalMonitorHandlerActions(service);
 
     await actions.check({ system: 'neis' });
     await actions.check({ system: 'neis' });
 
-    expect(calls).toEqual([{ system: 'neis' }, { system: 'neis' }]);
+    expect(calls).toEqual([
+      [{ system: 'neis' }, { interactive: true }],
+      [{ system: 'neis' }, { interactive: true }],
+    ]);
   });
 
   it('rejects extra fields and unknown systems before a handler uses them', () => {

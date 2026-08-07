@@ -36,7 +36,10 @@ export function createApprovalMonitorHandlerActions(
     status: () => service.getStatuses(),
     // The service already coalesces checks that are in flight. A renderer-side
     // cooldown returned stale "idle" states and made the button look inert.
-    check: (input: Parameters<ApprovalMonitorService['check']>[0]) => service.check(input),
+    check: (input: Parameters<ApprovalMonitorService['check']>[0]) => service.check(
+      input,
+      { interactive: true },
+    ),
   };
 }
 

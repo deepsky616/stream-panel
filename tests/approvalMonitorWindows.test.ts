@@ -93,9 +93,38 @@ describe('Windows approval count reader', () => {
       emptyList: false,
     })).toBe(7);
     expect(parseApprovalCounterCandidates!('edufine', {
+      candidates: [{
+        text: '전체 100',
+        ariaLabel: '',
+        title: '',
+        className: 'page-size',
+        role: 'option',
+        children: [],
+      }],
+      rowCounts: [
+        { count: 100, area: 90_000, relevant: false, source: 'nexacro' },
+        { count: 1, area: 60_000, relevant: true, source: 'nexacro' },
+      ],
+      emptyList: false,
+    })).toBe(1);
+    expect(parseApprovalCounterCandidates!('edufine', {
       candidates: [],
       rowCounts: [],
       emptyList: true,
+    })).toBe(0);
+    expect(parseApprovalCounterCandidates!('neis', [{
+      text: 'Total :',
+      ariaLabel: '',
+      title: '',
+      className: 'total-label',
+      role: 'status',
+      children: [],
+      next: { text: '0', ariaLabel: '', title: '', className: 'total-count', role: '' },
+    }])).toBe(0);
+    expect(parseApprovalCounterCandidates!('neis', {
+      candidates: [],
+      rowCounts: [{ count: 0, area: 50_000, relevant: true, source: 'dom' }],
+      emptyList: false,
     })).toBe(0);
     expect(parseApprovalCounterCandidates!('neis', [
       {
@@ -200,9 +229,13 @@ describe('Windows approval count reader', () => {
 
   it('releases the browser page when approval navigation fails', async () => {
     let releases = 0;
+    const releaseOptions: unknown[] = [];
     const workflowPage = page('https://evil.example');
     Object.assign(workflowPage, {
-      release: async () => { releases += 1; },
+      release: async (options?: unknown) => {
+        releases += 1;
+        releaseOptions.push(options);
+      },
     });
 
     await expect(scanWindowsApprovalCount(
@@ -211,6 +244,26 @@ describe('Windows approval count reader', () => {
       { openPage: async () => workflowPage },
     )).rejects.toThrow(/허용되지 않은/);
     expect(releases).toBe(1);
+    expect(releaseOptions).toEqual([undefined]);
+  });
+
+  it('keeps and activates a temporary tab when a manual approval check fails', async () => {
+    let activations = 0;
+    const releaseOptions: unknown[] = [];
+    const workflowPage = page('https://evil.example');
+    Object.assign(workflowPage, {
+      activate: async () => { activations += 1; },
+      release: async (options?: unknown) => { releaseOptions.push(options); },
+    });
+
+    await expect(scanWindowsApprovalCount(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { system: 'neis', officeCode: 'goe', browserId: 'edge', interactive: true },
+      { openPage: async () => workflowPage },
+    )).rejects.toThrow();
+
+    expect(activations).toBe(1);
+    expect(releaseOptions).toEqual([{ keepCreatedTargets: true }]);
   });
 
   it('rejects a login portal or another host before inspecting or reading page content', async () => {
