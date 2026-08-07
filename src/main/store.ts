@@ -16,7 +16,7 @@ import type {
   WindowConfig,
 } from '../shared/types';
 
-export const CURRENT_CONFIG_VERSION = 1;
+export const CURRENT_CONFIG_VERSION = 2;
 
 export type RecoveryReason = 'future-version' | 'corrupt-json';
 
@@ -83,7 +83,9 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
   ): ApprovalMonitorConfig['sources']['neis'] => {
     const source = partialObject<ApprovalMonitorConfig['sources']['neis']>(value);
     return {
-      enabled: typeof source.enabled === 'boolean' ? source.enabled : fallback.enabled,
+      enabled: parsed.version < 2
+        ? fallback.enabled
+        : typeof source.enabled === 'boolean' ? source.enabled : fallback.enabled,
       browserId: source.browserId === 'edge' || source.browserId === 'chrome'
         ? source.browserId
         : fallback.browserId,
@@ -93,6 +95,7 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
   return {
     ...defaultConfig,
     ...parsed,
+    version: CURRENT_CONFIG_VERSION,
     platform:
       parsed.platform === 'win32' || parsed.platform === 'darwin'
         ? parsed.platform

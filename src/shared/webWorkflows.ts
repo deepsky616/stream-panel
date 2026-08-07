@@ -75,6 +75,8 @@ const BROWSER_IDS = new Set<WebConnectorBrowserId>(['chrome', 'edge']);
 const CUSTOM_CONFIRMATION_ACTION_TOKENS = [
   '저장',
   '제출',
+  '상신',
+  '승인',
   '결재',
   '등록',
   '신청',
@@ -82,8 +84,6 @@ const CUSTOM_CONFIRMATION_ACTION_TOKENS = [
   '인증 입력',
 ] as const;
 const CUSTOM_FORBIDDEN_ACTION_TOKENS = [
-  '상신',
-  '승인',
   '확정',
   '삭제',
   '취소',

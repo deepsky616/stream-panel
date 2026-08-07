@@ -84,6 +84,8 @@ describe('web workflow templates', () => {
     for (const confirmed of [
       '저장',
       '제출하기',
+      '상신',
+      '승인',
       '결재',
       '확인',
       '등록',

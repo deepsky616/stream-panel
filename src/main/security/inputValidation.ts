@@ -30,7 +30,7 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new TypeError('허용되지 않은 설정 항목입니다.');
   }
-  if ('version' in value && value.version !== 1) throw new TypeError('지원하지 않는 설정 버전입니다.');
+  if ('version' in value && value.version !== 2) throw new TypeError('지원하지 않는 설정 버전입니다.');
   if ('platform' in value && !['win32', 'darwin'].includes(String(value.platform))) {
     throw new TypeError('운영체제 설정이 올바르지 않습니다.');
   }
@@ -355,6 +355,18 @@ export function assertWebConnectorSetupInput(
     !['pair', 'folder', 'extensions'].includes(String(value.target))
   ) {
     throw new TypeError('웹 업무 연결 설치 요청이 올바르지 않습니다. 브라우저를 다시 선택해 주세요.');
+  }
+}
+
+export function assertWebConnectorApprovalInput(
+  value: unknown,
+): asserts value is { system: 'neis' | 'edufine' } {
+  assertRecord(value, '결재함 열기');
+  if (
+    Object.keys(value).some((key) => key !== 'system') ||
+    (value.system !== 'neis' && value.system !== 'edufine')
+  ) {
+    throw new TypeError('결재함 업무 시스템이 올바르지 않습니다. 나이스나 에듀파인을 선택해 주세요.');
   }
 }
 

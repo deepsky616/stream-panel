@@ -116,6 +116,7 @@ export interface ExecuteWindowsWorkflowDependencies {
   ): Promise<WindowsWorkflowPage>;
   isWxsClientRegistered(): Promise<boolean>;
   listWxsClientWindows(): Promise<readonly WxsClientWindow[]>;
+  closeWxsClientWindow?(id: number): Promise<boolean>;
   focusWindow(id: number): Promise<boolean>;
   confirmStep?(
     request: ManagedWorkflowRequest,
@@ -308,6 +309,45 @@ export async function createWindowsManagedBrowserSession(
   return managedSession;
 }
 
+const FRESH_START_WORKFLOW_IDS = new Set<WebWorkflowId>([
+  'neis-leave',
+  'neis-trip',
+  'edufine-draft',
+  'edufine-purchase',
+  'custom',
+]);
+
+export async function resetWindowsWorkflowTargets(
+  session: WindowsManagedBrowserSession,
+  workflowId: WebWorkflowId,
+  workflowSpec?: WebWorkflowSpec,
+): Promise<void> {
+  if (!FRESH_START_WORKFLOW_IDS.has(workflowId)) return;
+  const protocol = session.connection.protocol;
+  const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
+  const targetIds = targets.filter((target) => (
+    target.type === 'page' &&
+    workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec)
+  )).map(({ targetId }) => targetId);
+  for (const targetId of targetIds) {
+    const result = await protocol.send<{ success?: unknown }>('Target.closeTarget', { targetId });
+    if (result.success === false) {
+      throw new Error('기존 업무 화면을 닫지 못했습니다. 열린 신청·작성 창을 확인한 뒤 다시 눌러 주세요.');
+    }
+    if (session.bootstrapTargetId === targetId) session.bootstrapTargetId = undefined;
+  }
+  for (let attempt = 0; attempt < 10 && targetIds.length > 0; attempt += 1) {
+    const remaining = new Set(readTargetInfos(
+      await protocol.send('Target.getTargets', {}),
+    ).map(({ targetId }) => targetId));
+    if (targetIds.every((targetId) => !remaining.has(targetId))) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  if (targetIds.length > 0) {
+    throw new Error('기존 업무 화면이 아직 닫히는 중입니다. 잠시 뒤 버튼을 다시 눌러 주세요.');
+  }
+}
+
 function validateWorkflowOrigin(
   origin: string,
   officeCode: EducationOfficeCode,
@@ -367,6 +407,16 @@ export async function executeWindowsWorkflow(
   const definition = managedWorkflowDefinition(request);
   if (request.workflowId === 'edufine-draft' && !await dependencies.isWxsClientRegistered()) {
     throw new Error('기안 편집 프로그램이 설치되어 있지 않습니다. 에듀파인 설치 안내에서 WXSClient를 설치한 뒤 다시 시도해 주세요.');
+  }
+  if (request.workflowId === 'edufine-draft' && dependencies.closeWxsClientWindow) {
+    const draftWindows = (await dependencies.listWxsClientWindows()).filter((window) => (
+      /표준서식|문서작성/.test(window.title)
+    ));
+    for (const window of draftWindows) {
+      if (!await dependencies.closeWxsClientWindow(window.id)) {
+        throw new Error('기존 기안 창을 닫지 못했습니다. 저장 확인창을 처리한 뒤 기안 버튼을 다시 눌러 주세요.');
+      }
+    }
   }
   const existingWindows = request.workflowId === 'edufine-draft'
     ? new Map((await dependencies.listWxsClientWindows()).map((window) => [
@@ -717,12 +767,12 @@ function edufineCandidateScanExpression(step: WorkflowStep): string {
 ${PAGE_ELEMENT_HELPERS}
 const labels=${labels}.map(normalize);
 const interaction=${interaction};
-const summary=(element,index,text,tag)=>{
+const summary=(element,index,text,tag,offsetX=0,offsetY=0)=>{
   const rect=element?.getBoundingClientRect?.()??{width:1,height:1,left:0,top:0};
   return {
     index,text,visible:element?visible(element):true,enabled:element?enabled(element):true,
     width:Math.max(1,Number(rect.width)||0),height:Math.max(1,Number(rect.height)||0),
-    left:Number(rect.left)||0,top:Number(rect.top)||0,navigation:true,safeNavigation:true,
+    left:offsetX+(Number(rect.left)||0),top:offsetY+(Number(rect.top)||0),navigation:true,safeNavigation:true,
     tag,inputType:'',href:'',formAssociated:false,inlineHandler:false,
     visibleText:text,accessibleName:'',titleText:'',valueText:'',contextText:'',
     shadowedByEquivalentDescendant:false
@@ -791,14 +841,18 @@ if(interaction==='edufine-mega-menu'){
     return element?[summary(element,index,label,'NEXACRO-MEGA-MENU')]:[];
   });
 }
-if(interaction==='edufine-exact-text'){
+if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
   return labels.flatMap((label,index)=>{
-    const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll('*')))
-      .filter(element=>normalize(element.textContent)===label&&visible(element))
-      .sort((left,right)=>left.children.length-right.children.length);
+    const matches=documents.flatMap(({document,offsetX,offsetY})=>
+      Array.from(document.querySelectorAll('*')).map(element=>({element,offsetX,offsetY}))
+    ).filter(({element})=>normalize(element.textContent)===label&&visible(element))
+      .sort((left,right)=>left.element.children.length-right.element.children.length);
     const exact=matches[0];
-    const element=exact?.closest?.('a,button')||exact;
-    return element&&visible(element)?[summary(element,index,label,'EXACT-TEXT')]:[];
+    if(!exact)return [];
+    const {offsetX,offsetY}=exact;
+    const exactElement=exact.element;
+    const element=exactElement.closest?.('a,button')||exactElement;
+    return element&&visible(element)?[summary(element,index,label,'EXACT-TEXT',offsetX,offsetY)]:[];
   });
 }
 return [];
@@ -806,7 +860,7 @@ return [];
 }
 
 function candidateScanExpression(step: WorkflowStep): string {
-  return step.interaction?.startsWith('edufine-')
+  return step.interaction?.startsWith('edufine-') || step.interaction === 'frame-exact-text'
     ? edufineCandidateScanExpression(step)
     : CANDIDATE_SCAN_EXPRESSION;
 }
@@ -888,13 +942,21 @@ if(interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
   const rect=element.getBoundingClientRect();
   return {ok:true,x:rect.left+rect.width/2,y:rect.top+rect.height/2};
 }
-if(interaction==='edufine-exact-text'){
-  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll('*')))
-    .filter(element=>normalize(element.textContent)===wanted&&visible(element))
-    .sort((left,right)=>left.children.length-right.children.length);
+if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>
+    Array.from(document.querySelectorAll('*')).map(element=>({element,offsetX,offsetY}))
+  ).filter(({element})=>normalize(element.textContent)===wanted&&visible(element))
+    .sort((left,right)=>left.element.children.length-right.element.children.length);
   const exact=matches[0];
-  const element=exact?.closest?.('a,button')||exact;
+  if(!exact)return {ok:false};
+  const {offsetX,offsetY}=exact;
+  const exactElement=exact.element;
+  const element=exactElement.closest?.('a,button')||exactElement;
   if(!element||!visible(element))return {ok:false};
+  if(interaction==='frame-exact-text'){
+    const rect=element.getBoundingClientRect();
+    return {ok:true,x:offsetX+rect.left+rect.width/2,y:offsetY+rect.top+rect.height/2};
+  }
   element.focus?.({preventScroll:false});
   element.click?.();
   return {ok:true,direct:true};
@@ -1356,7 +1418,8 @@ async function pressCandidateWithCdp(
 ): Promise<void> {
   const protocol = session.connection.protocol;
   const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
-  const isEdufineInteraction = interaction.startsWith('edufine-');
+  const isSpecializedInteraction = interaction.startsWith('edufine-') ||
+    interaction === 'frame-exact-text';
   const action = await evaluateValue<{
     ok?: unknown;
     direct?: unknown;
@@ -1365,7 +1428,7 @@ async function pressCandidateWithCdp(
   }>(
     session,
     sessionId,
-    isEdufineInteraction
+    isSpecializedInteraction
       ? edufineCandidateActionExpression(
           interaction,
           normalizedText,
@@ -1878,6 +1941,15 @@ export async function focusWxsClientWindow(id: number): Promise<boolean> {
   )) !== null;
 }
 
+export async function closeWxsClientWindow(id: number): Promise<boolean> {
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  const command = `$p=Get-Process -Id ${Number(id)} -ErrorAction Stop; if($p.ProcessName -notlike 'WXSClient*'){exit 2}; if(-not $p.CloseMainWindow()){exit 3}; for($i=0;$i -lt 30;$i++){Start-Sleep -Milliseconds 100; if($p.HasExited){exit 0}; $p.Refresh(); if($p.MainWindowHandle -eq 0){exit 0}}; exit 4`;
+  return (await runWindowsCommand(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command],
+  )) !== null;
+}
+
 export interface CreateWindowsManagedSessionManagerOptions
   extends CreateWindowsManagedBrowserSessionOptions {
   workflowDependencies?: Partial<ExecuteWindowsWorkflowDependencies>;
@@ -1902,14 +1974,17 @@ export function createWindowsManagedSessionManager(
       if (!('connection' in session)) {
         throw new Error('업무용 브라우저 연결 정보가 없습니다. 브라우저를 다시 열어 주세요.');
       }
+      const windowsSession = session as WindowsManagedBrowserSession;
+      await resetWindowsWorkflowTargets(windowsSession, workflowId, workflowSpec);
       return openCdpWindowsWorkflowPage(
-        session as WindowsManagedBrowserSession,
+        windowsSession,
         workflowId,
         workflowSpec,
       );
     },
     isWxsClientRegistered,
     listWxsClientWindows,
+    closeWxsClientWindow,
     focusWindow: focusWxsClientWindow,
     ...options.workflowDependencies,
   };

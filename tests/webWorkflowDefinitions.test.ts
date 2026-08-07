@@ -42,22 +42,28 @@ describe('managed web workflow definitions', () => {
         expect.objectContaining({
           id: 'step-1',
           candidateLabels: ['업무관리'],
-          interaction: 'mouse',
-          navigationOnly: true,
+          interaction: 'frame-exact-text',
+          selection: 'first-available',
+          navigationOnly: false,
+          skipWhenSatisfied: true,
           postcondition: { kind: 'visible-any', labels: ['문서관리'] },
         }),
         expect.objectContaining({
           id: 'step-2',
           candidateLabels: ['문서관리'],
-          interaction: 'mouse',
-          navigationOnly: true,
+          interaction: 'frame-exact-text',
+          selection: 'first-available',
+          navigationOnly: false,
+          skipWhenSatisfied: true,
           postcondition: { kind: 'visible-any', labels: ['내 문서함'] },
         }),
         expect.objectContaining({
           id: 'step-3',
           candidateLabels: ['내 문서함'],
-          interaction: 'mouse',
-          navigationOnly: true,
+          interaction: 'frame-exact-text',
+          selection: 'first-available',
+          navigationOnly: false,
+          skipWhenSatisfied: true,
           postcondition: { kind: 'visible-any', labels: ['내 문서함 목록'] },
         }),
       ],
@@ -86,6 +92,32 @@ describe('managed web workflow definitions', () => {
     expect(definition.steps[0]).toEqual(expect.objectContaining({
       candidateLabels: ['저장'],
       navigationOnly: false,
+      interaction: 'frame-exact-text',
+      requiresConfirmation: true,
+    }));
+  });
+
+  it.each(['상신', '승인'])('allows %s as a confirmed custom step', (label) => {
+    const createCustomManagedWorkflowDefinition = (
+      workflowCommon as unknown as {
+        createCustomManagedWorkflowDefinition(spec: WebWorkflowSpec): {
+          steps: Array<Record<string, unknown>>;
+        };
+      }
+    ).createCustomManagedWorkflowDefinition;
+    const definition = createCustomManagedWorkflowDefinition({
+      id: 'custom',
+      browserId: 'edge',
+      custom: {
+        name: `${label} 업무`,
+        system: 'edufine',
+        steps: [{ id: 'step-1', label }],
+        finalText: `${label} 화면`,
+      },
+    });
+
+    expect(definition.steps[0]).toEqual(expect.objectContaining({
+      candidateLabels: [label],
       requiresConfirmation: true,
     }));
   });
@@ -211,7 +243,6 @@ describe('managed web workflow definitions', () => {
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map((step) => (
       step.candidateLabels
     ))).toEqual([
-      ['업무관리'],
       ['결재'],
       ['결재대기', '결재 대기'],
     ]);

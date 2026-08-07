@@ -8,6 +8,7 @@ import {
   openCdpWindowsApprovalPage,
   openCdpWindowsWorkflowPage,
   restoreAndActivateTarget,
+  resetWindowsWorkflowTargets,
   selectWindowsWorkflowTarget,
 } from '../src/main/services/webConnector/windows';
 import { createMacosWebAutomation } from '../src/main/services/webConnector/macos';
@@ -101,6 +102,41 @@ describe('Windows managed web automation', () => {
     expect(session.workflowState).toBe('IDLE');
     await session.close();
     expect(protocol.isClosed).toBe(true);
+  });
+
+  it('closes only the managed system tabs before a repeated workflow starts fresh', async () => {
+    let targets = [
+      { targetId: 'neis-main', type: 'page', url: 'https://goe.neis.go.kr/main' },
+      { targetId: 'neis-form', type: 'page', url: 'https://goe.neis.go.kr/leave/request' },
+      { targetId: 'edufine', type: 'page', url: 'https://klef.goe.go.kr/main' },
+      { targetId: 'personal', type: 'page', url: 'https://mail.example.com/' },
+    ];
+    const closed: string[] = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') return { targetInfos: targets };
+        if (method === 'Target.closeTarget') {
+          const targetId = String(params.targetId);
+          closed.push(targetId);
+          targets = targets.filter((target) => target.targetId !== targetId);
+          return { success: true };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    await resetWindowsWorkflowTargets({
+      officeCode: 'goe',
+      browserId: 'edge',
+      connection: { protocol, process: { exited: false }, transportKind: 'pipe' },
+      workflowState: 'IDLE',
+      isAlive: () => true,
+      close: async () => undefined,
+    } as never, 'neis-leave');
+
+    expect(closed).toEqual(['neis-main', 'neis-form']);
+    expect(targets.map(({ targetId }) => targetId)).toEqual(['edufine', 'personal']);
   });
 
   it('extends sessions only on the selected office system origins', async () => {
@@ -657,6 +693,9 @@ describe('Windows managed web automation', () => {
           if (expression.includes("'NEXACRO-JOB-OPTION'")) {
             return { result: { value: [safeCandidate(0, '학교회계')] } };
           }
+          if (expression.includes("'EXACT-TEXT'")) {
+            return { result: { value: [safeCandidate(0, '내 문서함')] } };
+          }
           if (expression.includes("'NEXACRO-TOP-MENU'")) {
             return { result: { value: [safeCandidate(0, '사업관리')] } };
           }
@@ -670,6 +709,9 @@ describe('Windows managed web automation', () => {
           if (expression.includes('const interaction="edufine-job-toggle"') ||
             expression.includes('const interaction="edufine-job-option"')) {
             return { result: { value: { ok: true, x: 90, y: 40 } } };
+          }
+          if (expression.includes('const interaction="frame-exact-text"')) {
+            return { result: { value: { ok: true, x: 80, y: 30 } } };
           }
           if (expression.includes('const interaction="edufine-job"')) {
             return { result: { value: { ok: true, direct: true } } };
@@ -737,6 +779,15 @@ describe('Windows managed web automation', () => {
       maxChecks: 1,
       checkDelayMs: 1,
     };
+    const frameExactStep = {
+      id: 'open-custom-menu',
+      candidateLabels: ['내 문서함'],
+      interaction: 'frame-exact-text' as const,
+      selection: 'first-available' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['문서함 목록'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
 
     await workflowPage.pressCandidate(
       (await workflowPage.inspectCandidates(jobToggleStep))[0],
@@ -758,6 +809,10 @@ describe('Windows managed web automation', () => {
       (await workflowPage.inspectCandidates(megaStep))[0],
       megaStep,
     );
+    await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(frameExactStep))[0],
+      frameExactStep,
+    );
 
     expect(expressions.some((expression) => expression.includes('cboJobList'))).toBe(true);
     expect(expressions.some((expression) => expression.includes("[id*='cboJobList'][id*='dropbutton']"))).toBe(true);
@@ -765,8 +820,11 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => expression.includes('_on_value_change'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="TopFrame"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="pdvMegaMenu"]'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('const interaction="frame-exact-text"'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('offsetX+rect.left+rect.width/2'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('forbiddenTokens'))).toBe(true);
     expect(inputCommands).toEqual([
+      'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',

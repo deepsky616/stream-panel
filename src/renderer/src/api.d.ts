@@ -59,6 +59,9 @@ interface StreamPanelApi {
       browserId: 'chrome' | 'edge';
       target: 'pair' | 'folder' | 'extensions';
     }): Promise<{ ok: true } | { ok: false; message: string }>;
+    openApprovalInbox(input: {
+      system: 'neis' | 'edufine';
+    }): Promise<{ queued: true } | { queued: false; message: string }>;
   };
   approvalMonitor: {
     status(): Promise<ApprovalMonitorStatus[]>;

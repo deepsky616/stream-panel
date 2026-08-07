@@ -88,6 +88,42 @@ button {
   border-radius: 6px;
 }
 
+.title-actions .title-approval {
+  display: flex;
+  width: auto;
+  min-width: 58px;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.title-approval b {
+  display: inline-grid;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--bg);
+  background: var(--accent);
+  font-size: 9px;
+}
+
+.title-approval-ready b,
+.title-approval-disabled b,
+.title-approval-idle b {
+  color: var(--text-dim);
+  background: var(--tile-hover);
+}
+
+.title-approval-error b,
+.title-approval-login-required b {
+  color: #fff;
+  background: #d75a5a;
+}
+
 .editor-title-button {
   position: relative;
 }

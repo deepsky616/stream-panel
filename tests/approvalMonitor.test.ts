@@ -24,12 +24,12 @@ function windowsConfig(): AppConfig {
 const FIXED_WORK_TIME = new Date(2026, 7, 5, 9, 30).getTime();
 
 describe('approval monitor settings', () => {
-  it('adds safe disabled defaults and restores them for an existing version-one config', () => {
+  it('enables both approval counters by default and restores them for existing configs', () => {
     const defaults = windowsConfig();
     expect(defaults.approvalMonitor).toEqual({
       sources: {
-        neis: { enabled: false, browserId: 'edge' },
-        edufine: { enabled: false, browserId: 'edge' },
+        neis: { enabled: true, browserId: 'edge' },
+        edufine: { enabled: true, browserId: 'edge' },
       },
       intervalMinutes: 10,
       notifyOnlyOnIncrease: true,
@@ -573,6 +573,7 @@ describe('approval monitor service', () => {
   it('checks only enabled systems, broadcasts counts, and persists counts without document data', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;
+    config.approvalMonitor.sources.edufine.enabled = false;
     const counts = [2, 4];
     const scans: unknown[] = [];
     const notifications: unknown[] = [];
@@ -659,6 +660,7 @@ describe('approval monitor service', () => {
   it('reschedules outside work hours and scans from the shared timer during work hours', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;
+    config.approvalMonitor.sources.edufine.enabled = false;
     let currentTime = new Date(2026, 7, 5, 20, 0).getTime();
     let scans = 0;
     const timers: Array<{ handler: () => void; delayMs: number }> = [];

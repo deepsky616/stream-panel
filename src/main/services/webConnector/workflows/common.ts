@@ -40,6 +40,7 @@ export interface WorkflowStep {
   interaction:
     | 'mouse'
     | 'dom-click'
+    | 'frame-exact-text'
     | 'edufine-job'
     | 'edufine-job-toggle'
     | 'edufine-job-option'
@@ -217,15 +218,17 @@ export function createCustomManagedWorkflowDefinition(
       return {
         id: step.id,
         candidateLabels: [step.label],
-        interaction: 'mouse',
-        navigationOnly: !requiresConfirmation,
+        interaction: 'frame-exact-text',
+        selection: 'first-available',
+        navigationOnly: false,
         ...(requiresConfirmation ? { requiresConfirmation: true } : {}),
+        skipWhenSatisfied: true,
         postcondition: {
           kind: 'visible-any' as const,
           labels: [spec.custom.steps[index + 1]?.label ?? spec.custom.finalText],
         },
-        maxChecks: 20,
-        checkDelayMs: 500,
+        maxChecks: 40,
+        checkDelayMs: 250,
       };
     }),
   };

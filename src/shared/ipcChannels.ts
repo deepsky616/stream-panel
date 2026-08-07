@@ -18,6 +18,7 @@ export const IPC_CHANNELS = {
   WEB_CONNECTOR_STATUS: 'web-connector:status',
   WEB_CONNECTOR_TEST: 'web-connector:test',
   WEB_CONNECTOR_OPEN_SETUP: 'web-connector:open-setup',
+  WEB_CONNECTOR_OPEN_APPROVAL: 'web-connector:open-approval',
   WEB_APPROVAL_STATUS: 'web-approval:status',
   WEB_APPROVAL_CHECK: 'web-approval:check',
   ICON_RESOLVE: 'icon:resolve',

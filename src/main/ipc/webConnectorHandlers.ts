@@ -2,6 +2,7 @@ import { ipcMain, shell } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type { WebConnectorBrowserId } from '../../shared/types';
 import {
+  assertWebConnectorApprovalInput,
   assertWebConnectorBrowserInput,
   assertWebConnectorSetupInput,
   assertWebConnectorStatusInput,
@@ -21,6 +22,9 @@ export function createWebConnectorHandlerActions(
   return {
     status: () => service.getStatuses(),
     test: (input: { browserId: WebConnectorBrowserId }) => service.test(input.browserId),
+    openApprovalInbox: (input: { system: 'neis' | 'edufine' }) => (
+      service.openApprovalInbox(input.system)
+    ),
     async openSetup(input: {
       browserId: WebConnectorBrowserId;
       target: 'pair' | 'folder' | 'extensions';
@@ -63,5 +67,10 @@ export function registerWebConnectorHandlers(service: WebConnectorService): void
   ipcMain.handle(IPC_CHANNELS.WEB_CONNECTOR_OPEN_SETUP, (_event, input: unknown) => {
     assertWebConnectorSetupInput(input);
     return actions.openSetup(input);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WEB_CONNECTOR_OPEN_APPROVAL, (_event, input: unknown) => {
+    assertWebConnectorApprovalInput(input);
+    return actions.openApprovalInbox(input);
   });
 }

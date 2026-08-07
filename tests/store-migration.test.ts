@@ -22,7 +22,7 @@ describe('store migration', () => {
     const future = JSON.stringify({ ...defaults, version: 99 });
     const result = recoverConfigText(future, defaults);
     expect(result).toMatchObject({ recovered: true, reason: 'future-version', backupText: future });
-    expect(result.config.version).toBe(1);
+    expect(result.config.version).toBe(2);
   });
 
   it('backs up and resets malformed json', () => {
@@ -45,6 +45,7 @@ describe('store migration', () => {
 
   it('fills fields added to a legacy version-one config without deleting its items', () => {
     const legacy = structuredClone(defaults) as unknown as Record<string, unknown>;
+    legacy.version = 1;
     delete legacy.platform;
     delete legacy.behavior;
     delete legacy.keyboard;
@@ -55,6 +56,7 @@ describe('store migration', () => {
     const result = recoverConfigText(JSON.stringify(legacy), defaults);
 
     expect(result.config.root).toHaveLength(3);
+    expect(result.config.version).toBe(2);
     expect(result.config.platform).toBe('darwin');
     expect(result.config.behavior).toMatchObject({ hideAfterLaunch: true, edgePeek: true });
     expect(result.config.keyboard).toMatchObject({
@@ -71,6 +73,20 @@ describe('store migration', () => {
       autoConnectAfterPortalLogin: true,
       autoConnectTarget: 'both',
     });
+    expect(result.config.approvalMonitor).toMatchObject({
+      sources: {
+        neis: { enabled: true, browserId: 'edge' },
+        edufine: { enabled: true, browserId: 'edge' },
+      },
+    });
+  });
+
+  it('preserves a version-two choice to disable an approval source', () => {
+    const current = structuredClone(defaults);
+    current.approvalMonitor.sources.neis.enabled = false;
+    const result = recoverConfigText(JSON.stringify(current), defaults);
+    expect(result.config.approvalMonitor.sources.neis.enabled).toBe(false);
+    expect(result.config.approvalMonitor.sources.edufine.enabled).toBe(true);
   });
 
   it('preserves an allowed office and replaces an invalid office with Gyeonggi', () => {

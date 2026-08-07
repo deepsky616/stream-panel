@@ -309,7 +309,7 @@ export function PanelApp() {
         }, config.behavior.idleFadeAfterMs);
       }}
     >
-      <TitleBar config={config} />
+      <TitleBar config={config} approvalStatuses={approvalStatuses} />
       <PanelGrid
         config={config}
         items={items}

@@ -46,8 +46,8 @@ export const DEFAULT_KEYBOARD = {
 
 export const DEFAULT_APPROVAL_MONITOR = {
   sources: {
-    neis: { enabled: false, browserId: 'edge' },
-    edufine: { enabled: false, browserId: 'edge' },
+    neis: { enabled: true, browserId: 'edge' },
+    edufine: { enabled: true, browserId: 'edge' },
   },
   intervalMinutes: 10,
   notifyOnlyOnIncrease: true,
@@ -115,7 +115,7 @@ export function createDefaultConfig(
 ): AppConfig {
   const configPlatform = resolveConfigPlatform(platform);
   return {
-    version: 1,
+    version: 2,
     platform: configPlatform,
     educationOfficeCode: 'goe',
     root: createDefaultItems(paths, createId),

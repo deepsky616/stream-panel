@@ -301,10 +301,17 @@ export function SettingsModal({
     try {
       const result = await window.api.webConnector.openSetup({ browserId, target });
       if (result.ok) {
-        setMessage(target === 'folder'
-          ? '문제 해결 폴더를 열었습니다.'
-          : '업무용 브라우저를 준비했습니다. 웹 업무 키나 업무 알림의 지금 확인을 누르면 해당 시스템에 연결합니다.');
-        if (target === 'pair') await refreshConnectorStatuses();
+        if (target === 'folder') {
+          setMessage('문제 해결 폴더를 열었습니다.');
+        } else {
+          await refreshConnectorStatuses();
+          const statuses = await window.api.approvalMonitor.check({});
+          setApprovalStatuses(statuses);
+          const ready = statuses.filter((status) => status.state === 'ready');
+          setMessage(ready.length === 2
+            ? `나이스 ${ready[0].pendingCount ?? 0}건, 에듀파인 ${ready[1].pendingCount ?? 0}건을 확인했습니다.`
+            : '나이스와 K-에듀파인 탭을 열었습니다. 추가 로그인이 필요한 시스템은 표시된 탭에서 로그인해 주세요.');
+        }
       } else {
         setConnectorError(browserId);
         setMessage(result.message);
@@ -511,9 +518,9 @@ export function SettingsModal({
                   <h3>사용 순서</h3>
                   <ol>
                     <li>소속 교육청과 사용할 엣지 또는 크롬을 고릅니다.</li>
-                    <li>업무용 브라우저 열기를 눌러 교육청 전용 브라우저를 준비합니다.</li>
+                    <li>업무용 브라우저 열기를 누르면 교육청 전용 브라우저에 나이스와 K-에듀파인 탭을 각각 준비합니다.</li>
                     <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓고 실행합니다.</li>
-                    <li>업무 키나 업무 알림의 지금 확인을 누르면 필요한 시스템에만 연결하며, 추가 로그인이 필요하면 해당 탭에서 진행합니다.</li>
+                    <li>로그인이 끝나면 결재 대기 수를 자동으로 확인하며, 추가 인증이 필요하면 해당 시스템 탭에서 진행합니다.</li>
                   </ol>
                 </div>
                 <CustomWebWorkflowBuilder

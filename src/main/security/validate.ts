@@ -467,7 +467,7 @@ export function validateDeck(
 }
 
 export function validateAppConfig(config: AppConfig): void {
-  if (config.version !== 1) throw new ValidationError('지원하지 않는 설정 버전입니다.');
+  if (config.version !== 2) throw new ValidationError('지원하지 않는 설정 버전입니다.');
   if (config.platform !== 'win32' && config.platform !== 'darwin') {
     throw new ValidationError('지원하지 않는 운영체제 설정입니다.');
   }

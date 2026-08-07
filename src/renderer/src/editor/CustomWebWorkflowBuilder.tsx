@@ -187,7 +187,7 @@ export function CustomWebWorkflowBuilder({
             ? (editing ? '저장 중…' : '추가 중…')
             : (editing ? '변경 내용 저장' : '키로 추가')}
         </button>
-        <small>저장·제출·결재·등록·신청·확인·인증 입력 단계는 추가할 수 있으며, 실행할 때마다 해당 단계 직전에 확인합니다. 인증서와 암호는 자동 입력하지 않습니다.</small>
+        <small>저장·제출·상신·승인·결재·등록·신청·확인·인증 입력 단계는 추가할 수 있으며, 실행할 때마다 해당 단계 직전에 확인합니다. 인증서와 암호는 자동 입력하지 않습니다.</small>
       </div>
       {feedback && <p className="custom-workflow-feedback" role="status">{feedback}</p>}
     </form>

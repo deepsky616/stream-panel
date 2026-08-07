@@ -9,6 +9,7 @@ import { getApprovalBadgeForItem } from '../src/renderer/src/panel/approvalBadge
 import { SettingsModal } from '../src/renderer/src/editor/SettingsModal';
 import { createConfigWriteQueue } from '../src/renderer/src/editor/configWriteQueue';
 import { KeyTile } from '../src/renderer/src/common/KeyTile';
+import { TitleBar } from '../src/renderer/src/panel/TitleBar';
 import type {} from '../src/renderer/src/api';
 
 function approvalAction(id: 'neis-approval-inbox' | 'edufine-approval-inbox'): ActionItem {
@@ -174,5 +175,23 @@ describe('approval monitor settings UI', () => {
       title: '나이스 결재 대기 0건',
       state: 'empty',
     });
+  });
+
+  it('always places both approval totals immediately before the title controls', () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const html = renderToStaticMarkup(createElement(TitleBar, {
+      config,
+      approvalStatuses: [
+        { system: 'neis', state: 'ready', pendingCount: 4 },
+        { system: 'edufine', state: 'ready', pendingCount: 7 },
+      ],
+    }));
+    expect(html).toContain('나이스 결재함 총 4건 열기');
+    expect(html).toContain('에듀파인 결재함 총 7건 열기');
+    expect(html.indexOf('나이스 결재함 총 4건 열기')).toBeLessThan(html.indexOf('잠금'));
   });
 });

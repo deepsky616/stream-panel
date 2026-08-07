@@ -54,6 +54,8 @@ const api = {
       browserId: 'chrome' | 'edge';
       target: 'pair' | 'folder' | 'extensions';
     }) => ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_OPEN_SETUP, input),
+    openApprovalInbox: (input: { system: 'neis' | 'edufine' }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_OPEN_APPROVAL, input),
   },
   approvalMonitor: {
     status: () => ipcRenderer.invoke(IPC_CHANNELS.WEB_APPROVAL_STATUS, {}),

@@ -14,6 +14,10 @@ describe('web connector IPC actions', () => {
         calls.push(`setup:${browserId}:${target}`);
         return { ok: true };
       },
+      openApprovalInbox: (system: string) => {
+        calls.push(`approval:${system}`);
+        return { queued: true };
+      },
       ensureDiagnosticsDirectory: async () => 'C:\\StreamPanel\\web-connector\\diagnostics',
     } as unknown as WebConnectorService;
     const opened: string[] = [];
@@ -26,11 +30,13 @@ describe('web connector IPC actions', () => {
     await expect(actions.openSetup({ browserId: 'edge', target: 'pair' })).resolves.toEqual({ ok: true });
     await expect(actions.openSetup({ browserId: 'chrome', target: 'extensions' })).resolves.toEqual({ ok: true });
     await expect(actions.openSetup({ browserId: 'edge', target: 'folder' })).resolves.toEqual({ ok: true });
+    expect(actions.openApprovalInbox({ system: 'neis' })).toEqual({ queued: true });
 
     expect(calls).toEqual([
       'test:edge',
       'setup:edge:pair',
       'setup:chrome:extensions',
+      'approval:neis',
     ]);
     expect(opened).toEqual(['C:\\StreamPanel\\web-connector\\diagnostics']);
   });

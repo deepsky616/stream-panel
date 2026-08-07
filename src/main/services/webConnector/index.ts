@@ -11,6 +11,7 @@ import type {
   WebWorkflowSystem,
 } from '../../../shared/types';
 import {
+  getWebWorkflowTarget,
   getWebWorkflowSystem,
   isAllowedWebWorkflowSpecTarget,
   isWebWorkflowSpec,
@@ -75,6 +76,7 @@ export interface WebConnectorService {
     browserId: WebConnectorBrowserId,
     target: 'pair' | 'extensions',
   ): Promise<ConnectorReply>;
+  openApprovalInbox(system: WebWorkflowSystem): WebConnectorEnqueueResult;
   ensureDiagnosticsDirectory(): Promise<string>;
   scanApproval(input: ApprovalScanInput): Promise<number>;
   onConfigChanged(config: AppConfig): Promise<void>;
@@ -476,7 +478,46 @@ export function createWebConnectorService({
         );
         return { ok: true };
       }
-      return this.test(browserId);
+      try {
+        const officeCode = currentOffice();
+        await prepareAndMark(browserId);
+        connectionStates.delete(connectionKey(officeCode, browserId));
+        publishStatuses();
+        if (controller.connectSystems) {
+          await controller.connectSystems({
+            officeCode,
+            browserId,
+            systems: ['neis', 'edufine'],
+            foreground: true,
+          }, (status) => setSystemStatus(officeCode, browserId, status));
+        }
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, message: errorDetail(error) };
+      }
+    },
+    openApprovalInbox(system) {
+      const config = getConfig();
+      const workflowId = system === 'neis'
+        ? 'neis-approval-inbox' as const
+        : 'edufine-approval-inbox' as const;
+      const browserId = config.approvalMonitor.sources[system].browserId;
+      return this.queue({
+        id: `titlebar-${system}-approval-inbox`,
+        kind: 'action',
+        label: system === 'neis' ? '나이스 결재함' : '에듀파인 결재함',
+        type: 'url',
+        target: getWebWorkflowTarget(workflowId, config.educationOfficeCode),
+        args: [],
+        icon: { kind: 'emoji', value: '🔔' },
+        color: '#5B8CFF',
+        position: 0,
+        webWorkflow: {
+          id: workflowId,
+          browserId,
+          officeCode: config.educationOfficeCode,
+        },
+      });
     },
     async ensureDiagnosticsDirectory() {
       await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 });
