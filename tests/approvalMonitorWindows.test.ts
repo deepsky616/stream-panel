@@ -38,7 +38,7 @@ function page(origin: string, count = 3): WindowsApprovalPage {
 }
 
 describe('Windows approval count reader', () => {
-  it('reads one explicit badge count, rejects a year, and prioritizes the canonical label', () => {
+  it('reads only NEIS Total and the Edufine 결재(긴급) badge', () => {
     const parseApprovalCounterCandidates = (
       approvalWindows as unknown as {
         parseApprovalCounterCandidates?: (
@@ -50,7 +50,7 @@ describe('Windows approval count reader', () => {
     expect(parseApprovalCounterCandidates).toBeTypeOf('function');
     expect(parseApprovalCounterCandidates!('neis', [
       {
-        text: '미결/협조함 (3)',
+        text: 'Total 3',
         ariaLabel: '',
         title: '',
         className: 'menu-item',
@@ -85,21 +85,21 @@ describe('Windows approval count reader', () => {
         role: 'status',
         children: [],
       },
-    ])).toBe(2);
+    ])).toBe(4);
     expect(parseApprovalCounterCandidates!('neis', [
       {
-        text: '미결/협조함 5',
+        text: 'Total 5',
         ariaLabel: '',
         title: '',
         className: 'menu-item',
         role: 'link',
         children: [
-          { text: '미결/협조함', ariaLabel: '', title: '', className: 'label', role: '' },
-          { text: '5', ariaLabel: '', title: '', className: 'badge-count', role: 'status' },
+          { text: 'Total', ariaLabel: '', title: '', className: 'label', role: '' },
+          { text: '5', ariaLabel: '', title: '', className: '', role: '' },
         ],
       },
     ])).toBe(5);
-    expect(parseApprovalCounterCandidates!('edufine', [
+    expect(() => parseApprovalCounterCandidates!('edufine', [
       {
         text: '총 6건',
         ariaLabel: '',
@@ -108,10 +108,10 @@ describe('Windows approval count reader', () => {
         role: 'status',
         children: [],
       },
-    ])).toBe(6);
+    ])).toThrow(/안전하게 읽지 못했습니다/);
   });
 
-  it('allows 결재 only as the fixed Edufine top-menu route, never as a form action', () => {
+  it('allows 결재 only as the fixed Edufine exact-text route, never as a form action', () => {
     expect(APPROVAL_INBOX_WORKFLOWS.neis.steps.flatMap(
       (step) => step.candidateLabels,
     )).not.toContain('결재');
@@ -119,9 +119,41 @@ describe('Windows approval count reader', () => {
       (step) => step.candidateLabels.includes('결재'),
     );
     expect(edufineApproval).toMatchObject({
-      interaction: 'edufine-top-menu',
+      interaction: 'frame-exact-text',
       allowActionText: true,
     });
+  });
+
+  it('reads the Edufine header badge without opening the approval inbox', async () => {
+    let presses = 0;
+    const workflowPage = page('https://klef.goe.go.kr', 8);
+    workflowPage.pressCandidate = async () => { presses += 1; };
+
+    await expect(scanWindowsApprovalCount(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
+      { openPage: async () => workflowPage },
+    )).resolves.toBe(8);
+    expect(presses).toBe(0);
+  });
+
+  it('waits briefly for a dynamically rendered header badge', async () => {
+    let reads = 0;
+    let waits = 0;
+    const workflowPage = page('https://klef.goe.go.kr', 6);
+    workflowPage.readApprovalCount = async () => {
+      reads += 1;
+      if (reads < 3) throw new Error('결재 대기 수를 안전하게 읽지 못했습니다.');
+      return 6;
+    };
+    workflowPage.wait = async () => { waits += 1; };
+
+    await expect(scanWindowsApprovalCount(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
+      { openPage: async () => workflowPage },
+    )).resolves.toBe(6);
+    expect({ reads, waits }).toEqual({ reads: 3, waits: 2 });
   });
 
   it('accepts only a bounded non-negative integer returned by the page', () => {
@@ -196,25 +228,25 @@ describe('Windows approval count reader', () => {
     expect(reads).toBe(0);
   });
 
-  it('rechecks the allowed host immediately after a click and after reading the count', async () => {
+  it('rechecks the allowed host immediately after a NEIS click and after reading either count', async () => {
+    let clicked = false;
+    let reads = 0;
+    const redirectAfterClick = page('https://goe.neis.go.kr');
+    redirectAfterClick.currentOrigin = async () => clicked ? 'https://evil.example' : 'https://goe.neis.go.kr';
+    redirectAfterClick.pressCandidate = async () => { clicked = true; };
+    redirectAfterClick.readApprovalCount = async () => { reads += 1; return 3; };
+
+    await expect(scanWindowsApprovalCount(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { system: 'neis', officeCode: 'goe', browserId: 'edge' },
+      { openPage: async () => redirectAfterClick },
+    )).rejects.toThrow(/허용되지 않은/);
+    expect(reads).toBe(0);
+
     for (const input of [
       { system: 'neis' as const, officeCode: 'goe' as const, browserId: 'edge' as const, origin: 'https://goe.neis.go.kr' },
       { system: 'edufine' as const, officeCode: 'goe' as const, browserId: 'edge' as const, origin: 'https://klef.goe.go.kr' },
     ]) {
-      let clicked = false;
-      let reads = 0;
-      const redirectAfterClick = page(input.origin);
-      redirectAfterClick.currentOrigin = async () => clicked ? 'https://evil.example' : input.origin;
-      redirectAfterClick.pressCandidate = async () => { clicked = true; };
-      redirectAfterClick.readApprovalCount = async () => { reads += 1; return 3; };
-
-      await expect(scanWindowsApprovalCount(
-        { officeCode: input.officeCode, browserId: input.browserId, isAlive: () => true, close: async () => undefined },
-        input,
-        { openPage: async () => redirectAfterClick },
-      )).rejects.toThrow(/허용되지 않은/);
-      expect(reads).toBe(0);
-
       let countRead = false;
       const redirectAfterRead = page(input.origin);
       redirectAfterRead.currentOrigin = async () => countRead ? 'https://evil.example' : input.origin;

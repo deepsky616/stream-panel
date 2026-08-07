@@ -18,6 +18,7 @@ const COMMON_CHECKS = {
 };
 const NEIS_PENDING_COOPERATION_LABELS = ['미결/협조함', '미결 / 협조함'] as const;
 const EDUFINE_WAITING_LABELS = ['결재대기', '결재 대기'] as const;
+const NEIS_TOTAL_LABELS = ['Total', 'TOTAL', 'total'] as const;
 
 const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   id: 'neis-approval-inbox',
@@ -28,10 +29,8 @@ const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       id: 'open-pending-cooperation-inbox',
       candidateLabels: NEIS_PENDING_COOPERATION_LABELS,
       selection: 'first-available',
-      interaction: 'mouse',
-      menuOnly: true,
-      contextLabels: ['승인사항'],
-      postcondition: { kind: 'tab-selected-any', labels: NEIS_PENDING_COOPERATION_LABELS },
+      interaction: 'frame-exact-text',
+      postcondition: { kind: 'visible-any', labels: NEIS_TOTAL_LABELS },
       ...COMMON_CHECKS,
     },
   ],
@@ -45,7 +44,7 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
     {
       id: 'open-document-approval-menu',
       candidateLabels: ['결재'],
-      interaction: 'edufine-top-menu',
+      interaction: 'frame-exact-text',
       allowActionText: true,
       postcondition: { kind: 'visible-any', labels: EDUFINE_WAITING_LABELS },
       ...COMMON_CHECKS,
@@ -54,7 +53,7 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       id: 'open-waiting-approval-inbox',
       candidateLabels: EDUFINE_WAITING_LABELS,
       selection: 'first-available',
-      interaction: 'edufine-mega-menu',
+      interaction: 'frame-exact-text',
       postcondition: {
         kind: 'visible-groups',
         groups: [

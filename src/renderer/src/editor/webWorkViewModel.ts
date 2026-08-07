@@ -65,17 +65,11 @@ export function createWebWorkBrowserCards(
       label: SYSTEM_LABELS[system.system],
       stateLabel: SYSTEM_STATE_LABELS[system.state],
     }));
-    const hasSystemError = systems.some((system) => system.state === 'error');
-    const hasLoginRequired = systems.some((system) => system.state === 'login-required');
     const hasConnecting = systems.some((system) => system.state === 'connecting');
     const state: WebWorkBrowserState = errorBrowserId === browserId
       ? 'error'
-      : hasSystemError
-        ? 'error'
       : busyBrowserId === browserId || hasConnecting
         ? 'running'
-        : hasLoginRequired
-          ? 'login-required'
         : status?.paired || status?.connected
           ? 'ready'
           : 'needs-connection';

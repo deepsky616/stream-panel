@@ -845,7 +845,7 @@ if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
   return labels.flatMap((label,index)=>{
     const matches=documents.flatMap(({document,offsetX,offsetY})=>
       Array.from(document.querySelectorAll('*')).map(element=>({element,offsetX,offsetY}))
-    ).filter(({element})=>normalize(element.textContent)===label&&visible(element))
+    ).filter(({element})=>surfaceTextsOf(element).some(text=>normalize(text)===label)&&visible(element)&&enabled(element))
       .sort((left,right)=>left.element.children.length-right.element.children.length);
     const exact=matches[0];
     if(!exact)return [];
@@ -945,7 +945,7 @@ if(interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
 if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
   const matches=documents.flatMap(({document,offsetX,offsetY})=>
     Array.from(document.querySelectorAll('*')).map(element=>({element,offsetX,offsetY}))
-  ).filter(({element})=>normalize(element.textContent)===wanted&&visible(element))
+  ).filter(({element})=>surfaceTextsOf(element).some(text=>normalize(text)===wanted)&&visible(element)&&enabled(element))
     .sort((left,right)=>left.element.children.length-right.element.children.length);
   const exact=matches[0];
   if(!exact)return {ok:false};
@@ -986,8 +986,8 @@ return {handled:true};
 
 function approvalCounterExpression(system: WebWorkflowSystem): string {
   const labels = system === 'neis'
-    ? ['미결/협조함', '미결 / 협조함', '미결', '협조함', '결재 대기', '결재대기', '총', '전체']
-    : ['결재 대기', '결재대기', '결재할 문서', '총', '전체'];
+    ? ['Total', 'TOTAL', 'total']
+    : ['결재(긴급)', '결재 (긴급)'];
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const labels=${JSON.stringify(labels)}.map(value=>normalize(value).replace(/\\s+/g,''));

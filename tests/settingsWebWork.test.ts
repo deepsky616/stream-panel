@@ -117,12 +117,22 @@ describe('web work settings view model', () => {
         { system: 'edufine', state: 'login-required', message: '인증이 필요합니다.' },
       ],
     }])[0]).toMatchObject({
-      state: 'login-required',
-      stateLabel: '추가 로그인 필요',
+      state: 'ready',
+      stateLabel: '준비됨',
       systems: [
         { system: 'neis', label: '나이스', stateLabel: '연결됨' },
         { system: 'edufine', label: 'K-에듀파인', stateLabel: '추가 로그인 필요' },
       ],
+    });
+    expect(createWebWorkBrowserCards([{
+      browserId: 'edge',
+      paired: true,
+      connected: true,
+      systems: [{ system: 'neis', state: 'error', message: 'Total을 찾지 못했습니다.' }],
+    }])[0]).toMatchObject({
+      state: 'ready',
+      stateLabel: '준비됨',
+      systems: [{ system: 'neis', state: 'error', stateLabel: '실패' }],
     });
   });
 

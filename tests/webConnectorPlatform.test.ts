@@ -821,6 +821,7 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => expression.includes('[id*="TopFrame"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="pdvMegaMenu"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('const interaction="frame-exact-text"'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('surfaceTextsOf(element).some'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('offsetX+rect.left+rect.width/2'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('forbiddenTokens'))).toBe(true);
     expect(inputCommands).toEqual([

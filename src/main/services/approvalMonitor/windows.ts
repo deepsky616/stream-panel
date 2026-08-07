@@ -42,8 +42,8 @@ interface ApprovalCounterCandidate extends ApprovalCounterSignal {
 }
 
 const COUNTER_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
-  neis: ['미결/협조함', '미결 / 협조함', '미결', '협조함', '결재 대기', '결재대기', '총', '전체'],
-  edufine: ['결재 대기', '결재대기', '결재할 문서', '총', '전체'],
+  neis: ['Total', 'TOTAL', 'total'],
+  edufine: ['결재(긴급)', '결재 (긴급)'],
 };
 
 function compactText(value: string): string {
@@ -58,7 +58,7 @@ function inlineCount(text: string, label: string): number | null {
     const match = remainder.match(/^(?:[:：·])?[([{](\d{1,4})[)\]}]$/) ??
       remainder.match(/^(?:[:：·])?(\d{1,4})건$/) ??
       remainder.match(/^(?:[:：·]|총)?(\d{1,4})건(?:$|[^\d])/) ??
-      remainder.match(/^(?:[:：·])?(\d{1,3})$/);
+      remainder.match(/^(?:[:：·])?(\d{1,4})$/);
     if (match) return Number(match[1]);
   }
   if (compact.endsWith(compactLabel)) {
@@ -68,14 +68,17 @@ function inlineCount(text: string, label: string): number | null {
   return null;
 }
 
-function bareSignalCount(signal: ApprovalCounterSignal): number | null {
+function bareSignalCount(
+  signal: ApprovalCounterSignal,
+  allowUnmarked = false,
+): number | null {
   const match = compactText(signal.text).match(/^(?:[([{])?(\d{1,4})(?:[)\]}]|건)?$/);
   if (!match) return null;
   const markedAsCount = /badge|count|counter|cnt|number|num|alarm|noti/i.test(signal.className) ||
     signal.role === 'status' ||
     signal.ariaLabel !== '' ||
     signal.title !== '';
-  return markedAsCount ? Number(match[1]) : null;
+  return markedAsCount || allowUnmarked ? Number(match[1]) : null;
 }
 
 function isCounterSignal(value: unknown): value is ApprovalCounterSignal {
@@ -123,7 +126,7 @@ export function parseApprovalCounterCandidates(
         ? [...candidate.children, candidate.next]
         : candidate.children;
       for (const signal of signals) {
-        const count = bareSignalCount(signal);
+        const count = bareSignalCount(signal, true);
         if (count !== null) counts.add(parseApprovalCounterValue(count));
       }
     }
@@ -189,8 +192,13 @@ export async function scanWindowsApprovalCount(
       },
       wait: (delayMs) => page.wait(delayMs),
     };
-    const routes = APPROVAL_INBOX_WORKFLOW_ROUTES[input.system];
-    let completed = false;
+    // K-에듀파인의 대기 건수는 어느 업무 화면에서나 보이는 상단
+    // '결재(긴급)' 배지에서 직접 읽는다. 결재대기 메뉴 이동은 사용자가
+    // 결재함을 열 때만 수행하고 배경 알림 확인에서는 수행하지 않는다.
+    const routes = input.system === 'edufine'
+      ? []
+      : APPROVAL_INBOX_WORKFLOW_ROUTES[input.system];
+    let completed = routes.length === 0;
     let routeError: unknown;
     for (const [index, route] of routes.entries()) {
       try {
@@ -206,10 +214,21 @@ export async function scanWindowsApprovalCount(
       }
     }
     if (!completed) throw routeError;
-    await assertOrigin();
-    const count = parseApprovalCounterValue(await page.readApprovalCount(input.system));
-    await assertOrigin();
-    return count;
+    let countError: unknown;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await assertOrigin();
+      try {
+        const count = parseApprovalCounterValue(await page.readApprovalCount(input.system));
+        await assertOrigin();
+        return count;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (!/결재 대기 수|업무 화면을 읽지 못했습니다/.test(message)) throw error;
+        countError = error;
+      }
+      if (attempt < 19) await page.wait(250);
+    }
+    throw countError;
   } finally {
     await page.release?.();
   }

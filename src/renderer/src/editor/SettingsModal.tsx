@@ -305,12 +305,7 @@ export function SettingsModal({
           setMessage('문제 해결 폴더를 열었습니다.');
         } else {
           await refreshConnectorStatuses();
-          const statuses = await window.api.approvalMonitor.check({});
-          setApprovalStatuses(statuses);
-          const ready = statuses.filter((status) => status.state === 'ready');
-          setMessage(ready.length === 2
-            ? `나이스 ${ready[0].pendingCount ?? 0}건, 에듀파인 ${ready[1].pendingCount ?? 0}건을 확인했습니다.`
-            : '나이스와 K-에듀파인 탭을 열었습니다. 추가 로그인이 필요한 시스템은 표시된 탭에서 로그인해 주세요.');
+          setMessage('나이스와 K-에듀파인 탭을 열었습니다. 로그인 후 업무 알림의 지금 확인을 누르면 각 시스템의 정확한 숫자만 읽습니다.');
         }
       } else {
         setConnectorError(browserId);
