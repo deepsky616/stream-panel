@@ -1,0 +1,80 @@
+name: Download Mirror
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to mirror
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (leave empty to use package.json)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: stream-panel-download-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="$REQUESTED_TAG"
+          if [ -z "$TAG" ]; then
+            TAG="v$(node -p "require('./package.json').version")"
+          fi
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid release tag: $TAG"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Download verified Windows release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          mkdir -p mirror-input
+          gh release download "$TAG" \
+            --pattern 'StreamPanel-*-Setup.exe' \
+            --dir mirror-input
+          INSTALLERS=(mirror-input/StreamPanel-*-Setup.exe)
+          if [ "${#INSTALLERS[@]}" -ne 1 ] || [ ! -f "${INSTALLERS[0]}" ]; then
+            echo "::error::Expected exactly one Windows installer for $TAG"
+            exit 1
+          fi
+      - name: Build resilient download page
+        shell: bash
+        run: |
+          INSTALLER=$(find mirror-input -maxdepth 1 -type f -name 'StreamPanel-*-Setup.exe' -print -quit)
+          node scripts/generate-download-site.mjs "$INSTALLER" download-site
+      - uses: actions/configure-pages@v5
+      - name: Upload download site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: download-site
+      - name: Deploy download site
+        id: deployment
+        uses: actions/deploy-pages@v4

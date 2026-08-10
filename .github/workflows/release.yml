@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   verify:
@@ -77,6 +79,8 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.publish.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -85,6 +89,7 @@ jobs:
           path: release-assets
           merge-multiple: true
       - name: Verify and publish all release files
+        id: publish
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -106,6 +111,7 @@ jobs:
           else
             TAG="$GITHUB_REF_NAME"
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           ASSETS=(
             "release-assets/StreamPanel-$VERSION-Setup.exe"
             "release-assets/StreamPanel-$VERSION-Setup.exe.blockmap"
@@ -129,3 +135,13 @@ jobs:
               exit 1
             }
           done
+
+  mirror:
+    needs: publish
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/download-mirror.yml
+    with:
+      tag: ${{ needs.publish.outputs.tag }}
