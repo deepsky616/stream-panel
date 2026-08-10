@@ -57,7 +57,7 @@ interface StreamPanelApi {
     }): Promise<{ ok: true } | { ok: false; message: string }>;
     openSetup(input: {
       browserId: 'chrome' | 'edge';
-      target: 'pair' | 'folder' | 'extensions';
+      target: 'pair' | 'connect' | 'folder' | 'extensions';
     }): Promise<{ ok: true } | { ok: false; message: string }>;
     openApprovalInbox(input: {
       system: 'neis' | 'edufine';

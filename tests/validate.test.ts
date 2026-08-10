@@ -406,7 +406,7 @@ describe('security validation', () => {
       assertWebConnectorBrowserInput(value: unknown): asserts value is { browserId: 'chrome' | 'edge' };
       assertWebConnectorSetupInput(value: unknown): asserts value is {
         browserId: 'chrome' | 'edge';
-        target: 'pair' | 'folder' | 'extensions';
+        target: 'pair' | 'connect' | 'folder' | 'extensions';
       };
     };
     expect(() => validators.assertWebConnectorStatusInput({})).not.toThrow();
@@ -415,6 +415,9 @@ describe('security validation', () => {
     expect(() => validators.assertWebConnectorBrowserInput({ browserId: 'safari' })).toThrow(/브라우저/);
     expect(() =>
       validators.assertWebConnectorSetupInput({ browserId: 'chrome', target: 'pair' }),
+    ).not.toThrow();
+    expect(() =>
+      validators.assertWebConnectorSetupInput({ browserId: 'edge', target: 'connect' }),
     ).not.toThrow();
     expect(() =>
       validators.assertWebConnectorSetupInput({ browserId: 'chrome', target: 'pair', command: 'run' }),

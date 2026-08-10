@@ -91,7 +91,7 @@ export interface WebConnectorService {
   test(browserId: WebConnectorBrowserId): Promise<ConnectorReply>;
   openSetup(
     browserId: WebConnectorBrowserId,
-    target: 'pair' | 'extensions',
+    target: 'pair' | 'connect' | 'extensions',
   ): Promise<ConnectorReply>;
   openApprovalInbox(system: WebWorkflowSystem): WebConnectorEnqueueResult;
   ensureDiagnosticsDirectory(): Promise<string>;
@@ -523,20 +523,20 @@ export function createWebConnectorService({
         const session = await prepareAndMark(browserId);
         connectionStates.delete(connectionKey(officeCode, browserId));
         publishStatuses();
-        const connection = getConfig().webConnection;
-        const systems: readonly WebWorkflowSystem[] = connection.autoConnectTarget === 'both'
-          ? ['neis', 'edufine']
-          : [connection.autoConnectTarget];
-        if (connection.autoConnectAfterPortalLogin && controller.connectSystems) {
-          await controller.connectSystems({
-            officeCode,
-            browserId,
-            systems,
-            foreground: true,
-          }, (status) => setSystemStatus(officeCode, browserId, status));
-        } else {
+        if (target === 'pair') {
           await portalOpener?.(session);
+          return { ok: true };
         }
+        if (!controller.connectSystems) {
+          throw new Error('나이스·K-에듀파인 연결 기능이 준비되지 않았습니다. 앱을 다시 시작해 주세요.');
+        }
+        const systems: readonly WebWorkflowSystem[] = ['neis', 'edufine'];
+        await controller.connectSystems({
+          officeCode,
+          browserId,
+          systems,
+          foreground: true,
+        }, (status) => setSystemStatus(officeCode, browserId, status));
         return { ok: true };
       } catch (error) {
         return { ok: false, message: errorDetail(error) };

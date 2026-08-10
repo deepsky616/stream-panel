@@ -70,6 +70,7 @@ export function SettingsModal({
   const [hotkeyStatuses, setHotkeyStatuses] = useState<Record<string, string>>({});
   const [connectorStatuses, setConnectorStatuses] = useState<WebConnectorStatus[]>([]);
   const [connectorBusy, setConnectorBusy] = useState<WebConnectorBrowserId | null>(null);
+  const [connectorBusyTarget, setConnectorBusyTarget] = useState<'pair' | 'connect' | 'folder' | null>(null);
   const [connectorError, setConnectorError] = useState<WebConnectorBrowserId | null>(null);
   const [approvalStatuses, setApprovalStatuses] = useState<ApprovalMonitorStatus[]>([]);
   const [approvalBusy, setApprovalBusy] = useState<WebWorkflowSystem | null>(null);
@@ -309,9 +310,10 @@ export function SettingsModal({
   };
   const openConnectorSetup = async (
     browserId: WebConnectorBrowserId,
-    target: 'pair' | 'folder',
+    target: 'pair' | 'connect' | 'folder',
   ) => {
     setConnectorBusy(browserId);
+    setConnectorBusyTarget(target);
     setConnectorError(null);
     setMessage(null);
     try {
@@ -319,9 +321,11 @@ export function SettingsModal({
       if (result.ok) {
         if (target === 'folder') {
           setMessage('문제 해결 폴더를 열었습니다.');
-        } else {
+        } else if (target === 'connect') {
           await refreshConnectorStatuses();
-          setMessage('업무포털 로그인 뒤 공식 나이스·K-에듀파인 연결을 확인했습니다. 추가 인증이 표시된 시스템만 직접 완료해 주세요.');
+          setMessage('나이스와 K-에듀파인 연결을 순서대로 확인했습니다. 추가 인증이 표시된 시스템만 직접 완료해 주세요.');
+        } else {
+          setMessage('업무포털을 열었습니다. 로그인 완료 후 나이스·에듀파인 연결을 눌러 주세요.');
         }
       } else {
         setConnectorError(browserId);
@@ -334,6 +338,7 @@ export function SettingsModal({
         : '업무용 브라우저를 열지 못했습니다. 설치 상태를 확인한 뒤 다시 시도해 주세요.');
     } finally {
       setConnectorBusy(null);
+      setConnectorBusyTarget(null);
     }
   };
   const checkApprovals = async (system: WebWorkflowSystem) => {
@@ -522,7 +527,16 @@ export function SettingsModal({
                             type="button"
                             disabled={connectorBusy !== null}
                             onClick={() => void openConnectorSetup(card.browserId, 'pair')}
-                          >{connectorBusy === card.browserId ? '여는 중…' : '업무용 브라우저 열기'}</button>
+                          >{connectorBusy === card.browserId && connectorBusyTarget === 'pair'
+                              ? '여는 중…'
+                              : '업무포털 열기'}</button>
+                          <button
+                            type="button"
+                            disabled={connectorBusy !== null}
+                            onClick={() => void openConnectorSetup(card.browserId, 'connect')}
+                          >{connectorBusy === card.browserId && connectorBusyTarget === 'connect'
+                              ? '연결 중…'
+                              : '나이스·에듀파인 연결'}</button>
                           {card.state === 'error' && (
                             <button
                               type="button"
@@ -538,9 +552,10 @@ export function SettingsModal({
                   <h3>사용 순서</h3>
                   <ol>
                     <li>소속 교육청과 사용할 엣지 또는 크롬을 고릅니다.</li>
-                    <li>업무용 브라우저 열기를 누르고 업무포털에 로그인하면 공식 나이스·K-에듀파인 연결을 순서대로 확인합니다.</li>
-                    <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓고 실행합니다.</li>
-                    <li>공식 연결 항목이 없거나 추가 인증이 필요하면 각 시스템 전용 탭에서 직접 진행합니다.</li>
+                    <li>업무포털 열기를 누르고 업무포털 메인에 로그인합니다.</li>
+                    <li>로그인 후 나이스·에듀파인 연결을 누르면 공식 연결 항목을 나이스, K-에듀파인 순서로 실행합니다.</li>
+                    <li>연결된 시스템 탭을 유지한 상태에서 복무·출장·기안·품의 키를 실행합니다.</li>
+                    <li>공식 연결 항목이 없거나 추가 인증이 필요하면 표시된 시스템 탭에서 직접 진행합니다.</li>
                   </ol>
                 </div>
                 <CustomWebWorkflowBuilder

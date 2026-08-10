@@ -346,13 +346,13 @@ export function assertWebConnectorSetupInput(
   value: unknown,
 ): asserts value is {
   browserId: 'chrome' | 'edge';
-  target: 'pair' | 'folder' | 'extensions';
+  target: 'pair' | 'connect' | 'folder' | 'extensions';
 } {
   assertRecord(value, '웹 업무 연결 설치');
   if (
     Object.keys(value).some((key) => !['browserId', 'target'].includes(key)) ||
     !['chrome', 'edge'].includes(String(value.browserId)) ||
-    !['pair', 'folder', 'extensions'].includes(String(value.target))
+    !['pair', 'connect', 'folder', 'extensions'].includes(String(value.target))
   ) {
     throw new TypeError('웹 업무 연결 설치 요청이 올바르지 않습니다. 브라우저를 다시 선택해 주세요.');
   }

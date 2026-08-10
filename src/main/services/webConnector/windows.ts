@@ -545,7 +545,7 @@ export async function executeWindowsWorkflow(
 }
 
 interface CdpEvaluationResponse {
-  result?: { value?: unknown };
+  result?: { value?: unknown; objectId?: unknown; subtype?: unknown };
   exceptionDetails?: unknown;
 }
 
@@ -566,8 +566,11 @@ const accessibleNameOf=(element)=>normalize(element.getAttribute?.('aria-label')
 const titleTextOf=(element)=>normalize(element.getAttribute?.('title'));
 const valueTextOf=(element)=>normalize('value' in element?element.value:'');
 const imageAltTextOf=(element)=>normalize(
-  Array.from(element.querySelectorAll?.('img[alt]')||[])
-    .map(image=>image.getAttribute?.('alt'))
+  [
+    String(element.tagName||'').toUpperCase()==='IMG'?element.getAttribute?.('alt'):'',
+    ...Array.from(element.querySelectorAll?.('img[alt]')||[])
+      .map(image=>image.getAttribute?.('alt'))
+  ]
     .filter(Boolean)
     .join(' ')
 );
@@ -2107,15 +2110,25 @@ const PORTAL_SSO_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
   ],
 };
 
-function portalSsoClickExpression(system: WebWorkflowSystem): string {
+function portalSsoClickExpression(
+  system: WebWorkflowSystem,
+  returnElement = false,
+): string {
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
+const returnElement=${JSON.stringify(returnElement)};
 const ssoLabels=${JSON.stringify(PORTAL_SSO_LABELS[system])}.map(normalize);
 const otherLabels=${JSON.stringify(PORTAL_SSO_LABELS[system === 'neis' ? 'edufine' : 'neis'])}.map(normalize);
+const systemTokens=${JSON.stringify(system === 'neis'
+    ? ['neis', '나이스', 'neis.go.kr']
+    : ['edufine', '에듀파인', 'klef.', 'k-에듀파인'])}.map(value=>String(value).toLowerCase());
+const otherTokens=${JSON.stringify(system === 'neis'
+    ? ['edufine', '에듀파인', 'klef.']
+    : ['neis', '나이스', 'neis.go.kr'])}.map(value=>String(value).toLowerCase());
 const fold=(value)=>normalize(value).toLowerCase().replace(/[\\s\\-()（）]/g,'');
 const wantedKeys=Array.from(new Set(ssoLabels.map(fold).filter(Boolean)));
 const otherKeys=Array.from(new Set(otherLabels.map(fold).filter(Boolean)));
-const selector='a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex],span,div,strong,p';
+const selector='a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex],img,span,div,strong,p';
 const candidates=[];
 const seen=new Set();
 for(const {document} of documents){
@@ -2124,6 +2137,10 @@ for(const {document} of documents){
     const inputType=normalize(element.getAttribute?.('type')||element.type).toLowerCase();
     if(inputType==='submit'||inputType==='image')continue;
     const texts=surfaceTextsOf(element).map(normalize).filter(text=>text&&text.length<=96);
+    const attributeSignal=[
+      'href','onclick','id','name','class','src','alt','data-url','data-href',
+      'data-link','data-system','data-service','data-program','data-menu'
+    ].map(name=>normalize(element.getAttribute?.(name))).filter(Boolean).join(' ').toLowerCase();
     let score=0;
     let matchedText='';
     for(const text of texts){
@@ -2135,6 +2152,10 @@ for(const {document} of documents){
         else if(key.includes(wanted)&&key.length<=wanted.length+24&&score<80){score=80;matchedText=text;}
       }
     }
+    const hasSystemToken=systemTokens.some(token=>attributeSignal.includes(token));
+    const hasOtherToken=otherTokens.some(token=>attributeSignal.includes(token));
+    if(hasOtherToken&&!hasSystemToken)continue;
+    if(hasSystemToken&&score<90){score=90;matchedText=matchedText||attributeSignal.slice(0,96);}
     if(score===0)continue;
     const clickableAncestor=element.closest?.('a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex]');
     const clickElement=clickableAncestor||element;
@@ -2149,7 +2170,7 @@ for(const {document} of documents){
   }
 }
 candidates.sort((left,right)=>right.score-left.score||left.area-right.area);
-if(candidates.length===0)return {clicked:false,count:0};
+if(candidates.length===0)return returnElement?null:{clicked:false,count:0};
 const winner=candidates[0];
 winner.element.scrollIntoView?.({block:'center',inline:'center'});
 winner.element.focus?.({preventScroll:false});
@@ -2166,7 +2187,7 @@ for(const {document} of documents){
 setTimeout(()=>{for(const {view,original} of restored){try{view.open=original;}catch{}}},3000);
 const rect=winner.element.getBoundingClientRect();
 const owner=documents.find(({document})=>document===winner.element.ownerDocument);
-return {
+return returnElement?winner.element:{
   clicked:true,
   count:candidates.length,
   matchedText:winner.matchedText,
@@ -2179,6 +2200,112 @@ return {
 interface PortalSystemPreparation {
   ready: boolean;
   message?: string;
+}
+
+interface PortalSsoCandidate {
+  clicked: true;
+  count: number;
+  x: number;
+  y: number;
+}
+
+function portalFrameIds(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const root = (value as Record<string, unknown>).frameTree;
+  const ids: string[] = [];
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return;
+    const record = node as Record<string, unknown>;
+    const frame = record.frame;
+    if (frame && typeof frame === 'object' && !Array.isArray(frame)) {
+      const id = (frame as Record<string, unknown>).id;
+      if (typeof id === 'string' && id.length > 0) ids.push(id);
+    }
+    if (Array.isArray(record.childFrames)) {
+      for (const child of record.childFrames) visit(child);
+    }
+  };
+  visit(root);
+  return [...new Set(ids)];
+}
+
+function portalQuadCenter(value: unknown): { x: number; y: number } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const quads = (value as Record<string, unknown>).quads;
+  if (!Array.isArray(quads)) return null;
+  for (const quad of quads) {
+    if (!Array.isArray(quad) || quad.length !== 8 || quad.some((item) => (
+      typeof item !== 'number' || !Number.isFinite(item)
+    ))) continue;
+    const xs = [quad[0], quad[2], quad[4], quad[6]] as number[];
+    const ys = [quad[1], quad[3], quad[5], quad[7]] as number[];
+    if (Math.max(...xs) - Math.min(...xs) < 1 || Math.max(...ys) - Math.min(...ys) < 1) continue;
+    return {
+      x: xs.reduce((sum, item) => sum + item, 0) / xs.length,
+      y: ys.reduce((sum, item) => sum + item, 0) / ys.length,
+    };
+  }
+  return null;
+}
+
+async function findPortalSsoCandidateAcrossFrames(
+  session: WindowsManagedBrowserSession,
+  portalSessionId: string,
+  system: WebWorkflowSystem,
+): Promise<PortalSsoCandidate | null> {
+  const protocol = session.connection.protocol;
+  let frameIds: string[];
+  try {
+    frameIds = portalFrameIds(await protocol.send('Page.getFrameTree', {}, portalSessionId));
+  } catch {
+    return null;
+  }
+  for (const frameId of frameIds) {
+    let objectId: string | undefined;
+    try {
+      const world = await protocol.send<{ executionContextId?: unknown }>(
+        'Page.createIsolatedWorld',
+        {
+          frameId,
+          worldName: `stream-panel-office-sso-${system}`,
+          grantUniveralAccess: false,
+        },
+        portalSessionId,
+      );
+      if (!Number.isInteger(world.executionContextId)) continue;
+      const response = await protocol.send<CdpEvaluationResponse>(
+        'Runtime.evaluate',
+        {
+          expression: portalSsoClickExpression(system, true),
+          contextId: Number(world.executionContextId),
+          returnByValue: false,
+          awaitPromise: false,
+          userGesture: true,
+          objectGroup: 'stream-panel-office-sso',
+        },
+        portalSessionId,
+      );
+      if (response.exceptionDetails || typeof response.result?.objectId !== 'string') continue;
+      objectId = response.result.objectId;
+      const center = portalQuadCenter(await protocol.send(
+        'DOM.getContentQuads',
+        { objectId },
+        portalSessionId,
+      ));
+      if (center) return { clicked: true, count: 1, ...center };
+    } catch {
+      // A frame can navigate or disappear while the portal finishes rendering.
+    } finally {
+      if (objectId) {
+        try {
+          await protocol.send('Runtime.releaseObject', { objectId }, portalSessionId);
+        } catch {
+          // The execution context may already be gone after an SSO navigation.
+        }
+      }
+    }
+  }
+  return null;
 }
 
 function systemTargetAllowed(
@@ -2375,19 +2502,40 @@ async function prepareOfficeSystemsViaPortal(
       const clickDeadline = Date.now() + 30_000;
       let clicked = false;
       let candidateCount = 0;
+      let consecutiveEvaluationFailures = 0;
       while (Date.now() < clickDeadline) {
         throwIfApprovalCheckCancelled(signal);
-        const result = await evaluateValue<{
+        let result: {
           clicked?: unknown;
           count?: unknown;
           x?: unknown;
           y?: unknown;
-        }>(
-          session,
-          portal.sessionId,
-          portalSsoClickExpression(system),
-          true,
-        );
+        } | null = null;
+        try {
+          result = await evaluateValue<{
+            clicked?: unknown;
+            count?: unknown;
+            x?: unknown;
+            y?: unknown;
+          }>(
+            session,
+            portal.sessionId,
+            portalSsoClickExpression(system),
+            true,
+          );
+          if (result?.clicked !== true) {
+            result = await findPortalSsoCandidateAcrossFrames(
+              session,
+              portal.sessionId,
+              system,
+            ) ?? result;
+          }
+          consecutiveEvaluationFailures = 0;
+        } catch (error) {
+          // Login redirects and late portal frames can invalidate an evaluation once.
+          consecutiveEvaluationFailures += 1;
+          if (consecutiveEvaluationFailures >= 3) throw error;
+        }
         candidateCount = typeof result?.count === 'number' ? result.count : 0;
         if (
           result?.clicked === true &&

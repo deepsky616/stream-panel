@@ -27,7 +27,7 @@ export function createWebConnectorHandlerActions(
     ),
     async openSetup(input: {
       browserId: WebConnectorBrowserId;
-      target: 'pair' | 'folder' | 'extensions';
+      target: 'pair' | 'connect' | 'folder' | 'extensions';
     }): Promise<ConnectorReply> {
       if (input.target !== 'folder') {
         return service.openSetup(input.browserId, input.target);

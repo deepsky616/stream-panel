@@ -52,7 +52,7 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_TEST, input),
     openSetup: (input: {
       browserId: 'chrome' | 'edge';
-      target: 'pair' | 'folder' | 'extensions';
+      target: 'pair' | 'connect' | 'folder' | 'extensions';
     }) => ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_OPEN_SETUP, input),
     openApprovalInbox: (input: { system: 'neis' | 'edufine' }) =>
       ipcRenderer.invoke(IPC_CHANNELS.WEB_CONNECTOR_OPEN_APPROVAL, input),

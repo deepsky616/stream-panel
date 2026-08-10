@@ -175,6 +175,51 @@ describe('Windows managed web automation', () => {
     expect(targets.map(({ targetId }) => targetId)).toEqual(['edufine-main', 'neis', 'personal']);
   });
 
+  it('uses the selected system anchor for a custom web workflow too', async () => {
+    let targets = [
+      { targetId: 'edufine-main', type: 'page', url: 'https://klef.goe.go.kr/main' },
+      { targetId: 'edufine-custom-work', type: 'page', url: 'https://klef.goe.go.kr/custom/work' },
+      { targetId: 'neis-main', type: 'page', url: 'https://goe.neis.go.kr/main' },
+    ];
+    const closed: string[] = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') return { targetInfos: targets };
+        if (method === 'Target.closeTarget') {
+          const targetId = String(params.targetId);
+          closed.push(targetId);
+          targets = targets.filter((target) => target.targetId !== targetId);
+          return { success: true };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+
+    await resetWindowsWorkflowTargets({
+      officeCode: 'goe',
+      browserId: 'edge',
+      connection: { protocol, process: { exited: false }, transportKind: 'pipe' },
+      workflowState: 'IDLE',
+      isAlive: () => true,
+      close: async () => undefined,
+    } as never, 'custom', {
+      id: 'custom',
+      browserId: 'edge',
+      officeCode: 'goe',
+      custom: {
+        name: '내 문서함',
+        system: 'edufine',
+        steps: [{ id: 'step-1', label: '내 문서함' }],
+        finalText: '내 문서함 목록',
+      },
+    });
+
+    expect(closed).toEqual(['edufine-custom-work']);
+    expect(targets.map(({ targetId }) => targetId)).toEqual(['edufine-main', 'neis-main']);
+  });
+
   it('extends sessions only on the selected office system origins', async () => {
     vi.useFakeTimers();
     const commands: Array<{
@@ -1326,6 +1371,118 @@ describe('Windows managed web automation', () => {
       params: { targetId: 'portal' },
       sessionId: undefined,
     });
+  });
+
+  it('finds a portal SSO item inside a cross-origin child frame before opening the system', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const reports: Array<{ system: string; state: string }> = [];
+    let neisOpened = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
+            ...(neisOpened
+              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' }]
+              : []),
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Browser.getWindowForTarget') {
+          return { windowId: 21, bounds: { windowState: 'normal' } };
+        }
+        if (method === 'Page.getFrameTree') {
+          return {
+            frameTree: {
+              frame: { id: 'main-frame' },
+              childFrames: [{ frame: { id: 'external-sso-frame' } }],
+            },
+          };
+        }
+        if (method === 'Page.createIsolatedWorld') {
+          return {
+            executionContextId: params.frameId === 'external-sso-frame' ? 202 : 101,
+          };
+        }
+        if (method === 'DOM.getContentQuads') {
+          return { quads: [[40, 30, 160, 30, 160, 90, 40, 90]] };
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('loginVisible')) {
+            const portal = sessionId === 'portal-session';
+            return { result: { value: {
+              href: portal
+                ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
+                : 'https://goe.neis.go.kr/main',
+              origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes('const ssoLabels=')) {
+            if (params.contextId === 202) {
+              return { result: { objectId: 'cross-frame-sso-node', subtype: 'node' } };
+            }
+            if (params.returnByValue === false) {
+              return { result: { value: null, subtype: 'null' } };
+            }
+            return { result: { value: { clicked: false, count: 0 } } };
+          }
+        }
+        if (
+          method === 'Input.dispatchMouseEvent' &&
+          sessionId === 'portal-session' &&
+          params.type === 'mouseReleased'
+        ) neisOpened = true;
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(
+      session as never,
+      ['neis'],
+      ({ system, state }) => reports.push({ system, state }),
+      undefined,
+      true,
+    );
+
+    expect(commands).toContainEqual({
+      method: 'Page.createIsolatedWorld',
+      params: expect.objectContaining({ frameId: 'external-sso-frame' }),
+      sessionId: 'portal-session',
+    });
+    expect(commands).toContainEqual({
+      method: 'DOM.getContentQuads',
+      params: { objectId: 'cross-frame-sso-node' },
+      sessionId: 'portal-session',
+    });
+    expect(commands).toContainEqual({
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseReleased', x: 100, y: 60, button: 'left', clickCount: 1 },
+      sessionId: 'portal-session',
+    });
+    expect(reports.at(-1)).toEqual({ system: 'neis', state: 'connected' });
   });
 
   it('recovers an expired NEIS tab through the logged-in portal before running a workflow', async () => {

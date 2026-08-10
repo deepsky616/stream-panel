@@ -62,6 +62,7 @@ describe('web work settings view model', () => {
       onCreate: async () => undefined,
     }));
     expect(html).toContain('내 웹 업무 만들기');
+    expect(html).toContain('같은 업무용 브라우저 창의 작업 탭에서 실행합니다');
     expect(html).toContain('나이스');
     expect(html).toContain('에듀파인');
     expect(html).toContain('업무 이름');

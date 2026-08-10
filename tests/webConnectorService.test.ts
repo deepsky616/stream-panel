@@ -247,7 +247,7 @@ describe('managed web connector service', () => {
     });
   });
 
-  it('opens both direct system tabs when the managed browser is opened', async () => {
+  it('opens the portal first and connects both systems only after the explicit connection request', async () => {
     const inputs: unknown[] = [];
     const broadcasts: unknown[] = [];
     const config = createDefaultConfig(
@@ -263,18 +263,23 @@ describe('managed web connector service', () => {
         report?.({ system, state: 'connected', checkedAt: 1_800_000_000_001 });
       }
     };
+    const opened: string[] = [];
     const service = createWebConnectorService({
       userDataPath: 'C:\\StreamPanel',
       platform: 'win32',
       getConfig: () => config,
       sessionController: controller,
       stateIo: { read: async () => undefined, write: async () => undefined },
-      openPortal: async () => undefined,
+      openPortal: async (session) => { opened.push(`${session.officeCode}:${session.browserId}`); },
       broadcast: (statuses) => broadcasts.push(statuses),
     });
     await service.start();
 
     await expect(service.openSetup('edge', 'pair')).resolves.toEqual({ ok: true });
+    expect(opened).toEqual(['goe:edge']);
+    expect(inputs).toEqual([]);
+
+    await expect(service.openSetup('edge', 'connect')).resolves.toEqual({ ok: true });
 
     expect(inputs).toEqual([expect.objectContaining({
       officeCode: 'goe',
@@ -289,13 +294,13 @@ describe('managed web connector service', () => {
     expect(broadcasts.length).toBeGreaterThan(0);
   });
 
-  it('opens only the portal when automatic SSO connection is disabled', async () => {
+  it('opens only the portal even when the legacy automatic SSO setting is enabled', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
       'win32',
     );
-    config.webConnection.autoConnectAfterPortalLogin = false;
+    config.webConnection.autoConnectAfterPortalLogin = true;
     const controller = createController();
     let connections = 0;
     controller.connectSystems = async () => { connections += 1; };
@@ -316,7 +321,7 @@ describe('managed web connector service', () => {
     expect(opened).toEqual(['goe:edge']);
   });
 
-  it('honors the selected portal auto-connect system', async () => {
+  it('connects both systems when explicitly requested even if a legacy target selected one system', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
@@ -337,8 +342,10 @@ describe('managed web connector service', () => {
     await service.start();
 
     await expect(service.openSetup('edge', 'pair')).resolves.toEqual({ ok: true });
+    expect(inputs).toEqual([]);
+    await expect(service.openSetup('edge', 'connect')).resolves.toEqual({ ok: true });
 
-    expect(inputs).toEqual([expect.objectContaining({ systems: ['neis'] })]);
+    expect(inputs).toEqual([expect.objectContaining({ systems: ['neis', 'edufine'] })]);
   });
 
   it('clears stale system failures after the managed browser is opened successfully', async () => {

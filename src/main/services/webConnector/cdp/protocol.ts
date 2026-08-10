@@ -14,9 +14,13 @@ export type AllowedCdpMethod =
   | 'Target.activateTarget'
   | 'Target.setDiscoverTargets'
   | 'Page.enable'
+  | 'Page.getFrameTree'
+  | 'Page.createIsolatedWorld'
   | 'Page.navigate'
   | 'Page.bringToFront'
   | 'Runtime.evaluate'
+  | 'Runtime.releaseObject'
+  | 'DOM.getContentQuads'
   | 'Input.dispatchMouseEvent';
 
 const ALLOWED_METHODS = new Set<AllowedCdpMethod>([
@@ -32,9 +36,13 @@ const ALLOWED_METHODS = new Set<AllowedCdpMethod>([
   'Target.activateTarget',
   'Target.setDiscoverTargets',
   'Page.enable',
+  'Page.getFrameTree',
+  'Page.createIsolatedWorld',
   'Page.navigate',
   'Page.bringToFront',
   'Runtime.evaluate',
+  'Runtime.releaseObject',
+  'DOM.getContentQuads',
   'Input.dispatchMouseEvent',
 ]);
 

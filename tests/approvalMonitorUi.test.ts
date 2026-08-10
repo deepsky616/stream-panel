@@ -76,7 +76,8 @@ describe('approval monitor settings UI', () => {
     }));
     expect(html).toContain('웹 업무 연결');
     expect(html).not.toContain('나이스·K-에듀파인 직접 연결');
-    expect(html).toContain('업무용 브라우저 열기');
+    expect(html).toContain('업무포털 열기');
+    expect(html).toContain('나이스·에듀파인 연결');
     expect(html).not.toContain('브라우저 확인');
     expect(html).toContain('업무 알림');
     expect(html).not.toContain('결재함 키 추가');

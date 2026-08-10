@@ -28,6 +28,7 @@ describe('web connector IPC actions', () => {
     expect(actions.status()).toEqual([{ browserId: 'edge', paired: false, connected: false }]);
     await expect(actions.test({ browserId: 'edge' })).resolves.toEqual({ ok: true });
     await expect(actions.openSetup({ browserId: 'edge', target: 'pair' })).resolves.toEqual({ ok: true });
+    await expect(actions.openSetup({ browserId: 'edge', target: 'connect' })).resolves.toEqual({ ok: true });
     await expect(actions.openSetup({ browserId: 'chrome', target: 'extensions' })).resolves.toEqual({ ok: true });
     await expect(actions.openSetup({ browserId: 'edge', target: 'folder' })).resolves.toEqual({ ok: true });
     expect(actions.openApprovalInbox({ system: 'neis' })).toEqual({ queued: true });
@@ -35,6 +36,7 @@ describe('web connector IPC actions', () => {
     expect(calls).toEqual([
       'test:edge',
       'setup:edge:pair',
+      'setup:edge:connect',
       'setup:chrome:extensions',
       'approval:neis',
     ]);
