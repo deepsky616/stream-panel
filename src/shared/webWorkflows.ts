@@ -418,7 +418,26 @@ export function retargetWebWorkflowItems(
     if (item.kind === 'folder') {
       return { ...item, children: retargetWebWorkflowItems(item.children, officeCode) };
     }
-    if (!item.webWorkflow) return item;
+    if (!item.webWorkflow) {
+      const legacyDefinition = item.type === 'url'
+        ? ALL_WEB_WORKFLOW_DEFINITIONS.find((definition) => (
+            item.label === definition.label &&
+            isAllowedWebWorkflowTarget(definition.id, item.target)
+          ))
+        : undefined;
+      if (!legacyDefinition) return item;
+      const migrated = { ...item };
+      delete migrated.browser;
+      return {
+        ...migrated,
+        target: getWebWorkflowTarget(legacyDefinition.id, officeCode),
+        webWorkflow: {
+          id: legacyDefinition.id,
+          browserId: item.browser ? browserIdFromPath(item.browser.path) ?? 'edge' : 'edge',
+          officeCode,
+        },
+      };
+    }
     return {
       ...item,
       target: getWebWorkflowTargetForSpec(item.webWorkflow, officeCode),

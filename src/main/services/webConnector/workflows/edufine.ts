@@ -82,7 +82,7 @@ export const EDUFINE_WORKFLOWS = {
         id: 'open-draft',
         candidateLabels: ['기안'],
         selection: 'first-available',
-        interaction: 'frame-exact-text',
+        interaction: 'edufine-top-menu',
         postcondition: { kind: 'visible-any', labels: ['공용서식', '공용 서식'] },
         ...COMMON_CHECKS,
       },
@@ -90,7 +90,7 @@ export const EDUFINE_WORKFLOWS = {
         id: 'open-public-forms',
         candidateLabels: ['공용서식', '공용 서식'],
         selection: 'first-available',
-        interaction: 'frame-exact-text',
+        interaction: 'edufine-mega-menu',
         postcondition: {
           kind: 'visible-any',
           labels: [

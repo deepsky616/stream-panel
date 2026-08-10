@@ -56,16 +56,21 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
     {
       id: 'open-document-approval-menu',
       candidateLabels: ['결재'],
-      interaction: 'frame-exact-text',
+      selection: 'first-available',
+      interaction: 'edufine-top-menu',
       allowActionText: true,
       postcondition: { kind: 'visible-any', labels: EDUFINE_WAITING_LABELS },
       ...COMMON_CHECKS,
+      // `결재대기` can remain visible as a breadcrumb or an already opened tab.
+      // Always open the real Nexacro top menu so the next step can only select
+      // an item from the newly displayed mega menu.
+      skipWhenSatisfied: false,
     },
     {
       id: 'open-waiting-approval-inbox',
       candidateLabels: EDUFINE_WAITING_LABELS,
       selection: 'first-available',
-      interaction: 'frame-exact-text',
+      interaction: 'edufine-mega-menu',
       postcondition: {
         kind: 'visible-groups',
         groups: [

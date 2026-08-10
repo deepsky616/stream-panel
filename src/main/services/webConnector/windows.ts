@@ -1002,7 +1002,7 @@ const allowedLabels=new Set([
   '세션연장','세션 연장','계속사용','계속 사용'
 ].map(normalize));
 const contextTokens=['세션','사용시간','사용 시간','로그인 시간','자동 로그아웃','접속 종료','시간이 만료'];
-const candidates=documents.flatMap(({document})=>{
+const candidates=documents.flatMap(({document,offsetX,offsetY})=>{
   const exactIds=Array.from(document.querySelectorAll("[id$='btnUseTimeExtn']"));
   const labelled=Array.from(document.querySelectorAll('button,input[type="button"],[role="button"],a')).filter(element=>{
     if(!allowedLabels.has(textOf(element)))return false;
@@ -1010,14 +1010,21 @@ const candidates=documents.flatMap(({document})=>{
     const contextText=normalize(context?.innerText||context?.textContent||'');
     return contextTokens.some(token=>contextText.includes(token));
   });
-  return [...exactIds,...labelled];
-}).filter((element,index,all)=>all.indexOf(element)===index&&visible(element)&&enabled(element));
-const primary=candidates.filter(element=>element.classList?.contains('btn-primary'));
+  return [...exactIds,...labelled].map(element=>({element,offsetX,offsetY}));
+}).filter((candidate,index,all)=>
+  all.findIndex(other=>other.element===candidate.element)===index&&
+  visible(candidate.element)&&enabled(candidate.element)
+);
+const primary=candidates.filter(({element})=>element.classList?.contains('btn-primary'));
 const eligible=primary.length>0?primary:candidates;
 if(eligible.length!==1)return {handled:false};
-eligible[0].focus?.({preventScroll:true});
-eligible[0].click?.();
-return {handled:true};
+const {element,offsetX,offsetY}=eligible[0];
+const rect=element.getBoundingClientRect();
+return {
+  handled:true,
+  x:offsetX+rect.left+rect.width/2,
+  y:offsetY+rect.top+rect.height/2
+};
 })()`;
 
 function approvalCounterExpression(system: WebWorkflowSystem): string {
@@ -1205,17 +1212,41 @@ async function extendSystemSessionIfPrompted(
   sessionId: string,
 ): Promise<boolean> {
   try {
-    const result = await evaluateValue<{ handled?: unknown }>(
+    const result = await evaluateValue<{ handled?: unknown; x?: unknown; y?: unknown }>(
       session,
       sessionId,
       SESSION_EXTENSION_EXPRESSION,
       true,
     );
-    return result?.handled === true;
+    if (
+      result?.handled !== true ||
+      typeof result.x !== 'number' ||
+      typeof result.y !== 'number'
+    ) return false;
+    await dispatchCdpMouseClick(session, sessionId, result.x, result.y);
+    return true;
   } catch {
     // A cross-origin frame or a document reload can make the prompt unavailable briefly.
     return false;
   }
+}
+
+async function dispatchCdpMouseClick(
+  session: WindowsManagedBrowserSession,
+  sessionId: string,
+  x: number,
+  y: number,
+): Promise<void> {
+  const protocol = session.connection.protocol;
+  await protocol.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved', x, y,
+  }, sessionId);
+  await protocol.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+  }, sessionId);
+  await protocol.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+  }, sessionId);
 }
 
 async function extendManagedSystemSessions(
@@ -1224,6 +1255,7 @@ async function extendManagedSystemSessions(
   if (!session.isAlive()) return;
   const office = getEducationOffice(session.officeCode);
   const allowedOrigins = new Set([
+    new URL(office.portalUrl).origin,
     new URL(office.neisUrl).origin,
     new URL(office.edufineUrl).origin,
   ]);
@@ -1373,6 +1405,8 @@ interface WorkflowTargetOptions {
   failFastOnLoginRequired?: boolean;
   forceNewTarget?: boolean;
   keepCreatedTargetOnFailure?: boolean;
+  /** Recreate an expired system session through the authenticated office portal. */
+  recoverViaPortal?: boolean;
   signal?: AbortSignal;
 }
 
@@ -1394,7 +1428,8 @@ const password=documents.some(({document})=>
   Array.from(document.querySelectorAll('input[type="password"]')).some(visible)
 );
 const loginLabels=new Set([
-  '로그인','로그인하기','인증서로그인','인증서 로그인','사용자인증','사용자 인증'
+  '로그인','로그인하기','로그인 화면','아이디 로그인','ID 로그인',
+  '인증서로그인','인증서 로그인','공동인증서 로그인','사용자인증','사용자 인증'
 ].map(normalize));
 const loginControl=documents.some(({document})=>
   Array.from(document.querySelectorAll('a,button,input[type="button"],input[type="submit"],[role="button"],h1,h2,h3'))
@@ -1686,16 +1721,56 @@ async function acquireDirectWorkflowTarget(
     const createdUrl = options.cloneExistingTargetUrl && existingTarget
       ? existingTarget.url
       : targetUrl;
-    const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
-      url: createdUrl,
-      ...(options.background ? { background: true } : {}),
-    });
-    if (typeof created.targetId !== 'string') {
-      throw new Error('업무용 브라우저 탭을 만들지 못했습니다. 브라우저를 다시 열어 주세요.');
+    if (options.forceNewTarget && !options.background && existingTarget) {
+      const targetIdsBeforeOpen = new Set(targets.map(({ targetId }) => targetId));
+      let anchor: AttachedWindowsTarget | undefined;
+      try {
+        anchor = await attachWindowsTarget(session, existingTarget);
+        await evaluateValue(
+          session,
+          anchor.sessionId,
+          `(()=>{window.open(${JSON.stringify(createdUrl)},'_blank');return true;})()`,
+          true,
+        );
+      } catch {
+        // A managed browser can block a scripted tab in hardened environments.
+        // Target.createTarget below remains a tab-only fallback in the same profile.
+      } finally {
+        if (anchor) await detachWindowsTarget(session, anchor);
+      }
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        const opened = readTargetInfos(
+          await protocol.send('Target.getTargets', {}),
+        ).find((candidate) => (
+          candidate.type === 'page' &&
+          !targetIdsBeforeOpen.has(candidate.targetId) &&
+          workflowTargetAllowed(
+            candidate.url,
+            session.officeCode,
+            workflowId,
+            workflowSpec,
+          )
+        ));
+        if (opened) {
+          target = opened;
+          break;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      }
     }
-    target = { targetId: created.targetId, type: 'page', url: createdUrl };
+    if (!target) {
+      const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
+        url: createdUrl,
+        ...(options.background ? { background: true } : {}),
+      });
+      if (typeof created.targetId !== 'string') {
+        throw new Error('업무용 브라우저 탭을 만들지 못했습니다. 브라우저를 다시 열어 주세요.');
+      }
+      target = { targetId: created.targetId, type: 'page', url: createdUrl };
+    }
     if (options.closeCreatedTargetOnRelease) {
-      lifecycle.closeTargetIds.push(created.targetId);
+      lifecycle.closeTargetIds.push(target.targetId);
     }
   }
   const attached = await attachWindowsTarget(session, target, lifecycle);
@@ -1932,38 +2007,62 @@ export async function openCdpWindowsWorkflowPage(
       lifecycle,
     );
     const system = requestSystem(workflowId, workflowSpec);
+    const systemLabel = system === 'neis' ? '나이스' : 'K-에듀파인';
+    const waitUntilWorkflowReady = (rejectLoginImmediately: boolean) => waitForReadyPage(
+      session,
+      attached!.sessionId,
+      (state) => {
+        if (state.loginVisible) session.workflowState = 'WAITING_FOR_USER';
+        else session.workflowState = 'CHECKING_AUTH';
+        return !state.loginVisible && workflowTargetAllowed(
+          state.href,
+          session.officeCode,
+          workflowId,
+          workflowSpec,
+        );
+      },
+      system ? (options.failFastOnLoginRequired ? 15_000 : 120_000) : 30_000,
+      rejectLoginImmediately && system
+        ? (state) => state.loginVisible
+          ? new Error(`${systemLabel} 세션이 만료되어 업무포털 공식 연결이 필요합니다.`)
+          : null
+        : undefined,
+      options.signal,
+    );
     try {
-      await waitForReadyPage(
-        session,
-        attached.sessionId,
-        (state) => {
-          if (state.loginVisible) session.workflowState = 'WAITING_FOR_USER';
-          else session.workflowState = 'CHECKING_AUTH';
-          return !state.loginVisible && workflowTargetAllowed(
-            state.href,
-            session.officeCode,
-            workflowId,
-            workflowSpec,
-          );
-        },
-        system ? (options.failFastOnLoginRequired ? 15_000 : 120_000) : 30_000,
-        options.failFastOnLoginRequired && system
-          ? (state) => state.loginVisible
-            ? new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 전용 탭에서 로그인 또는 인증을 완료해 주세요.`)
-            : null
-          : undefined,
-        options.signal,
-      );
+      await waitUntilWorkflowReady(Boolean(system));
     } catch (error) {
       if (options.signal?.aborted) throw error;
-      if (options.failFastOnLoginRequired && system) {
-        const label = system === 'neis' ? '나이스' : 'K-에듀파인';
-        const message = error instanceof Error ? error.message : '';
-        if (!/로그인|인증/.test(message)) {
-          throw new Error(`${label} 전용 탭에서 로그인 또는 인증을 완료한 뒤 다시 연결해 주세요.`);
+      if (system && options.recoverViaPortal !== false) {
+        const preparations = await prepareOfficeSystemsViaPortal(
+          session,
+          [system],
+          () => undefined,
+          options.signal,
+          !options.background,
+        );
+        const preparation = preparations.get(system);
+        if (!preparation?.ready) {
+          throw new Error(
+            preparation?.message ??
+            `${systemLabel} 세션을 업무포털 공식 연결로 복구하지 못했습니다.`,
+          );
         }
+        await navigateAttachedTarget(
+          session,
+          attached,
+          requestTarget(workflowId, session.officeCode, workflowSpec),
+        );
+        await waitUntilWorkflowReady(true);
+      } else {
+        if (options.failFastOnLoginRequired && system) {
+          const message = error instanceof Error ? error.message : '';
+          if (!/로그인|인증/.test(message)) {
+            throw new Error(`${systemLabel} 전용 탭에서 로그인 또는 인증을 완료한 뒤 다시 연결해 주세요.`);
+          }
+        }
+        throw error;
       }
-      throw error;
     }
     if (!options.background) session.workflowState = 'NAVIGATING_DUTY_MENU';
     return createWindowsWorkflowPage(
@@ -1998,33 +2097,88 @@ function connectionProbeWorkflowId(system: WebWorkflowSystem): BuiltInWebWorkflo
 }
 
 const PORTAL_SSO_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
-  neis: ['나이스', 'NEIS', '나이스(NEIS)', '나이스 (NEIS)'],
-  edufine: ['K-에듀파인', 'K에듀파인', 'K 에듀파인', '에듀파인'],
+  neis: ['나이스', 'NEIS', '나이스(NEIS)', '나이스 (NEIS)', '나이스 업무'],
+  edufine: [
+    'K-에듀파인',
+    'K에듀파인',
+    'K 에듀파인',
+    '에듀파인',
+    'K-에듀파인 업무관리',
+  ],
 };
 
 function portalSsoClickExpression(system: WebWorkflowSystem): string {
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const ssoLabels=${JSON.stringify(PORTAL_SSO_LABELS[system])}.map(normalize);
-const selector='a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick]';
+const otherLabels=${JSON.stringify(PORTAL_SSO_LABELS[system === 'neis' ? 'edufine' : 'neis'])}.map(normalize);
+const fold=(value)=>normalize(value).toLowerCase().replace(/[\\s\\-()（）]/g,'');
+const wantedKeys=Array.from(new Set(ssoLabels.map(fold).filter(Boolean)));
+const otherKeys=Array.from(new Set(otherLabels.map(fold).filter(Boolean)));
+const selector='a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex],span,div,strong,p';
 const candidates=[];
 const seen=new Set();
 for(const {document} of documents){
-  for(const element of Array.from(document.querySelectorAll(selector))){
+  for(const element of Array.from(document.querySelectorAll(selector)).slice(0,5000)){
     if(seen.has(element)||!visible(element)||!enabled(element))continue;
     const inputType=normalize(element.getAttribute?.('type')||element.type).toLowerCase();
     if(inputType==='submit'||inputType==='image')continue;
-    const texts=surfaceTextsOf(element).map(normalize).filter(Boolean);
-    if(!texts.some(text=>ssoLabels.includes(text)))continue;
+    const texts=surfaceTextsOf(element).map(normalize).filter(text=>text&&text.length<=96);
+    let score=0;
+    let matchedText='';
+    for(const text of texts){
+      const key=fold(text);
+      if(!key||otherKeys.some(other=>key.includes(other)))continue;
+      for(const wanted of wantedKeys){
+        if(key===wanted&&score<120){score=120;matchedText=text;}
+        else if((key.startsWith(wanted)||key.endsWith(wanted))&&key.length<=wanted.length+16&&score<100){score=100;matchedText=text;}
+        else if(key.includes(wanted)&&key.length<=wanted.length+24&&score<80){score=80;matchedText=text;}
+      }
+    }
+    if(score===0)continue;
+    const clickableAncestor=element.closest?.('a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex]');
+    const clickElement=clickableAncestor||element;
+    if(!visible(clickElement)||!enabled(clickElement)||seen.has(clickElement))continue;
+    const clickType=normalize(clickElement.getAttribute?.('type')||clickElement.type).toLowerCase();
+    if(clickType==='submit'||clickType==='image')continue;
+    if(clickableAncestor)score+=20;
+    const rect=clickElement.getBoundingClientRect();
     seen.add(element);
-    candidates.push(element);
+    seen.add(clickElement);
+    candidates.push({element:clickElement,score,area:Math.max(1,rect.width*rect.height),matchedText});
   }
 }
-if(candidates.length!==1)return {clicked:false,count:candidates.length};
-candidates[0].focus?.({preventScroll:false});
-candidates[0].click?.();
-return {clicked:true,count:1};
+candidates.sort((left,right)=>right.score-left.score||left.area-right.area);
+if(candidates.length===0)return {clicked:false,count:0};
+const winner=candidates[0];
+winner.element.scrollIntoView?.({block:'center',inline:'center'});
+winner.element.focus?.({preventScroll:false});
+const restored=[];
+for(const {document} of documents){
+  const view=document.defaultView;
+  if(!view||typeof view.open!=='function'||restored.some(entry=>entry.view===view))continue;
+  const original=view.open;
+  try{
+    view.open=function(url,target){return original.call(this,url,target||'_blank');};
+    restored.push({view,original});
+  }catch{}
+}
+setTimeout(()=>{for(const {view,original} of restored){try{view.open=original;}catch{}}},3000);
+const rect=winner.element.getBoundingClientRect();
+const owner=documents.find(({document})=>document===winner.element.ownerDocument);
+return {
+  clicked:true,
+  count:candidates.length,
+  matchedText:winner.matchedText,
+  x:(owner?.offsetX||0)+rect.left+rect.width/2,
+  y:(owner?.offsetY||0)+rect.top+rect.height/2
+};
 })()`;
+}
+
+interface PortalSystemPreparation {
+  ready: boolean;
+  message?: string;
 }
 
 function systemTargetAllowed(
@@ -2088,6 +2242,7 @@ async function hasAuthenticatedSystemTarget(
 async function acquireLoggedInPortalTarget(
   session: WindowsManagedBrowserSession,
   signal?: AbortSignal,
+  foreground = true,
 ): Promise<AttachedWindowsTarget> {
   throwIfApprovalCheckCancelled(signal);
   const protocol = session.connection.protocol;
@@ -2121,7 +2276,9 @@ async function acquireLoggedInPortalTarget(
   const attached = await attachWindowsTarget(session, target);
   try {
     if (shouldNavigate) await navigateAttachedTarget(session, attached, office.portalUrl);
-    await restoreAndActivateTarget(session, target.targetId, attached.sessionId);
+    if (foreground) {
+      await restoreAndActivateTarget(session, target.targetId, attached.sessionId);
+    }
     await waitForReadyPage(
       session,
       attached.sessionId,
@@ -2129,8 +2286,12 @@ async function acquireLoggedInPortalTarget(
         session.workflowState = state.loginVisible ? 'WAITING_FOR_USER' : 'CHECKING_AUTH';
         return !state.loginVisible && state.origin === portalOrigin;
       },
-      180_000,
-      undefined,
+      foreground ? 180_000 : 15_000,
+      foreground
+        ? undefined
+        : (state) => state.loginVisible
+          ? new Error('업무포털 로그인이 필요합니다. 업무용 브라우저에서 로그인해 주세요.')
+          : null,
       signal,
     );
     return attached;
@@ -2140,18 +2301,41 @@ async function acquireLoggedInPortalTarget(
   }
 }
 
+async function focusExistingPortalTarget(
+  session: WindowsManagedBrowserSession,
+): Promise<void> {
+  const protocol = session.connection.protocol;
+  const portalOrigin = new URL(getEducationOffice(session.officeCode).portalUrl).origin;
+  const target = readTargetInfos(
+    await protocol.send('Target.getTargets', {}),
+  ).find((candidate) => {
+    if (candidate.type !== 'page') return false;
+    try {
+      return new URL(candidate.url).origin === portalOrigin;
+    } catch {
+      return false;
+    }
+  });
+  if (!target) return;
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    await restoreAndActivateTarget(session, target.targetId, attached.sessionId);
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+}
+
 async function waitForSystemTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
   signal?: AbortSignal,
+  timeoutMs = 30_000,
 ): Promise<boolean> {
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     throwIfApprovalCheckCancelled(signal);
-    const target = readTargetInfos(
-      await session.connection.protocol.send('Target.getTargets', {}),
-    ).find((candidate) => systemTargetAllowed(candidate, session.officeCode, system));
-    if (target) return true;
+    if (await hasAuthenticatedSystemTarget(session, system)) return true;
     await new Promise<void>((resolve) => setTimeout(resolve, 150));
   }
   return false;
@@ -2162,13 +2346,19 @@ async function prepareOfficeSystemsViaPortal(
   systems: readonly WebWorkflowSystem[],
   report: WindowsSystemConnectionReporter,
   signal?: AbortSignal,
-): Promise<void> {
+  foreground = true,
+): Promise<Map<WebWorkflowSystem, PortalSystemPreparation>> {
+  const results = new Map<WebWorkflowSystem, PortalSystemPreparation>();
   const pending: WebWorkflowSystem[] = [];
   for (const system of [...new Set(systems)]) {
     throwIfApprovalCheckCancelled(signal);
-    if (!await hasAuthenticatedSystemTarget(session, system)) pending.push(system);
+    if (await hasAuthenticatedSystemTarget(session, system)) {
+      results.set(system, { ready: true });
+    } else {
+      pending.push(system);
+    }
   }
-  if (pending.length === 0) return;
+  if (pending.length === 0) return results;
   for (const system of pending) {
     const label = system === 'neis' ? '나이스' : 'K-에듀파인';
     report({
@@ -2181,24 +2371,64 @@ async function prepareOfficeSystemsViaPortal(
     throwIfApprovalCheckCancelled(signal);
     let portal: AttachedWindowsTarget | undefined;
     try {
-      portal = await acquireLoggedInPortalTarget(session, signal);
-      const result = await evaluateValue<{ clicked?: unknown; count?: unknown }>(
-        session,
-        portal.sessionId,
-        portalSsoClickExpression(system),
-        true,
-      );
-      if (result?.clicked === true) {
-        await waitForSystemTarget(session, system, signal);
+      portal = await acquireLoggedInPortalTarget(session, signal, foreground);
+      const clickDeadline = Date.now() + 30_000;
+      let clicked = false;
+      let candidateCount = 0;
+      while (Date.now() < clickDeadline) {
+        throwIfApprovalCheckCancelled(signal);
+        const result = await evaluateValue<{
+          clicked?: unknown;
+          count?: unknown;
+          x?: unknown;
+          y?: unknown;
+        }>(
+          session,
+          portal.sessionId,
+          portalSsoClickExpression(system),
+          true,
+        );
+        candidateCount = typeof result?.count === 'number' ? result.count : 0;
+        if (
+          result?.clicked === true &&
+          typeof result.x === 'number' &&
+          typeof result.y === 'number'
+        ) {
+          await dispatchCdpMouseClick(session, portal.sessionId, result.x, result.y);
+          clicked = true;
+          break;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
       }
-    } catch {
+      if (!clicked) {
+        results.set(system, {
+          ready: false,
+          message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 공식 연결 메뉴를 업무포털 메인에서 찾지 못했습니다${candidateCount > 0 ? `(${candidateCount}개 후보)` : ''}. 포털 메인 화면을 새로 고친 뒤 다시 시도해 주세요.`,
+        });
+        continue;
+      }
+    } catch (error) {
       throwIfApprovalCheckCancelled(signal);
-      // If a portal has no unique official link, the direct per-system probe
-      // below remains the safe fallback and will report login requirements.
+      results.set(system, {
+        ready: false,
+        message: error instanceof Error
+          ? error.message
+          : '업무포털 로그인 상태를 확인하지 못했습니다.',
+      });
     } finally {
       if (portal) await detachWindowsTarget(session, portal);
     }
+    if (results.has(system)) continue;
+    if (await waitForSystemTarget(session, system, signal)) {
+      results.set(system, { ready: true });
+    } else {
+      results.set(system, {
+        ready: false,
+        message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 공식 연결을 실행했지만 시스템 탭이 열리지 않았습니다. 업무포털 팝업 허용 상태를 확인해 주세요.`,
+      });
+    }
   }
+  return results;
 }
 
 export async function connectWindowsOfficeSystems(
@@ -2208,34 +2438,59 @@ export async function connectWindowsOfficeSystems(
   signal?: AbortSignal,
   foreground = false,
 ): Promise<void> {
-  if (foreground) {
-    await prepareOfficeSystemsViaPortal(session, systems, report, signal);
-  }
-  for (const system of [...new Set(systems)]) {
-    throwIfApprovalCheckCancelled(signal);
-    const label = system === 'neis' ? '나이스' : 'K-에듀파인';
-    report({ system, state: 'connecting', message: `${label}에 연결하고 있습니다.` });
-    let page: WindowsWorkflowPage | undefined;
-    try {
-      page = await openCdpWindowsWorkflowPage(
-        session,
-        connectionProbeWorkflowId(system),
-        undefined,
-        { background: !foreground, failFastOnLoginRequired: true, signal },
-      );
+  const portalPreparations = foreground
+    ? await prepareOfficeSystemsViaPortal(session, systems, report, signal, true)
+    : null;
+  try {
+    for (const system of [...new Set(systems)]) {
       throwIfApprovalCheckCancelled(signal);
-      report({ system, state: 'connected', checkedAt: Date.now() });
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      const message = error instanceof Error ? error.message : `${label} 연결에 실패했습니다.`;
-      const loginRequired = /로그인|인증|기다리는 시간이 지났습니다/.test(message);
-      report({
-        system,
-        state: loginRequired ? 'login-required' : 'error',
-        message,
-      });
-    } finally {
-      await page?.release?.();
+      const label = system === 'neis' ? '나이스' : 'K-에듀파인';
+      const preparation = portalPreparations?.get(system);
+      if (preparation && !preparation.ready) {
+        const message = preparation.message ?? `${label} 공식 연결을 완료하지 못했습니다.`;
+        report({
+          system,
+          state: /로그인|인증/.test(message) ? 'login-required' : 'error',
+          message,
+        });
+        continue;
+      }
+      report({ system, state: 'connecting', message: `${label}에 연결하고 있습니다.` });
+      let page: WindowsWorkflowPage | undefined;
+      try {
+        page = await openCdpWindowsWorkflowPage(
+          session,
+          connectionProbeWorkflowId(system),
+          undefined,
+          {
+            background: portalPreparations !== null || !foreground,
+            failFastOnLoginRequired: true,
+            recoverViaPortal: false,
+            signal,
+          },
+        );
+        throwIfApprovalCheckCancelled(signal);
+        report({ system, state: 'connected', checkedAt: Date.now() });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        const message = error instanceof Error ? error.message : `${label} 연결에 실패했습니다.`;
+        const loginRequired = /로그인|인증|기다리는 시간이 지났습니다/.test(message);
+        report({
+          system,
+          state: loginRequired ? 'login-required' : 'error',
+          message,
+        });
+      } finally {
+        await page?.release?.();
+      }
+    }
+  } finally {
+    if (foreground) {
+      try {
+        await focusExistingPortalTarget(session);
+      } catch {
+        // System connection status is more important than best-effort portal focus.
+      }
     }
   }
 }

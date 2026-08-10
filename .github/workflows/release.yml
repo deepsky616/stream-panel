@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,8 +16,12 @@ jobs:
       - name: Verify tag matches package.json version
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
           PKG=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$PKG"
+          else
+            TAG="${GITHUB_REF_NAME#v}"
+          fi
           if [ "$TAG" != "$PKG" ]; then
             echo "::error::Tag v$TAG does not match package.json $PKG"
             exit 1
@@ -85,7 +90,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          TAG="$GITHUB_REF_NAME"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="v$VERSION"
+            REMOTE_SHA=$(git ls-remote --tags origin "refs/tags/$TAG^{}" | awk '{print $1}')
+            if [ -z "$REMOTE_SHA" ]; then
+              REMOTE_SHA=$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')
+            fi
+            if [ -z "$REMOTE_SHA" ]; then
+              git tag "$TAG" "$GITHUB_SHA"
+              git push origin "$TAG"
+            elif [ "$REMOTE_SHA" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $TAG already points to $REMOTE_SHA, not $GITHUB_SHA"
+              exit 1
+            fi
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
           ASSETS=(
             "release-assets/StreamPanel-$VERSION-Setup.exe"
             "release-assets/StreamPanel-$VERSION-Setup.exe.blockmap"

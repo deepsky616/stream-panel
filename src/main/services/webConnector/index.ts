@@ -30,7 +30,11 @@ import {
   type LoadManagedWebConnectorStateOptions,
   type ManagedWebConnectorState,
 } from './state';
-import { createWindowsManagedSessionManager } from './windows';
+import {
+  createWindowsManagedSessionManager,
+  openWindowsOfficePortal,
+  type WindowsManagedBrowserSession,
+} from './windows';
 import type { WorkflowRunResult } from './workflows/engine';
 import type { ApprovalScanInput } from '../approvalMonitor/definitions';
 import { isApprovalCheckCancelled } from '../approvalMonitor/cancellation';
@@ -199,6 +203,7 @@ export function createWebConnectorService({
   broadcast = () => undefined,
   stateIo = diskStateIo(userDataPath),
   sessionController,
+  openPortal,
   diagnostics: injectedDiagnostics,
   now = Date.now,
   confirmWorkflowStep,
@@ -220,6 +225,13 @@ export function createWebConnectorService({
         },
       })
       : unavailableController()
+  );
+  const portalOpener = openPortal ?? (
+    platform === 'win32'
+      ? (session: ManagedBrowserSession) => openWindowsOfficePortal(
+          session as WindowsManagedBrowserSession,
+        )
+      : undefined
   );
   const diagnostics = injectedDiagnostics ?? createWebConnectorDiagnostics({
     userDataPath,
@@ -508,16 +520,22 @@ export function createWebConnectorService({
       const officeCode = currentOffice();
       controller.beginInteractiveWork?.(officeCode, browserId);
       try {
-        await prepareAndMark(browserId);
+        const session = await prepareAndMark(browserId);
         connectionStates.delete(connectionKey(officeCode, browserId));
         publishStatuses();
-        if (controller.connectSystems) {
+        const connection = getConfig().webConnection;
+        const systems: readonly WebWorkflowSystem[] = connection.autoConnectTarget === 'both'
+          ? ['neis', 'edufine']
+          : [connection.autoConnectTarget];
+        if (connection.autoConnectAfterPortalLogin && controller.connectSystems) {
           await controller.connectSystems({
             officeCode,
             browserId,
-            systems: ['neis', 'edufine'],
+            systems,
             foreground: true,
           }, (status) => setSystemStatus(officeCode, browserId, status));
+        } else {
+          await portalOpener?.(session);
         }
         return { ok: true };
       } catch (error) {

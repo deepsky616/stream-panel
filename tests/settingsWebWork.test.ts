@@ -205,6 +205,38 @@ describe('web work settings view model', () => {
     });
   });
 
+  it('adopts an older built-in NEIS leave key and retargets it with every other workflow', () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'default',
+      'win32',
+    );
+    config.root = [{
+      ...workflowAction(),
+      label: '나이스 복무',
+      target: 'https://goe.neis.go.kr/',
+      browser: {
+        path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        profileDir: 'Default',
+        appMode: false,
+      },
+      webWorkflow: undefined,
+    }];
+
+    const patch = createEducationOfficePatch(config, 'sen');
+
+    expect(patch.root[0]).toMatchObject({
+      label: '나이스 복무',
+      target: 'https://sen.neis.go.kr/',
+      webWorkflow: {
+        id: 'neis-leave',
+        browserId: 'edge',
+        officeCode: 'sen',
+      },
+    });
+    expect((patch.root[0] as ActionItem).browser).toBeUndefined();
+  });
+
   it('edits only the managed browser id and removes legacy personal browser settings', () => {
     const item = workflowAction();
 

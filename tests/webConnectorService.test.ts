@@ -289,6 +289,58 @@ describe('managed web connector service', () => {
     expect(broadcasts.length).toBeGreaterThan(0);
   });
 
+  it('opens only the portal when automatic SSO connection is disabled', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    config.webConnection.autoConnectAfterPortalLogin = false;
+    const controller = createController();
+    let connections = 0;
+    controller.connectSystems = async () => { connections += 1; };
+    const opened: string[] = [];
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async (session) => { opened.push(`${session.officeCode}:${session.browserId}`); },
+    });
+    await service.start();
+
+    await expect(service.openSetup('edge', 'pair')).resolves.toEqual({ ok: true });
+
+    expect(connections).toBe(0);
+    expect(opened).toEqual(['goe:edge']);
+  });
+
+  it('honors the selected portal auto-connect system', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    config.webConnection.autoConnectTarget = 'neis';
+    const inputs: unknown[] = [];
+    const controller = createController();
+    controller.connectSystems = async (input) => { inputs.push(input); };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+    });
+    await service.start();
+
+    await expect(service.openSetup('edge', 'pair')).resolves.toEqual({ ok: true });
+
+    expect(inputs).toEqual([expect.objectContaining({ systems: ['neis'] })]);
+  });
+
   it('clears stale system failures after the managed browser is opened successfully', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },

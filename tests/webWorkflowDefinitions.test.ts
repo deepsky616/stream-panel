@@ -155,9 +155,9 @@ describe('managed web workflow definitions', () => {
         '표준서식(결재4인, 협조4인)',
       ],
     ]);
-    expect(definitions['edufine-draft'].steps.every(
-      ({ interaction }) => interaction === 'frame-exact-text',
-    )).toBe(true);
+    expect(definitions['edufine-draft'].steps.map(
+      ({ interaction }) => interaction,
+    )).toEqual(['edufine-top-menu', 'edufine-mega-menu', 'frame-exact-text']);
     expect(definitions['edufine-draft'].steps.at(-1)?.postcondition).toEqual({
       kind: 'new-window',
       processName: 'WXSClient',
@@ -268,12 +268,12 @@ describe('managed web workflow definitions', () => {
     ));
     expect(clickedLabels).not.toContain('문서관리');
     expect(clickedLabels).not.toContain('결재(긴급)');
-    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.every(
-      ({ interaction }) => interaction === 'frame-exact-text',
-    )).toBe(true);
-    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine.flatMap(({ steps }) => steps).every(
-      ({ skipWhenSatisfied }) => skipWhenSatisfied === true,
-    )).toBe(true);
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
+      ({ interaction }) => interaction,
+    )).toEqual(['edufine-top-menu', 'edufine-mega-menu']);
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
+      ({ skipWhenSatisfied }) => skipWhenSatisfied,
+    )).toEqual([false, true]);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis.flatMap((route) => (
       route.steps.flatMap((step) => step.candidateLabels)
     ))).not.toContain('승인사항');
