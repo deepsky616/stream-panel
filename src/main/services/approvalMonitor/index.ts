@@ -55,7 +55,11 @@ export interface CreateApprovalMonitorServiceOptions {
   getConfig: () => AppConfig;
   scanner: ApprovalMonitorScanner;
   stateIo?: ApprovalMonitorStateIo;
-  notify?: (system: WebWorkflowSystem, count: number) => void;
+  notify?: (
+    system: WebWorkflowSystem,
+    count: number,
+    previousCount: number | undefined,
+  ) => void;
   broadcast?: (statuses: ApprovalMonitorStatus[]) => void;
   now?: () => number;
   setTimer?: (handler: () => void, delayMs: number) => unknown;
@@ -350,6 +354,9 @@ export function createApprovalMonitorService({
             }
             const checkedAt = now();
             const currentConfig = getConfig();
+            const increase = previous === undefined
+              ? 0
+              : Math.max(0, pendingCount - previous.pendingCount);
             const sendNotification = establishedBaselines.has(system) &&
               isWithinApprovalWorkHours(
                 new Date(checkedAt),
@@ -392,11 +399,16 @@ export function createApprovalMonitorService({
               state: 'ready',
               pendingCount,
               lastCheckedAt: checkedAt,
+              ...(increase > 0 && previous ? {
+                previousPendingCount: previous.pendingCount,
+                increase,
+                changedAt: checkedAt,
+              } : {}),
             };
             establishedBaselines.add(system);
             if (sendNotification) {
               try {
-                notify(system, pendingCount);
+                notify(system, pendingCount, previous?.pendingCount);
               } catch (error) {
                 reportError('결재 대기 알림을 표시하지 못했습니다. 윈도우 알림 설정을 확인해 주세요', error);
               }

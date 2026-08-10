@@ -21,7 +21,10 @@ export function getApprovalBadgeForItem(
   const systemLabel = system === 'neis' ? '나이스' : '에듀파인';
   return {
     label: status.pendingCount > 99 ? '99+' : String(status.pendingCount),
-    title: `${systemLabel} 결재 대기 ${status.pendingCount}건`,
-    state: status.pendingCount === 0 ? 'empty' : status.state,
+    title: status.increase && status.previousPendingCount !== undefined
+      ? `${systemLabel} 결재 대기 ${status.pendingCount}건, 새 결재 +${status.increase}건`
+      : `${systemLabel} 결재 대기 ${status.pendingCount}건`,
+    state: status.increase ? 'increased' : status.pendingCount === 0 ? 'empty' : status.state,
+    ...(status.changedAt !== undefined ? { pulseKey: status.changedAt } : {}),
   };
 }

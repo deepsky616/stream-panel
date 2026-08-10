@@ -104,7 +104,7 @@ describe('Windows managed web automation', () => {
     expect(protocol.isClosed).toBe(true);
   });
 
-  it('closes only the managed system tabs before a repeated workflow starts fresh', async () => {
+  it('keeps one authenticated system tab and closes older workflow tabs before starting fresh', async () => {
     let targets = [
       { targetId: 'neis-main', type: 'page', url: 'https://goe.neis.go.kr/main' },
       { targetId: 'neis-form', type: 'page', url: 'https://goe.neis.go.kr/leave/request' },
@@ -135,11 +135,11 @@ describe('Windows managed web automation', () => {
       close: async () => undefined,
     } as never, 'neis-leave');
 
-    expect(closed).toEqual(['neis-main', 'neis-form']);
-    expect(targets.map(({ targetId }) => targetId)).toEqual(['edufine', 'personal']);
+    expect(closed).toEqual(['neis-form']);
+    expect(targets.map(({ targetId }) => targetId)).toEqual(['neis-main', 'edufine', 'personal']);
   });
 
-  it('closes every existing Edufine page before draft or purchase starts again', async () => {
+  it('keeps the Edufine session anchor while closing its previous form page', async () => {
     let targets = [
       { targetId: 'edufine-main', type: 'page', url: 'https://klef.goe.go.kr/main' },
       { targetId: 'edufine-form', type: 'page', url: 'https://klef.goe.go.kr/purchase/popup' },
@@ -171,8 +171,8 @@ describe('Windows managed web automation', () => {
       close: async () => undefined,
     } as never, 'edufine-purchase');
 
-    expect(closed).toEqual(['edufine-main', 'edufine-form']);
-    expect(targets.map(({ targetId }) => targetId)).toEqual(['neis', 'personal']);
+    expect(closed).toEqual(['edufine-form']);
+    expect(targets.map(({ targetId }) => targetId)).toEqual(['edufine-main', 'neis', 'personal']);
   });
 
   it('extends sessions only on the selected office system origins', async () => {
@@ -221,7 +221,7 @@ describe('Windows managed web automation', () => {
         }),
       });
 
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(15_000);
 
       const attachedTargets = commands
         .filter(({ method }) => method === 'Target.attachToTarget')
@@ -465,6 +465,77 @@ describe('Windows managed web automation', () => {
       method: 'Target.closeTarget',
       params: { targetId: 'approval-target' },
     });
+  });
+
+  it('counts only the Edufine approval-list grid and ignores an unrelated 100-row selector', async () => {
+    let countExpression = '';
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'edufine-anchor',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/main',
+          }] };
+        }
+        if (method === 'Target.createTarget') return { targetId: 'edufine-approval' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-approval-session' };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://klef.goe.go.kr/main',
+              origin: 'https://klef.goe.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes("[id$='btnUseTimeExtn']")) {
+            return { result: { value: { handled: false } } };
+          }
+          if (expression.includes('const approvalSystem="edufine"')) {
+            countExpression = expression;
+            return { result: { value: {
+              candidates: [{
+                text: '전체 100', ariaLabel: '', title: '', className: 'page-size', role: 'option', children: [],
+              }],
+              rowCounts: [
+                { count: 1, area: 60_000, relevant: true, source: 'nexacro' },
+                { count: 100, area: 90_000, relevant: false, source: 'nexacro' },
+              ],
+              emptyList: false,
+              listReady: true,
+            } } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const managedSession = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    const approvalPage = await openCdpWindowsApprovalPage(managedSession as never, {
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+    });
+    await expect(approvalPage.readApprovalCount('edufine')).resolves.toBe(1);
+    expect(countExpression).toContain("const requiredHeaderMatches=approvalSystem==='edufine'?2:1");
+    expect(countExpression).not.toContain('||screenMarkerVisible');
+    expect(countExpression).toContain('collection.get_item?.(index)');
+    expect(() => new Function(`return ${countExpression}`)).not.toThrow();
+    await approvalPage.release?.();
   });
 
   it('keeps and activates a manual approval tab when login is required', async () => {
@@ -797,6 +868,8 @@ describe('Windows managed web automation', () => {
     ));
     expect(String(extension?.expression)).toContain("classList?.contains('btn-primary')");
     expect(String(extension?.expression)).toContain("querySelectorAll('iframe,frame')");
+    expect(String(extension?.expression)).toContain("'자동 로그아웃'");
+    expect(String(extension?.expression)).toContain("closest?.('[role=\"dialog\"]");
     expect(() => new Function(`return ${String(extension?.expression)}`)).not.toThrow();
     expect(extension?.userGesture).toBe(true);
     await workflowPage.release?.();
@@ -1121,6 +1194,103 @@ describe('Windows managed web automation', () => {
       method: 'Target.activateTarget',
       params: { targetId: 'neis-ready' },
     });
+  });
+
+  it('uses the logged-in portal official SSO items before validating both system tabs', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const reports: Array<{ system: string; state: string }> = [];
+    const ssoExpressions: string[] = [];
+    let neisOpened = false;
+    let edufineOpened = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
+            ...(neisOpened
+              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' }]
+              : []),
+            ...(edufineOpened
+              ? [{ targetId: 'edufine', type: 'page', url: 'https://klef.goe.go.kr/main' }]
+              : []),
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Browser.getWindowForTarget') {
+          return { windowId: 17, bounds: { windowState: 'normal' } };
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('const ssoLabels=')) {
+            ssoExpressions.push(expression);
+            if (expression.includes('"K-에듀파인"')) edufineOpened = true;
+            else neisOpened = true;
+            return { result: { value: { clicked: true, count: 1 } } };
+          }
+          if (expression.includes('loginVisible')) {
+            const portal = sessionId === 'portal-session';
+            const edufine = sessionId === 'edufine-session';
+            return { result: { value: {
+              href: portal
+                ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
+                : edufine
+                  ? 'https://klef.goe.go.kr/main'
+                  : 'https://goe.neis.go.kr/main',
+              origin: portal
+                ? 'https://goe.eduptl.kr'
+                : edufine
+                  ? 'https://klef.goe.go.kr'
+                  : 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(
+      session as never,
+      ['neis', 'edufine'],
+      ({ system, state }) => reports.push({ system, state }),
+      undefined,
+      true,
+    );
+
+    expect(ssoExpressions).toHaveLength(2);
+    expect(ssoExpressions.every((expression) => (
+      expression.includes("querySelectorAll('iframe,frame')") &&
+      expression.includes("[onclick]")
+    ))).toBe(true);
+    for (const expression of ssoExpressions) {
+      expect(() => new Function(`return ${expression}`)).not.toThrow();
+    }
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(reports.filter(({ state }) => state === 'connected')).toEqual([
+      { system: 'neis', state: 'connected' },
+      { system: 'edufine', state: 'connected' },
+    ]);
   });
 
   it('prepares NEIS and K-Edufine independently even when NEIS needs login', async () => {

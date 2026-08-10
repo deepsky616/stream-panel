@@ -245,6 +245,41 @@ describe('approval monitor service', () => {
     );
   });
 
+  it('publishes and notifies the positive increase after a baseline is established', async () => {
+    const config = windowsConfig();
+    const counts = [1, 3];
+    const notifications: unknown[] = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => counts.shift() ?? 3 },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      notify: (system, count, previousCount) => {
+        notifications.push({ system, count, previousCount });
+      },
+      now: () => FIXED_WORK_TIME,
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+
+    await service.start();
+    await service.check({ system: 'edufine' });
+    expect(notifications).toEqual([]);
+    await service.check({ system: 'edufine' });
+
+    expect(notifications).toEqual([{
+      system: 'edufine', count: 3, previousCount: 1,
+    }]);
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'edufine',
+      state: 'ready',
+      pendingCount: 3,
+      previousPendingCount: 1,
+      increase: 2,
+      changedAt: FIXED_WORK_TIME,
+    }));
+  });
+
   it('isolates broadcast and notification failures from checks and future scheduling', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;

@@ -124,6 +124,29 @@ button {
   background: #d75a5a;
 }
 
+.title-approval i {
+  color: #ff9f43;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.title-approval-increased {
+  animation: approval-increase-pulse 900ms ease-out 3;
+  border-color: #ff9f43 !important;
+  background: color-mix(in srgb, #ff9f43 14%, transparent) !important;
+}
+
+.key-status-increased {
+  background: #ef7d22;
+  animation: approval-increase-pulse 900ms ease-out 3;
+}
+
+@keyframes approval-increase-pulse {
+  0%, 100% { box-shadow: none; }
+  45% { box-shadow: 0 0 0 4px rgb(255 159 67 / 24%); }
+}
+
 .editor-title-button {
   position: relative;
 }

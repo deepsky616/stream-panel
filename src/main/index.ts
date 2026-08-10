@@ -101,12 +101,17 @@ app.whenReady().then(async () => {
       platform: PLATFORM.platform,
       getConfig: () => configStore.get(),
       scanner: { scan: (input) => connector.scanApproval(input) },
-      notify: (system, count) => {
+      notify: (system, count, previousCount) => {
         if (!Notification.isSupported()) return;
         const systemLabel = system === 'neis' ? '나이스' : '에듀파인';
+        const increase = previousCount === undefined ? 0 : count - previousCount;
         new Notification({
-          title: `${systemLabel} 결재 대기 알림`,
-          body: `결재할 문서가 ${count}건 있습니다. 스트림 패널의 결재함 키에서 확인할 수 있습니다.`,
+          title: increase > 0
+            ? `${systemLabel} 새 결재 +${increase}건`
+            : `${systemLabel} 결재 대기 알림`,
+          body: increase > 0
+            ? `결재 대기가 ${previousCount}건에서 ${count}건으로 늘었습니다. 스트림 패널에서 확인해 주세요.`
+            : `결재할 문서가 ${count}건 있습니다. 스트림 패널에서 확인할 수 있습니다.`,
           silent: false,
         }).show();
       },

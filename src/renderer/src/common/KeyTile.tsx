@@ -5,6 +5,7 @@ export interface KeyTileStatusBadge {
   label: string;
   title: string;
   state: string;
+  pulseKey?: number;
 }
 
 interface KeyTileProps {
@@ -85,6 +86,7 @@ export function KeyTile({
       {hint && <span className={`key-hint ${hintMuted ? 'muted' : ''}`}>{hint}</span>}
       {statusBadge && (
         <span
+          key={statusBadge.pulseKey}
           className={`key-status-badge key-status-${statusBadge.state}`}
           title={statusBadge.title}
           aria-hidden="true"

@@ -177,6 +177,43 @@ describe('approval monitor settings UI', () => {
     });
   });
 
+  it('emphasizes only a newly increased approval count and shows the delta', () => {
+    const changedAt = 1_800_000_000_000;
+    expect(getApprovalBadgeForItem(approvalAction('edufine-approval-inbox'), [{
+      system: 'edufine',
+      state: 'ready',
+      pendingCount: 3,
+      previousPendingCount: 1,
+      increase: 2,
+      changedAt,
+    }])).toEqual({
+      label: '3',
+      title: '에듀파인 결재 대기 3건, 새 결재 +2건',
+      state: 'increased',
+      pulseKey: changedAt,
+    });
+
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const html = renderToStaticMarkup(createElement(TitleBar, {
+      config,
+      approvalStatuses: [{
+        system: 'edufine',
+        state: 'ready',
+        pendingCount: 3,
+        previousPendingCount: 1,
+        increase: 2,
+        changedAt,
+      }],
+    }));
+    expect(html).toContain('title-approval-increased');
+    expect(html).toContain('새 결재 2건 증가');
+    expect(html).toContain('>+2</i>');
+  });
+
   it('places Edufine then NEIS immediately to the left of the lock control', () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },

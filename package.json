@@ -1,10 +1,10 @@
 {
   "name": "stream-panel",
   "productName": "Stream Panel",
-  "version": "1.5.14",
+  "version": "1.5.15",
   "description": "Windows와 macOS 바탕화면에서 쓰는 Stream Deck 스타일 실행 패널",
   "main": "./out/main/index.js",
-  "author": "deepsky616",
+  "author": "청계초등학교 교사 조영석 (deepsky616)",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",

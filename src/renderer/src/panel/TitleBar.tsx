@@ -29,6 +29,9 @@ function approvalTitle(
   status: ApprovalMonitorStatus | undefined,
 ): string {
   const label = APPROVAL_LABELS[system];
+  if (status?.increase && status.previousPendingCount !== undefined) {
+    return `${label} 결재 대기가 ${status.previousPendingCount}건에서 ${status.pendingCount}건으로 늘었습니다. 새 결재 +${status.increase}건, 결재함 열기`;
+  }
   if (status?.pendingCount !== undefined) return `${label} 결재함 총 ${status.pendingCount}건 열기`;
   if (status?.state === 'checking') return `${label} 결재함 확인 중`;
   if (status?.state === 'login-required') return `${label} 로그인이 필요합니다. 결재함 열기`;
@@ -66,9 +69,9 @@ export function TitleBar({ config, approvalStatuses }: TitleBarProps) {
           const status = approvalStatuses.find((candidate) => candidate.system === system);
           return (
             <button
-              className={`title-approval title-approval-${status?.state ?? 'idle'}`}
+              className={`title-approval title-approval-${status?.state ?? 'idle'} ${status?.increase ? 'title-approval-increased' : ''}`}
               type="button"
-              key={system}
+              key={`${system}:${status?.changedAt ?? 0}`}
               disabled={openingSystem === system}
               title={approvalTitle(system, status)}
               aria-label={approvalTitle(system, status)}
@@ -76,6 +79,7 @@ export function TitleBar({ config, approvalStatuses }: TitleBarProps) {
             >
               <span>{APPROVAL_LABELS[system]}</span>
               <b aria-label={`${approvalCountText(status)}건`}>{approvalCountText(status)}</b>
+              {status?.increase ? <i aria-label={`새 결재 ${status.increase}건 증가`}>+{status.increase}</i> : null}
             </button>
           );
         })}

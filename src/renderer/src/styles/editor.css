@@ -168,11 +168,6 @@
   background: var(--tile-hover);
 }
 
-.workflow-template-list button {
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-}
-
 .workflow-note {
   margin-top: 7px;
   text-align: left;

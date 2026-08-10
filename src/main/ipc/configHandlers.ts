@@ -20,11 +20,13 @@ export function registerConfigHandlers(configStore: ConfigStore): void {
     validateAppConfig(candidate);
     const config = configStore.set(candidate);
     applyPanelLayout(config);
+    broadcastConfig(configStore);
     return config;
   });
   ipcMain.handle(IPC_CHANNELS.CONFIG_RESET, () => {
     const reset = configStore.reset();
     applyPanelLayout(reset);
+    broadcastConfig(configStore);
     return reset;
   });
 }

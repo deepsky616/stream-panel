@@ -308,7 +308,7 @@ export async function createWindowsManagedBrowserSession(
     void extendManagedSystemSessions(managedSession).finally(() => {
       extensionSweepRunning = false;
     });
-  }, 30_000);
+  }, 15_000);
   keepAliveTimer.unref();
   return managedSession;
 }
@@ -329,10 +329,15 @@ export async function resetWindowsWorkflowTargets(
   if (!FRESH_START_WORKFLOW_IDS.has(workflowId)) return;
   const protocol = session.connection.protocol;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  const targetIds = targets.filter((target) => (
+  const workflowTargets = targets.filter((target) => (
     target.type === 'page' &&
     workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec)
-  )).map(({ targetId }) => targetId);
+  ));
+  // Keep the oldest matching page as the authenticated session anchor. Closing
+  // every system page can discard client-side SSO state and force another login
+  // before the fresh workflow tab is created.
+  const sessionAnchor = workflowTargets[0];
+  const targetIds = workflowTargets.slice(sessionAnchor ? 1 : 0).map(({ targetId }) => targetId);
   for (const targetId of targetIds) {
     const result = await protocol.send<{ success?: unknown }>('Target.closeTarget', { targetId });
     if (result.success === false) {
@@ -996,11 +1001,17 @@ const allowedLabels=new Set([
   '연장','시간연장','시간 연장','사용시간연장','사용시간 연장','사용 시간 연장',
   '세션연장','세션 연장','계속사용','계속 사용'
 ].map(normalize));
-const candidates=documents.flatMap(({document})=>
-  Array.from(document.querySelectorAll("[id$='btnUseTimeExtn']"))
-).filter(element=>visible(element)&&enabled(element)&&(
-  String(element.id||'').endsWith('btnUseTimeExtn')||allowedLabels.has(textOf(element))
-));
+const contextTokens=['세션','사용시간','사용 시간','로그인 시간','자동 로그아웃','접속 종료','시간이 만료'];
+const candidates=documents.flatMap(({document})=>{
+  const exactIds=Array.from(document.querySelectorAll("[id$='btnUseTimeExtn']"));
+  const labelled=Array.from(document.querySelectorAll('button,input[type="button"],[role="button"],a')).filter(element=>{
+    if(!allowedLabels.has(textOf(element)))return false;
+    const context=element.closest?.('[role="dialog"],dialog,.popup,.modal,[class*="popup"],[class*="modal"]')||element.parentElement;
+    const contextText=normalize(context?.innerText||context?.textContent||'');
+    return contextTokens.some(token=>contextText.includes(token));
+  });
+  return [...exactIds,...labelled];
+}).filter((element,index,all)=>all.indexOf(element)===index&&visible(element)&&enabled(element));
 const primary=candidates.filter(element=>element.classList?.contains('btn-primary'));
 const eligible=primary.length>0?primary:candidates;
 if(eligible.length!==1)return {handled:false};
@@ -1016,9 +1027,10 @@ function approvalCounterExpression(system: WebWorkflowSystem): string {
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const approvalSystem=${JSON.stringify(system)};
-const approvalHeaders=approvalSystem==='edufine'
-  ? ['문서번호','제목','기안자','문서명','결재상태']
-  : ['문서번호','제목','기안자','신청자'];
+const approvalHeaderGroups=approvalSystem==='edufine'
+  ? [['문서번호'],['문서제목','제목','문서명'],['기안자'],['기안부서'],['기안일자'],['결재상태']]
+  : [['문서번호'],['제목'],['기안자'],['신청자']];
+const requiredHeaderMatches=approvalSystem==='edufine'?2:1;
 const screenLabels=approvalSystem==='edufine'
   ? ['결재대기','결재 대기']
   : ['미결/협조함','미결 / 협조함'];
@@ -1084,12 +1096,13 @@ for(const {document} of documents){
     });
     const rect=container.getBoundingClientRect();
     const headerText=normalize(Array.from(container.querySelectorAll('th,[role="columnheader"]')).map(element=>element.innerText||element.textContent||'').join(' '));
-    const headerRelevant=approvalHeaders.some(label=>headerText.includes(label));
-    if(semanticRows.length>0||headerRelevant||screenMarkerVisible){
+    const headerMatches=approvalHeaderGroups.filter(group=>group.some(label=>headerText.includes(label))).length;
+    const headerRelevant=headerMatches>=requiredHeaderMatches;
+    if(semanticRows.length>0||headerRelevant){
       rowCounts.push({
         count:semanticRows.length,
         area:Math.max(0,Math.round(rect.width*rect.height)),
-        relevant:headerRelevant||(screenMarkerVisible&&containers.length===1),
+        relevant:headerRelevant,
         source:'dom'
       });
     }
@@ -1109,6 +1122,20 @@ for(const {document} of documents){
     const application=view?.nexacro?.getApplication?.();
     const roots=[application?.mainframe,application?._mainframe,view?._application].filter(Boolean);
     const seen=new Set();
+    const collectionItems=(collection)=>{
+      if(!collection)return [];
+      const items=[];
+      const length=Math.min(Number(collection.length)||0,500);
+      for(let index=0;index<length;index+=1){
+        const item=collection[index]??collection.get_item?.(index);
+        if(item)items.push(item);
+      }
+      for(const id of Array.from(collection._idArray||[]).slice(0,500)){
+        const item=collection[id]??collection.get_item?.(id);
+        if(item)items.push(item);
+      }
+      return Array.from(new Set(items));
+    };
     const visitComponent=(component,depth=0)=>{
       if(!component||typeof component!=='object'||depth>24||seen.has(component))return;
       seen.add(component);
@@ -1118,22 +1145,30 @@ for(const {document} of documents){
         const dataset=component.getBindDataset?.()||component._binddataset;
         const count=Number(dataset?.getRowCount?.());
         const headCount=Math.min(Number(component.getCellCount?.('head'))||0,100);
-        const headerText=normalize(Array.from({length:headCount},(_,index)=>component.getCellProperty?.('head',index,'text')||'').join(' '));
         const handle=component._control_element?.handle;
+        const propertyHeaderText=Array.from({length:headCount},(_,index)=>(
+          component.getCellProperty?.('head',index,'text')||component.getCellText?.(-1,index)||''
+        )).join(' ');
+        const renderedHeaderText=handle?.querySelectorAll
+          ? Array.from(handle.querySelectorAll('[id*="head"],th,[role="columnheader"]')).slice(0,100)
+              .map(element=>element.innerText||element.textContent||'').join(' ')
+          : '';
+        const headerText=normalize(propertyHeaderText+' '+renderedHeaderText);
+        const headerMatches=approvalHeaderGroups.filter(group=>group.some(label=>headerText.includes(label))).length;
         const rect=handle?.getBoundingClientRect?.();
         const width=Number(rect?.width)||Number(component.getOffsetWidth?.())||Number(component._adjust_width)||0;
         const height=Number(rect?.height)||Number(component.getOffsetHeight?.())||Number(component._adjust_height)||0;
         const area=Math.max(0,Math.round(width*height));
         const handleVisible=!handle||visible(handle);
-        const relevant=approvalHeaders.some(label=>headerText.includes(label))||screenMarkerVisible;
+        // A visible "결재대기" label only proves which screen is open. It must
+        // never turn page-size combos such as "전체 100" into approval lists.
+        const relevant=headerMatches>=requiredHeaderMatches;
         if(Number.isSafeInteger(count)&&count>=0&&count<=9999&&area>0&&headCount>=2&&handleVisible){
           rowCounts.push({count,area,relevant,source:'nexacro'});
         }
       }
       for(const collection of [component.components,component.frames,component.all]){
-        if(!collection)continue;
-        const length=Math.min(Number(collection.length)||0,500);
-        for(let index=0;index<length;index+=1)visitComponent(collection[index],depth+1);
+        for(const item of collectionItems(collection))visitComponent(item,depth+1);
       }
       for(const child of [component.form,component.frame,component.mainframe,component.childframe]){
         visitComponent(child,depth+1);
@@ -1143,6 +1178,7 @@ for(const {document} of documents){
   }catch{}
 }
 const listReady=rowCounts.some(candidate=>candidate.relevant)||(emptyList&&screenMarkerVisible);
+rowCounts.sort((left,right)=>Number(right.relevant)-Number(left.relevant)||right.area-left.area);
 return {candidates:candidates.slice(0,100),rowCounts:rowCounts.slice(0,50),emptyList,listReady};
 })()`;
 }
@@ -1505,6 +1541,9 @@ async function waitForReadyPage(
   let stableCount = 0;
   while (Date.now() < deadline) {
     throwIfApprovalCheckCancelled(signal);
+    if (!session.isAlive()) {
+      throw new Error('업무용 브라우저가 닫혔습니다. 브라우저를 다시 연 뒤 시도해 주세요.');
+    }
     let state: PageReadinessState | null = null;
     try {
       state = readPageReadinessState(
@@ -1958,6 +1997,210 @@ function connectionProbeWorkflowId(system: WebWorkflowSystem): BuiltInWebWorkflo
   return system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox';
 }
 
+const PORTAL_SSO_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
+  neis: ['나이스', 'NEIS', '나이스(NEIS)', '나이스 (NEIS)'],
+  edufine: ['K-에듀파인', 'K에듀파인', 'K 에듀파인', '에듀파인'],
+};
+
+function portalSsoClickExpression(system: WebWorkflowSystem): string {
+  return `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const ssoLabels=${JSON.stringify(PORTAL_SSO_LABELS[system])}.map(normalize);
+const selector='a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick]';
+const candidates=[];
+const seen=new Set();
+for(const {document} of documents){
+  for(const element of Array.from(document.querySelectorAll(selector))){
+    if(seen.has(element)||!visible(element)||!enabled(element))continue;
+    const inputType=normalize(element.getAttribute?.('type')||element.type).toLowerCase();
+    if(inputType==='submit'||inputType==='image')continue;
+    const texts=surfaceTextsOf(element).map(normalize).filter(Boolean);
+    if(!texts.some(text=>ssoLabels.includes(text)))continue;
+    seen.add(element);
+    candidates.push(element);
+  }
+}
+if(candidates.length!==1)return {clicked:false,count:candidates.length};
+candidates[0].focus?.({preventScroll:false});
+candidates[0].click?.();
+return {clicked:true,count:1};
+})()`;
+}
+
+function systemTargetAllowed(
+  target: WindowsTargetInfo,
+  officeCode: EducationOfficeCode,
+  system: WebWorkflowSystem,
+): boolean {
+  return target.type === 'page' && isAllowedWebWorkflowTarget(
+    connectionProbeWorkflowId(system),
+    target.url,
+    officeCode,
+  );
+}
+
+async function detachWindowsTarget(
+  session: WindowsManagedBrowserSession,
+  attached: AttachedWindowsTarget,
+): Promise<void> {
+  try {
+    await session.connection.protocol.send('Target.detachFromTarget', {
+      sessionId: attached.sessionId,
+    });
+  } catch {
+    // A navigation can detach a target before the best-effort cleanup runs.
+  }
+}
+
+async function hasAuthenticatedSystemTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<boolean> {
+  let targets: WindowsTargetInfo[];
+  try {
+    targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    ).filter((target) => systemTargetAllowed(target, session.officeCode, system));
+  } catch {
+    return false;
+  }
+  for (const target of targets) {
+    let attached: AttachedWindowsTarget | undefined;
+    try {
+      attached = await attachWindowsTarget(session, target);
+      const state = readPageReadinessState(
+        await evaluateValue(session, attached.sessionId, PAGE_READINESS_EXPRESSION),
+      );
+      if (state && !state.loginVisible && systemTargetAllowed(
+        { ...target, url: state.href },
+        session.officeCode,
+        system,
+      )) return true;
+    } catch {
+      // Loading or closed system tabs are retried through the portal or direct route.
+    } finally {
+      if (attached) await detachWindowsTarget(session, attached);
+    }
+  }
+  return false;
+}
+
+async function acquireLoggedInPortalTarget(
+  session: WindowsManagedBrowserSession,
+  signal?: AbortSignal,
+): Promise<AttachedWindowsTarget> {
+  throwIfApprovalCheckCancelled(signal);
+  const protocol = session.connection.protocol;
+  const office = getEducationOffice(session.officeCode);
+  const portalOrigin = new URL(office.portalUrl).origin;
+  const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
+  let target = targets.find((candidate) => {
+    if (candidate.type !== 'page') return false;
+    try {
+      return new URL(candidate.url).origin === portalOrigin;
+    } catch {
+      return false;
+    }
+  });
+  let shouldNavigate = false;
+  if (!target) {
+    target = targets.find((candidate) => (
+      candidate.targetId === session.bootstrapTargetId && isBootstrapTarget(candidate)
+    )) ?? targets.find(isBootstrapTarget);
+    shouldNavigate = Boolean(target);
+  }
+  if (!target) {
+    const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
+      url: office.portalUrl,
+    });
+    if (typeof created.targetId !== 'string') {
+      throw new Error('업무포털 탭을 만들지 못했습니다. 업무용 브라우저를 다시 열어 주세요.');
+    }
+    target = { targetId: created.targetId, type: 'page', url: office.portalUrl };
+  }
+  const attached = await attachWindowsTarget(session, target);
+  try {
+    if (shouldNavigate) await navigateAttachedTarget(session, attached, office.portalUrl);
+    await restoreAndActivateTarget(session, target.targetId, attached.sessionId);
+    await waitForReadyPage(
+      session,
+      attached.sessionId,
+      (state) => {
+        session.workflowState = state.loginVisible ? 'WAITING_FOR_USER' : 'CHECKING_AUTH';
+        return !state.loginVisible && state.origin === portalOrigin;
+      },
+      180_000,
+      undefined,
+      signal,
+    );
+    return attached;
+  } catch (error) {
+    await detachWindowsTarget(session, attached);
+    throw error;
+  }
+}
+
+async function waitForSystemTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    throwIfApprovalCheckCancelled(signal);
+    const target = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    ).find((candidate) => systemTargetAllowed(candidate, session.officeCode, system));
+    if (target) return true;
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+  }
+  return false;
+}
+
+async function prepareOfficeSystemsViaPortal(
+  session: WindowsManagedBrowserSession,
+  systems: readonly WebWorkflowSystem[],
+  report: WindowsSystemConnectionReporter,
+  signal?: AbortSignal,
+): Promise<void> {
+  const pending: WebWorkflowSystem[] = [];
+  for (const system of [...new Set(systems)]) {
+    throwIfApprovalCheckCancelled(signal);
+    if (!await hasAuthenticatedSystemTarget(session, system)) pending.push(system);
+  }
+  if (pending.length === 0) return;
+  for (const system of pending) {
+    const label = system === 'neis' ? '나이스' : 'K-에듀파인';
+    report({
+      system,
+      state: 'connecting',
+      message: `업무포털 로그인 후 ${label} 공식 연결을 확인하고 있습니다.`,
+    });
+  }
+  for (const system of pending) {
+    throwIfApprovalCheckCancelled(signal);
+    let portal: AttachedWindowsTarget | undefined;
+    try {
+      portal = await acquireLoggedInPortalTarget(session, signal);
+      const result = await evaluateValue<{ clicked?: unknown; count?: unknown }>(
+        session,
+        portal.sessionId,
+        portalSsoClickExpression(system),
+        true,
+      );
+      if (result?.clicked === true) {
+        await waitForSystemTarget(session, system, signal);
+      }
+    } catch {
+      throwIfApprovalCheckCancelled(signal);
+      // If a portal has no unique official link, the direct per-system probe
+      // below remains the safe fallback and will report login requirements.
+    } finally {
+      if (portal) await detachWindowsTarget(session, portal);
+    }
+  }
+}
+
 export async function connectWindowsOfficeSystems(
   session: WindowsManagedBrowserSession,
   systems: readonly WebWorkflowSystem[],
@@ -1965,6 +2208,9 @@ export async function connectWindowsOfficeSystems(
   signal?: AbortSignal,
   foreground = false,
 ): Promise<void> {
+  if (foreground) {
+    await prepareOfficeSystemsViaPortal(session, systems, report, signal);
+  }
   for (const system of [...new Set(systems)]) {
     throwIfApprovalCheckCancelled(signal);
     const label = system === 'neis' ? '나이스' : 'K-에듀파인';

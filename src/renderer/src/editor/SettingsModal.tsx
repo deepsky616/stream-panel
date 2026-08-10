@@ -54,11 +54,14 @@ function collectHotkeys(items: readonly DeckItem[], path: readonly string[] = []
 
 export function SettingsModal({
   open,
-  config,
+  config: persistedConfig,
   onClose,
   onAddWebWorkflow,
   initialTab = 'general',
 }: SettingsModalProps) {
+  const [config, setLocalConfig] = useState(persistedConfig);
+  const persistedConfigRef = useRef(persistedConfig);
+  const pendingConfigWrites = useRef(0);
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [info, setInfo] = useState<{ version: string; platform: string; isPackaged: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -72,7 +75,7 @@ export function SettingsModal({
   const [approvalBusy, setApprovalBusy] = useState<WebWorkflowSystem | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const [configWriteQueue] = useState(() => createConfigWriteQueue({
-    initial: config,
+    initial: persistedConfig,
     write: (patch) => window.api.config.set(patch),
   }));
   const hotkeys = useMemo(() => collectHotkeys(config.root), [config.root]);
@@ -101,7 +104,11 @@ export function SettingsModal({
     [connectorBusy, connectorError, connectorStatuses],
   );
 
-  useEffect(() => configWriteQueue.updateBase(config), [config, configWriteQueue]);
+  useEffect(() => {
+    persistedConfigRef.current = persistedConfig;
+    configWriteQueue.updateBase(persistedConfig);
+    if (pendingConfigWrites.current === 0) setLocalConfig(persistedConfig);
+  }, [configWriteQueue, persistedConfig]);
 
   useEffect(() => {
     if (!open) return;
@@ -222,9 +229,19 @@ export function SettingsModal({
 
   if (!open) return null;
   const setConfig = (createPatch: ConfigPatchFactory) => {
-    void configWriteQueue.enqueue(createPatch).catch((error) => {
-      setMessage(error instanceof Error ? error.message : '설정을 바꾸지 못했습니다. 입력값을 확인해 주세요.');
-    });
+    setLocalConfig((current) => ({ ...current, ...createPatch(current) }));
+    pendingConfigWrites.current += 1;
+    void configWriteQueue.enqueue(createPatch).then(
+      (saved) => {
+        pendingConfigWrites.current -= 1;
+        if (pendingConfigWrites.current === 0) setLocalConfig(saved);
+      },
+      (error) => {
+        pendingConfigWrites.current -= 1;
+        if (pendingConfigWrites.current === 0) setLocalConfig(persistedConfigRef.current);
+        setMessage(error instanceof Error ? error.message : '설정을 바꾸지 못했습니다. 입력값을 확인해 주세요.');
+      },
+    );
   };
   const setBehavior = (patch: Partial<AppConfig['behavior']>) => {
     setConfig((current) => ({ behavior: { ...current.behavior, ...patch } }));
@@ -304,7 +321,7 @@ export function SettingsModal({
           setMessage('문제 해결 폴더를 열었습니다.');
         } else {
           await refreshConnectorStatuses();
-          setMessage('나이스와 K-에듀파인 탭을 열었습니다. 로그인 후 업무 알림의 지금 확인을 누르면 각 시스템의 정확한 숫자만 읽습니다.');
+          setMessage('업무포털 로그인 뒤 공식 나이스·K-에듀파인 연결을 확인했습니다. 추가 인증이 표시된 시스템만 직접 완료해 주세요.');
         }
       } else {
         setConnectorError(browserId);
@@ -521,9 +538,9 @@ export function SettingsModal({
                   <h3>사용 순서</h3>
                   <ol>
                     <li>소속 교육청과 사용할 엣지 또는 크롬을 고릅니다.</li>
-                    <li>업무용 브라우저 열기를 누르면 교육청 전용 브라우저에 나이스와 K-에듀파인 탭을 각각 준비합니다.</li>
+                    <li>업무용 브라우저 열기를 누르고 업무포털에 로그인하면 공식 나이스·K-에듀파인 연결을 순서대로 확인합니다.</li>
                     <li>오른쪽 액션 목록의 웹 업무 키를 패널에 놓고 실행합니다.</li>
-                    <li>로그인이 끝나면 결재 대기 수를 자동으로 확인하며, 추가 인증이 필요하면 해당 시스템 탭에서 진행합니다.</li>
+                    <li>공식 연결 항목이 없거나 추가 인증이 필요하면 각 시스템 전용 탭에서 직접 진행합니다.</li>
                   </ol>
                 </div>
                 <CustomWebWorkflowBuilder
@@ -547,7 +564,7 @@ export function SettingsModal({
             )}
             {tab === 'about' && (
               <>
-                <p>Stream Panel v{info?.version ?? '1.0.0'}</p><p>공개 저장소: github.com/deepsky616/stream-panel</p><p>라이선스: MIT</p>
+                <p>Stream Panel v{info?.version ?? '1.0.0'}</p><p>개발자: 청계초등학교 교사 조영석</p><p>공개 저장소: github.com/deepsky616/stream-panel</p><p>라이선스: MIT</p>
                 {config.platform === 'darwin' && <p className="settings-note">맥에서는 자동 업데이트를 지원하지 않습니다. 새 버전 알림이 오면 메뉴 막대의 릴리즈 페이지에서 직접 내려받아 설치해 주세요.</p>}
                 {updateReady && <p className="update-ready">앱을 다시 시작하면 v{updateReady} 업데이트가 적용됩니다.</p>}
                 <button type="button" onClick={() => void window.api.update.check().then((result) => setMessage(result.status)).catch(() => setMessage('개발 모드에서는 새 버전을 확인하지 않습니다.'))}>{config.platform === 'darwin' ? '새 버전 확인' : '업데이트 확인'}</button>
