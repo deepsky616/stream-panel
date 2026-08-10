@@ -39,12 +39,13 @@ function page(origin: string, count = 3): WindowsApprovalPage {
 }
 
 describe('Windows approval count reader', () => {
-  it('prefers the list total and falls back to rendered list rows', () => {
+  it('prefers the opened list rows and uses a labelled counter only as a fallback', () => {
     const parseApprovalCounterCandidates = (
       approvalWindows as unknown as {
         parseApprovalCounterCandidates?: (
           system: 'neis' | 'edufine',
           value: unknown,
+          requireListReady?: boolean,
         ) => number;
       }
     ).parseApprovalCounterCandidates;
@@ -59,6 +60,19 @@ describe('Windows approval count reader', () => {
         children: [],
       },
     ])).toBe(3);
+    expect(() => parseApprovalCounterCandidates!('neis', {
+      candidates: [{
+        text: 'Total 3',
+        ariaLabel: '',
+        title: '',
+        className: 'summary',
+        role: 'status',
+        children: [],
+      }],
+      rowCounts: [],
+      emptyList: false,
+      listReady: false,
+    }, true)).toThrow(/아직 준비되지 않았습니다/);
     expect(() => parseApprovalCounterCandidates!('neis', [
       {
         text: '미결/협조함 2026',
@@ -111,6 +125,7 @@ describe('Windows approval count reader', () => {
       candidates: [],
       rowCounts: [],
       emptyList: true,
+      listReady: true,
     })).toBe(0);
     expect(parseApprovalCounterCandidates!('neis', [{
       text: 'Total :',
@@ -122,7 +137,14 @@ describe('Windows approval count reader', () => {
       next: { text: '0', ariaLabel: '', title: '', className: 'total-count', role: '' },
     }])).toBe(0);
     expect(parseApprovalCounterCandidates!('neis', {
-      candidates: [],
+      candidates: [{
+        text: 'Total 100',
+        ariaLabel: '',
+        title: '',
+        className: 'page-size',
+        role: 'option',
+        children: [],
+      }],
       rowCounts: [{ count: 0, area: 50_000, relevant: true, source: 'dom' }],
       emptyList: false,
     })).toBe(0);

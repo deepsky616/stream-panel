@@ -210,6 +210,41 @@ describe('approval monitor service', () => {
     }));
   });
 
+  it('discards version 1 counts that may have come from a page-size control', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.edufine.enabled = true;
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => 0 },
+      stateIo: {
+        read: async () => JSON.stringify({
+          version: 1,
+          systems: {
+            edufine: {
+              officeCode: 'goe',
+              browserId: 'edge',
+              pendingCount: 100,
+              lastCheckedAt: FIXED_WORK_TIME,
+            },
+          },
+        }),
+        write: async () => undefined,
+      },
+      setTimer: () => 1,
+      clearTimer: () => undefined,
+    });
+
+    await service.start();
+
+    expect(service.getStatuses()).toContainEqual(
+      expect.objectContaining({ system: 'edufine', state: 'idle' }),
+    );
+    expect(service.getStatuses().find(({ system }) => system === 'edufine')).not.toHaveProperty(
+      'pendingCount',
+    );
+  });
+
   it('isolates broadcast and notification failures from checks and future scheduling', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;
@@ -512,7 +547,7 @@ describe('approval monitor service', () => {
       scanner: { scan: async () => counts.shift() ?? 0 },
       stateIo: {
         read: async () => JSON.stringify({
-          version: 1,
+          version: 2,
           systems: {
             neis: {
               officeCode: 'goe',
@@ -637,7 +672,7 @@ describe('approval monitor service', () => {
     expect(broadcasts.length).toBeGreaterThan(1);
     expect(timers.length).toBeGreaterThan(0);
     expect(JSON.parse(writes.at(-1)!)).toEqual({
-      version: 1,
+      version: 2,
       systems: {
         neis: {
           officeCode: 'goe',

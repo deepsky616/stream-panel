@@ -418,7 +418,7 @@ export function retargetWebWorkflowItems(
     if (item.kind === 'folder') {
       return { ...item, children: retargetWebWorkflowItems(item.children, officeCode) };
     }
-    if (!item.webWorkflow || item.webWorkflow.officeCode) return item;
+    if (!item.webWorkflow) return item;
     return {
       ...item,
       target: getWebWorkflowTargetForSpec(item.webWorkflow, officeCode),

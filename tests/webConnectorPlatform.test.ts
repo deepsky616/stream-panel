@@ -451,7 +451,7 @@ describe('Windows managed web automation', () => {
 
     expect(commands).toContainEqual({
       method: 'Target.createTarget',
-      params: { url: 'https://sen.neis.go.kr/', background: true },
+      params: { url: 'https://sen.neis.go.kr/working-document', background: true },
     });
     expect(commands).toContainEqual({
       method: 'Target.attachToTarget',
@@ -975,6 +975,9 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => expression.includes('surfaceTextsOf(element).some'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('offsetX+rect.left+rect.width/2'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('forbiddenTokens'))).toBe(true);
+    for (const expression of expressions.filter((value) => value.includes('displayedLabelMatches'))) {
+      expect(() => new Function(`return ${expression}`)).not.toThrow();
+    }
     expect(inputCommands).toEqual([
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',

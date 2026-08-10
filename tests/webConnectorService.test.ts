@@ -116,6 +116,7 @@ describe('managed web connector service', () => {
 
   it('serializes an approval count read through the current managed office session', async () => {
     const inputs: unknown[] = [];
+    const diagnosticEntries: unknown[] = [];
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       (() => { let id = 0; return () => `id-${id++}`; })(),
@@ -135,6 +136,10 @@ describe('managed web connector service', () => {
       sessionController: controller,
       stateIo: { read: async () => undefined, write: async () => undefined },
       openPortal: async () => undefined,
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async (entry) => { diagnosticEntries.push(entry); },
+      },
     });
     await service.start();
 
@@ -148,6 +153,11 @@ describe('managed web connector service', () => {
       officeCode: 'goe',
       browserId: 'edge',
     }]);
+    expect(diagnosticEntries).toContainEqual(expect.objectContaining({
+      workflowId: 'neis-approval-inbox',
+      stepId: 'approval-count-read',
+      outcome: 'success',
+    }));
     await expect(service.scanApproval({
       system: 'neis',
       officeCode: 'sen',

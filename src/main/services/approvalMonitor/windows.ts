@@ -50,6 +50,7 @@ interface ApprovalListSnapshot {
   candidates: ApprovalCounterCandidate[];
   rowCounts: ApprovalRowCountCandidate[];
   emptyList: boolean;
+  listReady: boolean;
 }
 
 interface ApprovalRowCountCandidate {
@@ -135,7 +136,7 @@ function readApprovalListSnapshot(value: unknown): ApprovalListSnapshot {
     if (value.length > 100 || !value.every(isCounterCandidate)) {
       throw new Error('결재 목록 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
     }
-    return { candidates: value, rowCounts: [], emptyList: false };
+    return { candidates: value, rowCounts: [], emptyList: false, listReady: false };
   }
   if (!value || typeof value !== 'object') {
     throw new Error('결재 목록 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
@@ -151,26 +152,48 @@ function readApprovalListSnapshot(value: unknown): ApprovalListSnapshot {
       isRowCountCandidate(count) ||
       (Number.isSafeInteger(count) && Number(count) >= 0 && Number(count) <= 9_999)
     )) ||
-    typeof record.emptyList !== 'boolean'
+    typeof record.emptyList !== 'boolean' ||
+    (record.listReady !== undefined && typeof record.listReady !== 'boolean')
   ) {
     throw new Error('결재 목록 자료가 올바르지 않습니다. 결재함 화면을 직접 확인해 주세요.');
   }
+  const rowCounts = record.rowCounts.map((candidate): ApprovalRowCountCandidate => (
+    isRowCountCandidate(candidate)
+      ? candidate
+      : { count: Number(candidate), area: 0, relevant: true, source: 'dom' }
+  ));
   return {
     candidates: record.candidates,
-    rowCounts: record.rowCounts.map((candidate): ApprovalRowCountCandidate => (
-      isRowCountCandidate(candidate)
-        ? candidate
-        : { count: Number(candidate), area: 0, relevant: true, source: 'dom' }
-    )),
+    rowCounts,
     emptyList: record.emptyList,
+    listReady: record.listReady === true || rowCounts.some((candidate) => candidate.relevant),
   };
 }
 
 export function parseApprovalCounterCandidates(
   system: WebWorkflowSystem,
   value: unknown,
+  requireListReady = false,
 ): number {
   const snapshot = readApprovalListSnapshot(value);
+  if (requireListReady && !snapshot.listReady) {
+    throw new Error('결재 목록이 아직 준비되지 않았습니다. 결재함 화면이 열릴 때까지 기다려 주세요.');
+  }
+  // The actual approval table is authoritative. This prevents page-size
+  // controls such as "전체 100" or a stale summary badge from overriding the
+  // rows that are really present in the opened inbox.
+  const relevantRows = snapshot.rowCounts.filter((candidate) => candidate.relevant);
+  if (relevantRows.length > 0) {
+    const largestArea = Math.max(...relevantRows.map((candidate) => candidate.area));
+    const counts = new Set(relevantRows.filter((candidate) => candidate.area === largestArea).map(
+      (candidate) => parseApprovalCounterValue(candidate.count),
+    ));
+    if (counts.size === 1) return [...counts][0];
+    if (counts.size > 1) {
+      throw new Error('결재 목록 표가 둘 이상 보여 대기 건수를 안전하게 고를 수 없습니다. 결재함 화면을 직접 확인해 주세요.');
+    }
+  }
+  if (snapshot.listReady && snapshot.emptyList) return 0;
   for (const label of COUNTER_LABELS[system]) {
     const counts = new Set<number>();
     for (const candidate of snapshot.candidates) {
@@ -212,24 +235,6 @@ export function parseApprovalCounterCandidates(
       throw new Error(`'${label}' 결재 대기 수가 둘 이상 보여 안전하게 고를 수 없습니다. 결재함 화면을 직접 확인해 주세요.`);
     }
     if (counts.size === 1) return [...counts][0];
-  }
-  // A semantic table/grid normally contains only the rows rendered for the
-  // current page, so its value is a fallback. The list's own Total/총 value
-  // above remains authoritative when pagination is present. When multiple
-  // Nexacro datasets exist, choose the approval-like visible grid with the
-  // largest on-screen area, never the dataset with the largest row count.
-  if (snapshot.emptyList) return 0;
-  if (snapshot.rowCounts.length > 0) {
-    const relevant = snapshot.rowCounts.filter((candidate) => candidate.relevant);
-    const pool = relevant.length > 0 ? relevant : snapshot.rowCounts;
-    const largestArea = Math.max(...pool.map((candidate) => candidate.area));
-    const counts = new Set(pool.filter((candidate) => candidate.area === largestArea).map(
-      (candidate) => parseApprovalCounterValue(candidate.count),
-    ));
-    if (counts.size === 1) return [...counts][0];
-    if (counts.size > 1) {
-      throw new Error('결재 목록 표가 둘 이상 보여 대기 건수를 안전하게 고를 수 없습니다. 결재함 화면을 직접 확인해 주세요.');
-    }
   }
   throw new Error('결재 대기 수를 안전하게 읽지 못했습니다. 결재함 화면을 직접 확인해 주세요.');
 }

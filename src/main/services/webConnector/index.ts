@@ -183,9 +183,12 @@ function errorDetail(error: unknown): string {
 function diagnosticStepId(error: unknown): string {
   if (!error || typeof error !== 'object' || Array.isArray(error)) return 'workflow-failed';
   const stepId = (error as { stepId?: unknown }).stepId;
-  return typeof stepId === 'string' && /^[a-z0-9-]{1,64}$/.test(stepId)
-    ? stepId
-    : 'workflow-failed';
+  if (typeof stepId === 'string' && /^[a-z0-9-]{1,64}$/.test(stepId)) return stepId;
+  const message = errorDetail(error);
+  if (/결재 대기 수|결재 목록|목록 표/.test(message)) return 'read-approval-count';
+  if (/로그인|인증/.test(message)) return 'approval-login-required';
+  if (/허용되지 않은|주소|호스트|origin/i.test(message)) return 'approval-origin';
+  return 'workflow-failed';
 }
 
 export function createWebConnectorService({
@@ -566,6 +569,10 @@ export function createWebConnectorService({
       const previousStatus = connectionStates
         .get(connectionKey(input.officeCode, input.browserId))
         ?.get(input.system);
+      const startedAt = now();
+      const workflowId = input.system === 'neis'
+        ? 'neis-approval-inbox' as const
+        : 'edufine-approval-inbox' as const;
       setSystemStatus(input.officeCode, input.browserId, {
         system: input.system,
         state: 'connecting',
@@ -578,6 +585,20 @@ export function createWebConnectorService({
           state: 'connected',
           checkedAt: now(),
         });
+        try {
+          await diagnostics.record({
+            at: now(),
+            browserId: input.browserId,
+            officeCode: input.officeCode,
+            workflowId,
+            stepId: 'approval-count-read',
+            sequence: 0,
+            outcome: 'success',
+            durationMs: Math.max(0, now() - startedAt),
+          });
+        } catch {
+          // A diagnostic write failure must not turn a successful count into an error.
+        }
         return count;
       } catch (error) {
         if (isApprovalCheckCancelled(error)) {
@@ -586,6 +607,20 @@ export function createWebConnectorService({
             input.browserId,
             previousStatus ?? { system: input.system, state: 'idle' },
           );
+          try {
+            await diagnostics.record({
+              at: now(),
+              browserId: input.browserId,
+              officeCode: input.officeCode,
+              workflowId,
+              stepId: 'approval-check-cancelled',
+              sequence: 0,
+              outcome: 'cancelled',
+              durationMs: Math.max(0, now() - startedAt),
+            });
+          } catch {
+            // Preserve the cancellation that allowed an interactive workflow to proceed.
+          }
           throw error;
         }
         const message = errorDetail(error);
@@ -596,6 +631,20 @@ export function createWebConnectorService({
             : 'error',
           message,
         });
+        try {
+          await diagnostics.record({
+            at: now(),
+            browserId: input.browserId,
+            officeCode: input.officeCode,
+            workflowId,
+            stepId: diagnosticStepId(error),
+            sequence: 0,
+            outcome: 'failed',
+            durationMs: Math.max(0, now() - startedAt),
+          });
+        } catch {
+          // Preserve the actionable approval error when diagnostics cannot be written.
+        }
         throw error;
       }
     },

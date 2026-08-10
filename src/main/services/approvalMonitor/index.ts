@@ -25,7 +25,7 @@ interface PersistedSystemState {
 }
 
 interface ApprovalMonitorState {
-  version: 1;
+  version: 2;
   systems: Partial<Record<WebWorkflowSystem, PersistedSystemState>>;
 }
 
@@ -103,7 +103,7 @@ export function createApprovalMonitorStateIo(
 }
 
 function defaultState(): ApprovalMonitorState {
-  return { version: 1, systems: {} };
+  return { version: 2, systems: {} };
 }
 
 function validPersistedSystem(value: unknown): value is PersistedSystemState {
@@ -144,8 +144,12 @@ function parseState(text: string | undefined): ApprovalMonitorState {
     throw new Error('결재 알림 상태 파일이 손상되었습니다. 설정의 지금 확인을 눌러 새 기준을 저장해 주세요.');
   }
   const record = value as Record<string, unknown>;
+  // Version 1 could persist a page-size selector (for example 100) as an
+  // approval count. Discard it once so the next scan establishes a list-based
+  // baseline instead of continuing to show a known-unreliable value.
+  if (record.version === 1) return defaultState();
   if (
-    record.version !== 1 ||
+    record.version !== 2 ||
     !record.systems ||
     typeof record.systems !== 'object' ||
     Array.isArray(record.systems)
@@ -161,7 +165,7 @@ function parseState(text: string | undefined): ApprovalMonitorState {
     }
     systems[system] = { ...rawSystems[system] };
   }
-  return { version: 1, systems };
+  return { version: 2, systems };
 }
 
 function timeToMinutes(value: string): number {
@@ -357,7 +361,7 @@ export function createApprovalMonitorService({
                 currentConfig.approvalMonitor.notifyOnlyOnIncrease,
               );
             const nextState: ApprovalMonitorState = {
-              version: 1,
+              version: 2,
               systems: {
                 ...state.systems,
                 [system]: {

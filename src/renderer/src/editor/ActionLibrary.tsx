@@ -17,7 +17,6 @@ const ACTION_TEMPLATES: TemplateEntry[] = [
   { kind: 'action-template', type: 'file', label: '파일 열기', emoji: '📄' },
   { kind: 'action-template', type: 'app', label: '앱 실행', emoji: '🖥️' },
   { kind: 'action-template', type: 'multi', label: '멀티 액션', emoji: '⏩' },
-  { kind: 'folder-template', label: '폴더 만들기', emoji: '🗂️' },
 ];
 
 interface ActionLibraryProps {

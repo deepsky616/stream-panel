@@ -738,8 +738,14 @@ function postconditionExpression(step: WorkflowStep): string {
   const labels = JSON.stringify(groups.flat());
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
-const labels=new Set(${labels}.map(normalize));
+const labels=${labels}.map(normalize);
 const groups=${JSON.stringify(groups)}.map(group=>group.map(normalize));
+const displayedLabelMatches=(value,label)=>{
+  if(value===label)return true;
+  if(!value.startsWith(label))return false;
+  const suffix=value.slice(label.length).trim();
+  return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
+};
 const selector=${JSON.stringify(
     condition.kind === 'tab-selected-any'
       ? '[role="tab"][aria-selected="true"],[aria-current="page"],[role="tab"].active,.tab.active,a.active,a.on,a.selected,li.active>a,li.on>a,li.selected>a'
@@ -747,17 +753,20 @@ const selector=${JSON.stringify(
   )};
 const found=new Set();
 for(const {document} of documents){
-  if(${JSON.stringify(condition.kind)}==='dialog-title-any'&&labels.has(normalize(document.title)))found.add(normalize(document.title));
+  if(${JSON.stringify(condition.kind)}==='dialog-title-any'){
+    const title=normalize(document.title);
+    for(const label of labels){if(displayedLabelMatches(title,label))found.add(label);}
+  }
   for(const element of Array.from(document.querySelectorAll(selector))){
     if(!visible(element))continue;
     for(const text of surfaceTextsOf(element)){
       const normalized=normalize(text);
-      if(labels.has(normalized))found.add(normalized);
+      for(const label of labels){if(displayedLabelMatches(normalized,label))found.add(label);}
     }
   }
 }
 return ${JSON.stringify(condition.kind)}==='visible-all'
-  ? Array.from(labels).every(label=>found.has(label))
+  ? labels.every(label=>found.has(label))
   : ${JSON.stringify(condition.kind)}==='visible-groups'
     ? groups.every(group=>group.some(label=>found.has(label)))
   : found.size>0;
@@ -771,6 +780,12 @@ function edufineCandidateScanExpression(step: WorkflowStep): string {
 ${PAGE_ELEMENT_HELPERS}
 const labels=${labels}.map(normalize);
 const interaction=${interaction};
+const displayedLabelMatches=(value,label)=>{
+  if(value===label)return true;
+  if(!value.startsWith(label))return false;
+  const suffix=value.slice(label.length).trim();
+  return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
+};
 const summary=(element,index,text,tag,offsetX=0,offsetY=0)=>{
   const rect=element?.getBoundingClientRect?.()??{width:1,height:1,left:0,top:0};
   return {
@@ -849,7 +864,7 @@ if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
   return labels.flatMap((label,index)=>{
     const matches=documents.flatMap(({document,offsetX,offsetY})=>
       Array.from(document.querySelectorAll('*')).map(element=>({element,offsetX,offsetY}))
-    ).filter(({element})=>surfaceTextsOf(element).some(text=>normalize(text)===label)&&visible(element)&&enabled(element))
+    ).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element))
       .sort((left,right)=>left.element.children.length-right.element.children.length);
     const exact=matches[0];
     if(!exact)return [];
@@ -883,6 +898,12 @@ const forbiddenTokens=${JSON.stringify(FORBIDDEN_ACTION_TOKENS)};
 const approvedNonActions=new Set(${JSON.stringify([...APPROVED_NON_ACTION_LABELS])});
 const allowedActionLabels=new Set(${JSON.stringify(allowedActionLabels)}.map(normalize));
 const normalizedWanted=normalize(wanted);
+const displayedLabelMatches=(value,label)=>{
+  if(value===label)return true;
+  if(!value.startsWith(label))return false;
+  const suffix=value.slice(label.length).trim();
+  return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
+};
 const forbidden=forbiddenTokens.some(token=>normalizedWanted.includes(token))&&
   !approvedNonActions.has(normalizedWanted)&&
   (!${JSON.stringify(allowActionText)}||!allowedActionLabels.has(normalizedWanted));
@@ -949,7 +970,7 @@ if(interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
 if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
   const matches=documents.flatMap(({document,offsetX,offsetY})=>
     Array.from(document.querySelectorAll('*')).map(element=>({element,offsetX,offsetY}))
-  ).filter(({element})=>surfaceTextsOf(element).some(text=>normalize(text)===wanted)&&visible(element)&&enabled(element))
+  ).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
     .sort((left,right)=>left.element.children.length-right.element.children.length);
   const exact=matches[0];
   if(!exact)return {ok:false};
@@ -998,6 +1019,15 @@ const approvalSystem=${JSON.stringify(system)};
 const approvalHeaders=approvalSystem==='edufine'
   ? ['문서번호','제목','기안자','문서명','결재상태']
   : ['문서번호','제목','기안자','신청자'];
+const screenLabels=approvalSystem==='edufine'
+  ? ['결재대기','결재 대기']
+  : ['미결/협조함','미결 / 협조함'];
+const displayedLabelMatches=(value,label)=>{
+  if(value===label)return true;
+  if(!value.startsWith(label))return false;
+  const suffix=value.slice(label.length).trim();
+  return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
+};
 const labels=${JSON.stringify(labels)}.map(value=>normalize(value).replace(/\\s+/g,''));
 const matchesLabel=(value,label)=>{
   const compact=normalize(value).replace(/\\s+/g,'');
@@ -1017,6 +1047,11 @@ const signal=(element)=>({
 const candidates=[];
 const rowCounts=[];
 let emptyList=false;
+const screenMarkerVisible=documents.some(({document})=>
+  Array.from(document.querySelectorAll('h1,h2,h3,label,span,div,a,button,[role="tab"],[role="menuitem"],[aria-label],[title]')).slice(0,5000).some(element=>
+    visible(element)&&surfaceTextsOf(element).some(text=>screenLabels.some(label=>displayedLabelMatches(normalize(text),normalize(label))))
+  )
+);
 for(const {document} of documents){
   const elements=Array.from(document.querySelectorAll('[aria-label],[title],span,em,strong,b,a,button,div,td,th')).slice(0,5000);
   for(const element of elements){
@@ -1050,11 +1085,11 @@ for(const {document} of documents){
     const rect=container.getBoundingClientRect();
     const headerText=normalize(Array.from(container.querySelectorAll('th,[role="columnheader"]')).map(element=>element.innerText||element.textContent||'').join(' '));
     const headerRelevant=approvalHeaders.some(label=>headerText.includes(label));
-    if(semanticRows.length>0||headerRelevant){
+    if(semanticRows.length>0||headerRelevant||screenMarkerVisible){
       rowCounts.push({
         count:semanticRows.length,
         area:Math.max(0,Math.round(rect.width*rect.height)),
-        relevant:headerRelevant||(semanticRows.length>0&&containers.length===1),
+        relevant:headerRelevant||(screenMarkerVisible&&containers.length===1),
         source:'dom'
       });
     }
@@ -1089,8 +1124,9 @@ for(const {document} of documents){
         const width=Number(rect?.width)||Number(component.getOffsetWidth?.())||Number(component._adjust_width)||0;
         const height=Number(rect?.height)||Number(component.getOffsetHeight?.())||Number(component._adjust_height)||0;
         const area=Math.max(0,Math.round(width*height));
-        const relevant=approvalHeaders.some(label=>headerText.includes(label));
-        if(Number.isSafeInteger(count)&&count>=0&&count<=9999&&area>0&&headCount>=2){
+        const handleVisible=!handle||visible(handle);
+        const relevant=approvalHeaders.some(label=>headerText.includes(label))||screenMarkerVisible;
+        if(Number.isSafeInteger(count)&&count>=0&&count<=9999&&area>0&&headCount>=2&&handleVisible){
           rowCounts.push({count,area,relevant,source:'nexacro'});
         }
       }
@@ -1106,7 +1142,8 @@ for(const {document} of documents){
     for(const root of roots)visitComponent(root);
   }catch{}
 }
-return {candidates:candidates.slice(0,100),rowCounts:rowCounts.slice(0,50),emptyList};
+const listReady=rowCounts.some(candidate=>candidate.relevant)||(emptyList&&screenMarkerVisible);
+return {candidates:candidates.slice(0,100),rowCounts:rowCounts.slice(0,50),emptyList,listReady};
 })()`;
 }
 
@@ -1295,6 +1332,7 @@ interface AttachedWindowsTarget {
 
 interface WorkflowTargetOptions {
   background?: boolean;
+  cloneExistingTargetUrl?: boolean;
   closeCreatedTargetOnRelease?: boolean;
   failFastOnLoginRequired?: boolean;
   forceNewTarget?: boolean;
@@ -1589,14 +1627,15 @@ async function acquireDirectWorkflowTarget(
 ): Promise<AttachedWindowsTarget> {
   const protocol = session.connection.protocol;
   const targetUrl = requestTarget(workflowId, session.officeCode, workflowSpec);
+  const existingTarget = selectWindowsWorkflowTarget(
+    targets,
+    session.officeCode,
+    workflowId,
+    workflowSpec,
+  );
   let target = options.forceNewTarget
     ? null
-    : selectWindowsWorkflowTarget(
-      targets,
-      session.officeCode,
-      workflowId,
-      workflowSpec,
-    );
+    : existingTarget;
   let shouldNavigate = false;
   if (!target && !options.forceNewTarget) {
     target = targets.find((candidate) => (
@@ -1605,14 +1644,17 @@ async function acquireDirectWorkflowTarget(
     shouldNavigate = Boolean(target);
   }
   if (!target) {
+    const createdUrl = options.cloneExistingTargetUrl && existingTarget
+      ? existingTarget.url
+      : targetUrl;
     const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
-      url: targetUrl,
+      url: createdUrl,
       ...(options.background ? { background: true } : {}),
     });
     if (typeof created.targetId !== 'string') {
       throw new Error('업무용 브라우저 탭을 만들지 못했습니다. 브라우저를 다시 열어 주세요.');
     }
-    target = { targetId: created.targetId, type: 'page', url: targetUrl };
+    target = { targetId: created.targetId, type: 'page', url: createdUrl };
     if (options.closeCreatedTargetOnRelease) {
       lifecycle.closeTargetIds.push(created.targetId);
     }
@@ -1637,6 +1679,31 @@ function createWindowsWorkflowPage(
   let active = attached;
   let targetIdsBeforeNewPage: Set<string> | null = null;
   const newPageAttachments = new Map<string, AttachedWindowsTarget>();
+  const approvalListSystem = (step: WorkflowStep): WebWorkflowSystem | null => {
+    if (workflowId === 'neis-approval-inbox' && step.id === 'open-pending-cooperation-inbox') {
+      return 'neis';
+    }
+    if (workflowId === 'edufine-approval-inbox' && step.id === 'open-waiting-approval-inbox') {
+      return 'edufine';
+    }
+    return null;
+  };
+  const approvalListReady = async (system: WebWorkflowSystem): Promise<boolean> => {
+    try {
+      parseApprovalCounterCandidates(
+        system,
+        await evaluateValue<unknown>(
+          session,
+          active.sessionId,
+          approvalCounterExpression(system),
+        ),
+        true,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  };
   return {
     async currentOrigin() {
       await extendSystemSessionIfPrompted(session, active.sessionId);
@@ -1671,6 +1738,8 @@ function createWindowsWorkflowPage(
     },
     async checkCurrentState(step) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
+      const approvalSystem = approvalListSystem(step);
+      if (approvalSystem) return approvalListReady(approvalSystem);
       return Boolean(await evaluateValue(
         session,
         active.sessionId,
@@ -1679,6 +1748,8 @@ function createWindowsWorkflowPage(
     },
     async checkPostcondition(step) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
+      const approvalSystem = approvalListSystem(step);
+      if (approvalSystem) return approvalListReady(approvalSystem);
       if (await evaluateValue(
         session,
         active.sessionId,
@@ -1755,6 +1826,7 @@ export async function openCdpWindowsApprovalPage(
     undefined,
     {
       background: true,
+      cloneExistingTargetUrl: true,
       closeCreatedTargetOnRelease: true,
       failFastOnLoginRequired: true,
       forceNewTarget: true,

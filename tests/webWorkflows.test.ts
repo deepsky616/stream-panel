@@ -310,7 +310,7 @@ describe('web workflow templates', () => {
     });
   });
 
-  it('keeps a key pinned to its saved office when the global office changes', () => {
+  it('retargets a key with an explicitly saved office when the global office changes', () => {
     const pinned: DeckItem = {
       id: 'pinned-leave',
       kind: 'action',
@@ -324,6 +324,10 @@ describe('web workflow templates', () => {
       webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'sen' },
     };
 
-    expect(webWorkflows.retargetWebWorkflowItems([pinned], 'goe')[0]).toEqual(pinned);
+    expect(webWorkflows.retargetWebWorkflowItems([pinned], 'goe')[0]).toMatchObject({
+      id: 'pinned-leave',
+      target: 'https://goe.neis.go.kr/',
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'goe' },
+    });
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createDefaultConfig } from '../src/shared/defaults';
-import type { ActionItem } from '../src/shared/types';
+import type { ActionItem, DeckItem } from '../src/shared/types';
 import {
   createEducationOfficePatch,
   createWebWorkBrowserCards,
@@ -13,6 +13,7 @@ import {
 } from '../src/renderer/src/editor/webWorkViewModel';
 import * as settingsComponents from '../src/renderer/src/editor/CustomWebWorkflowBuilder';
 import * as webWorkViewModel from '../src/renderer/src/editor/webWorkViewModel';
+import { ActionLibrary } from '../src/renderer/src/editor/ActionLibrary';
 
 function workflowAction(): ActionItem {
   return {
@@ -35,6 +36,17 @@ function workflowAction(): ActionItem {
 }
 
 describe('web work settings view model', () => {
+  it('omits the redundant folder creation template from the action library', () => {
+    const html = renderToStaticMarkup(createElement(ActionLibrary, {
+      platform: 'win32',
+      educationOfficeCode: 'goe',
+      onAdd: () => undefined,
+    }));
+
+    expect(html).not.toContain('폴더 만들기');
+    expect(html).toContain('폴더 열기');
+  });
+
   it('renders a guided custom workflow builder for both NEIS and Edufine', () => {
     const CustomWebWorkflowBuilder = (
       settingsComponents as unknown as {
@@ -142,7 +154,10 @@ describe('web work settings view model', () => {
       () => 'default',
       'win32',
     );
-    const workflow = workflowAction();
+    const workflow: ActionItem = {
+      ...workflowAction(),
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'goe' },
+    };
     const multi: ActionItem = {
       id: 'morning',
       kind: 'action',
@@ -155,7 +170,21 @@ describe('web work settings view model', () => {
       position: 1,
       multiAction: { steps: [{ id: 'step-1', kind: 'action', actionId: workflow.id }] },
     };
-    config.root = [workflow, multi];
+    const folder: DeckItem = {
+      id: 'web-folder',
+      kind: 'folder',
+      label: '웹 업무',
+      icon: { kind: 'auto' },
+      color: '#5B8CFF',
+      position: 2,
+      children: [{
+        ...workflowAction(),
+        id: 'nested-leave',
+        position: 0,
+        webWorkflow: { id: 'neis-leave', browserId: 'chrome', officeCode: 'goe' },
+      }],
+    };
+    config.root = [workflow, multi, folder];
 
     const patch = createEducationOfficePatch(config, 'sen');
 
@@ -166,6 +195,14 @@ describe('web work settings view model', () => {
       webWorkflow: { id: 'neis-leave', browserId: 'edge' },
     });
     expect(patch.root[1]).toEqual(multi);
+    expect(patch.root[2]).toMatchObject({
+      id: 'web-folder',
+      children: [{
+        id: 'nested-leave',
+        target: 'https://sen.neis.go.kr/',
+        webWorkflow: { id: 'neis-leave', browserId: 'chrome', officeCode: 'sen' },
+      }],
+    });
   });
 
   it('edits only the managed browser id and removes legacy personal browser settings', () => {
