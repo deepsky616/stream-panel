@@ -48,6 +48,7 @@ const html = `<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>Stream Panel ${version} 다운로드</title>
@@ -105,7 +106,7 @@ const html = `<!doctype html>
           suggestedName: fileName,
           types: [{ description: 'Windows 설치 파일', accept: { 'application/octet-stream': ['.exe'] } }]
         });
-        status.textContent = '설치 파일을 준비하는 중입니다…';
+        status.textContent = '설치 파일을 준비하는 중입니다.';
         const response = await fetch(fileUrl, { cache: 'no-store' });
         if (!response.ok || !response.body) throw new Error('다운로드 응답을 받지 못했습니다.');
         const writable = await handle.createWritable();
@@ -113,7 +114,7 @@ const html = `<!doctype html>
         const progress = new TransformStream({
           transform(chunk, controller) {
             received += chunk.byteLength;
-            status.textContent = '다운로드 중… ' + Math.min(100, Math.round(received / expectedSize * 100)) + '%';
+            status.textContent = '다운로드 중... ' + Math.min(100, Math.round(received / expectedSize * 100)) + '%';
             controller.enqueue(chunk);
           }
         });
