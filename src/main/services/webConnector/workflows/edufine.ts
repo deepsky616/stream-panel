@@ -23,23 +23,23 @@ const BUSINESS_PURCHASE_WORKFLOW: ManagedWorkflowDefinition = {
   steps: [
     {
       id: 'open-job-selector',
-      candidateLabels: ['업무관리'],
+      candidateLabels: ['업무관리', '업무 관리', 'K-에듀파인 업무관리'],
       selection: 'first-available',
       interaction: 'edufine-job-toggle',
-      postcondition: { kind: 'visible-any', labels: ['학교회계'] },
+      postcondition: { kind: 'visible-any', labels: ['학교회계', '학교 회계'] },
       ...COMMON_CHECKS,
     },
     {
       id: 'select-school-accounting',
-      candidateLabels: ['학교회계'],
+      candidateLabels: ['학교회계', '학교 회계'],
       selection: 'first-available',
       interaction: 'edufine-job-option',
-      postcondition: { kind: 'visible-any', labels: ['사업담당'] },
+      postcondition: { kind: 'visible-any', labels: ['사업담당', '사업 담당'] },
       ...COMMON_CHECKS,
     },
     {
       id: 'open-business-owner',
-      candidateLabels: ['사업담당'],
+      candidateLabels: ['사업담당', '사업 담당'],
       selection: 'first-available',
       interaction: 'frame-exact-text',
       postcondition: { kind: 'visible-any', labels: ['품의/정산', '품의 / 정산'] },
@@ -80,7 +80,7 @@ export const EDUFINE_WORKFLOWS = {
     steps: [
       {
         id: 'open-draft',
-        candidateLabels: ['기안'],
+        candidateLabels: ['기안', '기안작성', '기안 작성', '기안문작성', '기안문 작성'],
         selection: 'first-available',
         interaction: 'edufine-top-menu',
         postcondition: { kind: 'visible-any', labels: ['공용서식', '공용 서식'] },
@@ -88,7 +88,7 @@ export const EDUFINE_WORKFLOWS = {
       },
       {
         id: 'open-public-forms',
-        candidateLabels: ['공용서식', '공용 서식'],
+        candidateLabels: ['공용서식', '공용 서식', '공통서식', '공통 서식'],
         selection: 'first-available',
         interaction: 'edufine-mega-menu',
         postcondition: {
@@ -97,6 +97,7 @@ export const EDUFINE_WORKFLOWS = {
             '표준서식(결재4인,협조4인)',
             '표준서식(결재 4인, 협조 4인)',
             '표준서식(결재4인, 협조4인)',
+            '표준서식(결재 4인,협조 4인)',
           ],
         },
         ...COMMON_CHECKS,
@@ -107,6 +108,7 @@ export const EDUFINE_WORKFLOWS = {
           '표준서식(결재4인,협조4인)',
           '표준서식(결재 4인, 협조 4인)',
           '표준서식(결재4인, 협조4인)',
+          '표준서식(결재 4인,협조 4인)',
         ],
         selection: 'first-available',
         interaction: 'frame-exact-text',

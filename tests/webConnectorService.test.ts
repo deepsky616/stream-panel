@@ -294,6 +294,37 @@ describe('managed web connector service', () => {
     expect(broadcasts.length).toBeGreaterThan(0);
   });
 
+  it('returns a failure when either official system connection does not complete', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    controller.connectSystems = async (_input, report) => {
+      report?.({ system: 'neis', state: 'connected', checkedAt: 1_800_000_000_001 });
+      report?.({
+        system: 'edufine',
+        state: 'error',
+        message: 'K-에듀파인 공식 연결 메뉴를 찾지 못했습니다.',
+      });
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+    });
+    await service.start();
+
+    await expect(service.openSetup('edge', 'connect')).resolves.toEqual({
+      ok: false,
+      message: 'K-에듀파인: K-에듀파인 공식 연결 메뉴를 찾지 못했습니다.',
+    });
+  });
+
   it('opens only the portal even when the legacy automatic SSO setting is enabled', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
@@ -512,29 +543,36 @@ describe('managed web connector service', () => {
     ]);
   });
 
-  it('rejects another office target and never falls back to a personal browser', async () => {
+  it('repairs a stale target by launching the current central office in the managed browser', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
       'win32',
     );
+    const requests: Array<{ officeCode: string }> = [];
+    const controller = createController();
+    controller.run = async (request) => {
+      requests.push(request);
+      return { workflowId: 'neis-leave', finalState: 'leave-request-form' };
+    };
     const service = createWebConnectorService({
       userDataPath: 'C:\\StreamPanel',
       platform: 'win32',
       getConfig: () => config,
-      sessionController: createController(),
+      sessionController: controller,
       stateIo: { read: async () => undefined, write: async () => undefined },
       openPortal: async () => undefined,
     });
     await service.start();
 
-    expect(service.queue(workflowAction({ target: 'https://sen.neis.go.kr/' }))).toMatchObject({
-      queued: false,
-      message: expect.stringMatching(/교육청/),
+    expect(service.queue(workflowAction({ target: 'https://sen.neis.go.kr/' }))).toEqual({
+      queued: true,
     });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(requests).toEqual([expect.objectContaining({ officeCode: 'goe' })]);
   });
 
-  it('runs a key with the office saved on that key instead of the global office', async () => {
+  it('uses the central office even while a rendered key still contains the previous office', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
@@ -566,6 +604,6 @@ describe('managed web connector service', () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(requests).toEqual([expect.objectContaining({ officeCode: 'sen' })]);
+    expect(requests).toEqual([expect.objectContaining({ officeCode: 'goe' })]);
   });
 });

@@ -209,4 +209,32 @@ describe('platform defaults', () => {
       webWorkflow: { id: 'neis-leave', officeCode: 'sen' },
     });
   });
+
+  it('repairs a stale key when the same central education office is selected again', () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:/Users/test/Downloads', documents: 'C:/Users/test/Documents' },
+      () => 'fixed-id',
+      'win32',
+    );
+    config.educationOfficeCode = 'sen';
+    config.root = [{
+      id: 'stale-leave',
+      kind: 'action',
+      type: 'url',
+      label: '나이스 복무',
+      target: 'https://goe.neis.go.kr/',
+      args: [],
+      icon: { kind: 'auto' },
+      color: '#5B8CFF',
+      position: 0,
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'goe' },
+    }];
+
+    const updated = mergeConfigPatch(config, { educationOfficeCode: 'sen' });
+
+    expect(updated.root[0]).toMatchObject({
+      target: 'https://sen.neis.go.kr/',
+      webWorkflow: { id: 'neis-leave', officeCode: 'sen' },
+    });
+  });
 });

@@ -19,7 +19,7 @@ const COMMON_CHECKS = {
   skipWhenSatisfied: true,
 };
 const NEIS_PENDING_COOPERATION_LABELS = ['미결/협조함', '미결 / 협조함'] as const;
-const EDUFINE_WAITING_LABELS = ['결재대기', '결재 대기'] as const;
+const EDUFINE_WAITING_LABELS = ['결재대기', '결재 대기', '결재대기함', '결재 대기함'] as const;
 const NEIS_TOTAL_LABELS = ['Total', 'TOTAL', 'total'] as const;
 const NEIS_EMPTY_OR_LIST_LABELS = [
   ...NEIS_TOTAL_LABELS,
@@ -55,7 +55,7 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   steps: [
     {
       id: 'open-document-approval-menu',
-      candidateLabels: ['결재'],
+      candidateLabels: ['결재', '결재(긴급)', '결재 (긴급)'],
       selection: 'first-available',
       interaction: 'edufine-top-menu',
       allowActionText: true,

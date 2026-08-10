@@ -744,6 +744,8 @@ const labels=${labels}.map(normalize);
 const groups=${JSON.stringify(groups)}.map(group=>group.map(normalize));
 const displayedLabelMatches=(value,label)=>{
   if(value===label)return true;
+  const compact=(input)=>Array.from(normalize(input).toLowerCase()).filter(char=>!' ·ㆍ:：-_/()[]{}（）'.includes(char)).join('');
+  if(compact(value)===compact(label))return true;
   if(!value.startsWith(label))return false;
   const suffix=value.slice(label.length).trim();
   return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
@@ -784,6 +786,8 @@ const labels=${labels}.map(normalize);
 const interaction=${interaction};
 const displayedLabelMatches=(value,label)=>{
   if(value===label)return true;
+  const compact=(input)=>Array.from(normalize(input).toLowerCase()).filter(char=>!' ·ㆍ:：-_/()[]{}（）'.includes(char)).join('');
+  if(compact(value)===compact(label))return true;
   if(!value.startsWith(label))return false;
   const suffix=value.slice(label.length).trim();
   return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
@@ -813,31 +817,36 @@ if(interaction==='edufine-job'){
   }
   return result;
 }
+const jobCombo=()=>documents.map(({document})=>{
+  const view=document.defaultView;
+  const application=view?.nexacro?.getApplication?.()||view?.application;
+  return application?.mainframe?.MainVFrameSet?.TopFrame?.form?.cboJobList||
+    application?.mainframe?.mainframe?.TopFrame?.form?.cboJobList;
+}).find(Boolean)||null;
 const jobInput=()=>documents.flatMap(({document})=>
-  Array.from(document.querySelectorAll("[id$='cboJobList.comboedit:input']"))
-).find(element=>visible(element))||null;
+  Array.from(document.querySelectorAll(
+    "[id$='cboJobList.comboedit:input'],input[id*='cboJobList'],[id*='cboJobList'] input,[id*='cboJobList'][role='combobox']"
+  ))
+).find(element=>visible(element))||jobCombo()?._input_element?.handle||
+  jobCombo()?._control_element?.handle?.querySelector?.('input')||null;
 const jobToggle=()=>{
   const input=jobInput();
-  if(!input)return null;
-  const doc=input.ownerDocument||document;
-  const controls=Array.from(doc.querySelectorAll(
-    "[id*='cboJobList'][id*='dropbutton'],[id*='cboJobList'][id$=':button'],[id*='cboJobList'][role='button']"
-  )).filter(element=>visible(element)&&enabled(element));
+  const controls=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+    "[id*='cboJobList'][id*='dropbutton'],[id*='cboJobList'][id$=':button'],[id*='cboJobList'][role='button'],[id*='cboJobList'] button,[aria-controls*='cboJobList']"
+  ))).filter(element=>visible(element)&&enabled(element));
   return controls.find(element=>String(element.id||'').endsWith('dropbutton'))||
     controls.find(element=>String(element.id||'').includes('dropbutton'))||input;
 };
 const jobOption=(label)=>{
   const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
-    "[id*='cboJobList'],[id*='ComboPopup'],[id*='combolist']"
-  ))).filter(element=>normalize(element.textContent||element.value)===label&&visible(element)&&enabled(element));
+    "[id*='cboJobList'],[id*='ComboPopup'],[id*='combolist'],[role='option']"
+  ))).filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
   return matches.find(element=>String(element.id||'').endsWith(':text'))||
     matches.sort((left,right)=>left.children.length-right.children.length)[0]||null;
 };
 if(interaction==='edufine-job-toggle'){
-  const input=jobInput();
-  const current=normalize(input?.value||input?.textContent);
-  const element=labels.includes(current)?jobToggle():null;
-  return element?[summary(element,0,current,'NEXACRO-JOB-TOGGLE')]:[];
+  const element=jobToggle();
+  return element?[summary(element,0,labels[0]||'업무관리','NEXACRO-JOB-TOGGLE')]:[];
 }
 if(interaction==='edufine-job-option'){
   return labels.flatMap((label,index)=>{
@@ -847,8 +856,13 @@ if(interaction==='edufine-job-option'){
 }
 const choose=(selector,label,preferred)=>{
   const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(selector)))
-    .filter(element=>normalize(element.textContent)===label&&visible(element));
-  return matches.find(element=>String(element.id||'').endsWith(preferred))||matches.at(-1)||null;
+    .filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
+  const preferredMatch=matches.find(element=>String(element.id||'').endsWith(preferred))||matches.at(-1);
+  if(preferredMatch)return preferredMatch;
+  const fallback=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+    'a,button,[role="button"],[role="menuitem"],[role="tab"],[onclick],[id*="btnMenu"],[id*="MegaMenu"],[id*="megaMenu"]'
+  ))).filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
+  return fallback.sort((left,right)=>left.children.length-right.children.length)[0]||null;
 };
 if(interaction==='edufine-top-menu'){
   return labels.flatMap((label,index)=>{
@@ -902,6 +916,8 @@ const allowedActionLabels=new Set(${JSON.stringify(allowedActionLabels)}.map(nor
 const normalizedWanted=normalize(wanted);
 const displayedLabelMatches=(value,label)=>{
   if(value===label)return true;
+  const compact=(input)=>Array.from(normalize(input).toLowerCase()).filter(char=>!' ·ㆍ:：-_/()[]{}（）'.includes(char)).join('');
+  if(compact(value)===compact(label))return true;
   if(!value.startsWith(label))return false;
   const suffix=value.slice(label.length).trim();
   return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
@@ -927,29 +943,35 @@ if(interaction==='edufine-job'){
   combo.redraw?.();
   return {ok:changed!==false,direct:true};
 }
+const jobCombo=()=>documents.map(({document})=>{
+  const view=document.defaultView;
+  const application=view?.nexacro?.getApplication?.()||view?.application;
+  return application?.mainframe?.MainVFrameSet?.TopFrame?.form?.cboJobList||
+    application?.mainframe?.mainframe?.TopFrame?.form?.cboJobList;
+}).find(Boolean)||null;
 const jobInput=()=>documents.flatMap(({document})=>
-  Array.from(document.querySelectorAll("[id$='cboJobList.comboedit:input']"))
-).find(element=>visible(element))||null;
+  Array.from(document.querySelectorAll(
+    "[id$='cboJobList.comboedit:input'],input[id*='cboJobList'],[id*='cboJobList'] input,[id*='cboJobList'][role='combobox']"
+  ))
+).find(element=>visible(element))||jobCombo()?._input_element?.handle||
+  jobCombo()?._control_element?.handle?.querySelector?.('input')||null;
 const jobToggle=()=>{
   const input=jobInput();
-  if(!input)return null;
-  const doc=input.ownerDocument||document;
-  const controls=Array.from(doc.querySelectorAll(
-    "[id*='cboJobList'][id*='dropbutton'],[id*='cboJobList'][id$=':button'],[id*='cboJobList'][role='button']"
-  )).filter(element=>visible(element)&&enabled(element));
+  const controls=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+    "[id*='cboJobList'][id*='dropbutton'],[id*='cboJobList'][id$=':button'],[id*='cboJobList'][role='button'],[id*='cboJobList'] button,[aria-controls*='cboJobList']"
+  ))).filter(element=>visible(element)&&enabled(element));
   return controls.find(element=>String(element.id||'').endsWith('dropbutton'))||
     controls.find(element=>String(element.id||'').includes('dropbutton'))||input;
 };
 const jobOption=()=>{
   const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
-    "[id*='cboJobList'],[id*='ComboPopup'],[id*='combolist']"
-  ))).filter(element=>normalize(element.textContent||element.value)===wanted&&visible(element)&&enabled(element));
+    "[id*='cboJobList'],[id*='ComboPopup'],[id*='combolist'],[role='option']"
+  ))).filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
   return matches.find(element=>String(element.id||'').endsWith(':text'))||
     matches.sort((left,right)=>left.children.length-right.children.length)[0]||null;
 };
 if(interaction==='edufine-job-toggle'||interaction==='edufine-job-option'){
-  const input=jobInput();
-  const element=interaction==='edufine-job-toggle'&&normalize(input?.value||input?.textContent)===wanted
+  const element=interaction==='edufine-job-toggle'
     ? jobToggle()
     : interaction==='edufine-job-option'?jobOption():null;
   if(!element)return {ok:false};
@@ -958,8 +980,13 @@ if(interaction==='edufine-job-toggle'||interaction==='edufine-job-option'){
 }
 const choose=(selector,preferred)=>{
   const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(selector)))
-    .filter(element=>normalize(element.textContent)===wanted&&visible(element));
-  return matches.find(element=>String(element.id||'').endsWith(preferred))||matches.at(-1)||null;
+    .filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
+  const preferredMatch=matches.find(element=>String(element.id||'').endsWith(preferred))||matches.at(-1);
+  if(preferredMatch)return preferredMatch;
+  const fallback=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+    'a,button,[role="button"],[role="menuitem"],[role="tab"],[onclick],[id*="btnMenu"],[id*="MegaMenu"],[id*="megaMenu"]'
+  ))).filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
+  return fallback.sort((left,right)=>left.children.length-right.children.length)[0]||null;
 };
 if(interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
   const element=interaction==='edufine-top-menu'
@@ -1040,6 +1067,8 @@ const screenLabels=approvalSystem==='edufine'
   : ['미결/협조함','미결 / 협조함'];
 const displayedLabelMatches=(value,label)=>{
   if(value===label)return true;
+  const compact=(input)=>Array.from(normalize(input).toLowerCase()).filter(char=>!' ·ㆍ:：-_/()[]{}（）'.includes(char)).join('');
+  if(compact(value)===compact(label))return true;
   if(!value.startsWith(label))return false;
   const suffix=value.slice(label.length).trim();
   return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
@@ -2131,14 +2160,14 @@ const otherTokens=${JSON.stringify(system === 'neis'
 const fold=(value)=>normalize(value).toLowerCase().replace(/[\\s\\-()（）]/g,'');
 const wantedKeys=Array.from(new Set(ssoLabels.map(fold).filter(Boolean)));
 const otherKeys=Array.from(new Set(otherLabels.map(fold).filter(Boolean)));
-const selector='a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex],img,span,div,strong,p';
+const selector='a,button,input[type="button"],input[type="image"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex],img,span,div,strong,p';
 const candidates=[];
 const seen=new Set();
 for(const {document} of documents){
   for(const element of Array.from(document.querySelectorAll(selector)).slice(0,5000)){
     if(seen.has(element)||!visible(element)||!enabled(element))continue;
     const inputType=normalize(element.getAttribute?.('type')||element.type).toLowerCase();
-    if(inputType==='submit'||inputType==='image')continue;
+    if(inputType==='submit')continue;
     const texts=surfaceTextsOf(element).map(normalize).filter(text=>text&&text.length<=96);
     const attributeSignal=[
       'href','onclick','id','name','class','src','alt','data-url','data-href',
@@ -2160,11 +2189,11 @@ for(const {document} of documents){
     if(hasOtherToken&&!hasSystemToken)continue;
     if(hasSystemToken&&score<90){score=90;matchedText=matchedText||attributeSignal.slice(0,96);}
     if(score===0)continue;
-    const clickableAncestor=element.closest?.('a,button,input[type="button"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex]');
+    const clickableAncestor=element.closest?.('a,button,input[type="button"],input[type="image"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex]');
     const clickElement=clickableAncestor||element;
     if(!visible(clickElement)||!enabled(clickElement)||seen.has(clickElement))continue;
     const clickType=normalize(clickElement.getAttribute?.('type')||clickElement.type).toLowerCase();
-    if(clickType==='submit'||clickType==='image')continue;
+    if(clickType==='submit')continue;
     if(clickableAncestor)score+=20;
     const rect=clickElement.getBoundingClientRect();
     seen.add(element);
@@ -2336,10 +2365,15 @@ async function detachWindowsTarget(
   }
 }
 
-async function findAuthenticatedSystemTarget(
+interface InspectedSystemTarget {
+  target: WindowsTargetInfo;
+  loginRequired: boolean;
+}
+
+async function inspectSystemTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
-): Promise<WindowsTargetInfo | null> {
+): Promise<InspectedSystemTarget | null> {
   let targets: WindowsTargetInfo[];
   try {
     targets = readTargetInfos(
@@ -2348,6 +2382,7 @@ async function findAuthenticatedSystemTarget(
   } catch {
     return null;
   }
+  let loginTarget: WindowsTargetInfo | null = null;
   for (const target of targets) {
     let attached: AttachedWindowsTarget | undefined;
     try {
@@ -2355,14 +2390,17 @@ async function findAuthenticatedSystemTarget(
       const state = readPageReadinessState(
         await evaluateValue(session, attached.sessionId, PAGE_READINESS_EXPRESSION),
       );
-      if (state && !state.loginVisible && systemTargetAllowed(
+      if (state && systemTargetAllowed(
         { ...target, url: state.href },
         session.officeCode,
         system,
       )) {
-        const authenticatedTarget = { ...target, url: state.href };
-        systemTargetMap(session)[system] = target.targetId;
-        return authenticatedTarget;
+        const inspectedTarget = { ...target, url: state.href };
+        if (!state.loginVisible) {
+          systemTargetMap(session)[system] = target.targetId;
+          return { target: inspectedTarget, loginRequired: false };
+        }
+        loginTarget ??= inspectedTarget;
       }
     } catch {
       // Loading or closed system tabs are retried through the portal or direct route.
@@ -2371,7 +2409,15 @@ async function findAuthenticatedSystemTarget(
     }
   }
   delete systemTargetMap(session)[system];
-  return null;
+  return loginTarget ? { target: loginTarget, loginRequired: true } : null;
+}
+
+async function findAuthenticatedSystemTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<WindowsTargetInfo | null> {
+  const inspected = await inspectSystemTarget(session, system);
+  return inspected && !inspected.loginRequired ? inspected.target : null;
 }
 
 async function hasAuthenticatedSystemTarget(
@@ -2384,8 +2430,10 @@ async function hasAuthenticatedSystemTarget(
 async function focusExistingSystemTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
+  includeLoginRequired = false,
 ): Promise<boolean> {
-  const target = await findAuthenticatedSystemTarget(session, system);
+  const inspected = includeLoginRequired ? await inspectSystemTarget(session, system) : null;
+  const target = inspected?.target ?? await findAuthenticatedSystemTarget(session, system);
   if (!target) return false;
   let attached: AttachedWindowsTarget | undefined;
   try {
@@ -2407,7 +2455,7 @@ async function acquireLoggedInPortalTarget(
   const office = getEducationOffice(session.officeCode);
   const portalOrigin = new URL(office.portalUrl).origin;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  let target = targets.find((candidate) => {
+  const portalTargets = targets.filter((candidate) => {
     if (candidate.type !== 'page') return false;
     try {
       return new URL(candidate.url).origin === portalOrigin;
@@ -2415,6 +2463,29 @@ async function acquireLoggedInPortalTarget(
       return false;
     }
   });
+  // A previous attempt can leave both a portal login page and the authenticated
+  // main page open. Selecting the first target made Connect wait on the stale
+  // login page even though the user had already logged in in another tab.
+  let target: WindowsTargetInfo | undefined;
+  for (const candidate of portalTargets) {
+    let attachedCandidate: AttachedWindowsTarget | undefined;
+    try {
+      attachedCandidate = await attachWindowsTarget(session, candidate);
+      const state = readPageReadinessState(
+        await evaluateValue(session, attachedCandidate.sessionId, PAGE_READINESS_EXPRESSION),
+      );
+      if (state && !state.loginVisible && state.origin === portalOrigin) {
+        target = { ...candidate, url: state.href };
+        break;
+      }
+    } catch {
+      // A stale or redirecting portal tab is ignored in favour of another tab.
+    } finally {
+      if (attachedCandidate) await detachWindowsTarget(session, attachedCandidate);
+    }
+  }
+  target ??= portalTargets.find((candidate) => candidate.url === office.portalUrl)
+    ?? portalTargets[0];
   let shouldNavigate = false;
   if (!target) {
     target = targets.find((candidate) => (
@@ -2489,14 +2560,17 @@ async function waitForSystemTarget(
   system: WebWorkflowSystem,
   signal?: AbortSignal,
   timeoutMs = 30_000,
-): Promise<boolean> {
+): Promise<'connected' | 'login-required' | 'missing'> {
   const deadline = Date.now() + timeoutMs;
+  let loginRequired = false;
   while (Date.now() < deadline) {
     throwIfApprovalCheckCancelled(signal);
-    if (await hasAuthenticatedSystemTarget(session, system)) return true;
+    const inspected = await inspectSystemTarget(session, system);
+    if (inspected && !inspected.loginRequired) return 'connected';
+    loginRequired ||= inspected?.loginRequired === true;
     await new Promise<void>((resolve) => setTimeout(resolve, 150));
   }
-  return false;
+  return loginRequired ? 'login-required' : 'missing';
 }
 
 async function prepareOfficeSystemsViaPortal(
@@ -2598,8 +2672,14 @@ async function prepareOfficeSystemsViaPortal(
       if (portal) await detachWindowsTarget(session, portal);
     }
     if (results.has(system)) continue;
-    if (await waitForSystemTarget(session, system, signal)) {
+    const targetState = await waitForSystemTarget(session, system, signal);
+    if (targetState === 'connected') {
       results.set(system, { ready: true });
+    } else if (targetState === 'login-required') {
+      results.set(system, {
+        ready: false,
+        message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 창은 열렸지만 공식 SSO 로그인이 완료되지 않았습니다. 열린 시스템 창에서 추가 인증을 완료해 주세요.`,
+      });
     } else {
       results.set(system, {
         ready: false,
@@ -2620,7 +2700,6 @@ export async function connectWindowsOfficeSystems(
   const portalPreparations = foreground
     ? await prepareOfficeSystemsViaPortal(session, systems, report, signal, true)
     : null;
-  const connectedSystems: WebWorkflowSystem[] = [];
   try {
     for (const system of [...new Set(systems)]) {
       throwIfApprovalCheckCancelled(signal);
@@ -2651,7 +2730,6 @@ export async function connectWindowsOfficeSystems(
         );
         throwIfApprovalCheckCancelled(signal);
         report({ system, state: 'connected', checkedAt: Date.now() });
-        connectedSystems.push(system);
       } catch (error) {
         if (signal?.aborted) throw error;
         const message = error instanceof Error ? error.message : `${label} 연결에 실패했습니다.`;
@@ -2668,9 +2746,9 @@ export async function connectWindowsOfficeSystems(
   } finally {
     if (foreground) {
       let systemFocused = false;
-      for (const system of connectedSystems) {
+      for (const system of [...new Set(systems)]) {
         try {
-          systemFocused = await focusExistingSystemTarget(session, system) || systemFocused;
+          systemFocused = await focusExistingSystemTarget(session, system, true) || systemFocused;
         } catch {
           // Keep the other connected system available when one tab disappears.
         }

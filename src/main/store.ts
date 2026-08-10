@@ -40,10 +40,11 @@ export function mergeConfigPatch(
     ...cloneConfig(current),
     ...structuredClone(patch),
   } as AppConfig;
-  if (
-    patch.educationOfficeCode !== undefined &&
-    patch.educationOfficeCode !== current.educationOfficeCode
-  ) {
+  // An education-office write is also an explicit request to repair every
+  // built-in/custom workflow that still carries an older office.  Do this even
+  // when the selected value equals the stored value: older releases could save
+  // a stale per-key office while the central setting already showed the new one.
+  if (patch.educationOfficeCode !== undefined) {
     candidate.root = retargetWebWorkflowItems(candidate.root, patch.educationOfficeCode);
   }
   return candidate;

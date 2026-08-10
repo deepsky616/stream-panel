@@ -147,12 +147,13 @@ describe('managed web workflow definitions', () => {
       ['신청(새 창 열기)', '신청'],
     ]);
     expect(definitions['edufine-draft'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
-      ['기안'],
-      ['공용서식', '공용 서식'],
+      ['기안', '기안작성', '기안 작성', '기안문작성', '기안문 작성'],
+      ['공용서식', '공용 서식', '공통서식', '공통 서식'],
       [
         '표준서식(결재4인,협조4인)',
         '표준서식(결재 4인, 협조 4인)',
         '표준서식(결재4인, 협조4인)',
+        '표준서식(결재 4인,협조 4인)',
       ],
     ]);
     expect(definitions['edufine-draft'].steps.map(
@@ -164,9 +165,9 @@ describe('managed web workflow definitions', () => {
       titleIncludes: '표준서식',
     });
     expect(definitions['edufine-purchase'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
-      ['업무관리'],
-      ['학교회계'],
-      ['사업담당'],
+      ['업무관리', '업무 관리', 'K-에듀파인 업무관리'],
+      ['학교회계', '학교 회계'],
+      ['사업담당', '사업 담당'],
       ['품의/정산', '품의 / 정산'],
       ['품의등록', '품의 등록'],
     ]);
@@ -260,14 +261,14 @@ describe('managed web workflow definitions', () => {
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map((step) => (
       step.candidateLabels
     ))).toEqual([
-      ['결재'],
-      ['결재대기', '결재 대기'],
+      ['결재', '결재(긴급)', '결재 (긴급)'],
+      ['결재대기', '결재 대기', '결재대기함', '결재 대기함'],
     ]);
     const clickedLabels = APPROVAL_INBOX_WORKFLOW_ROUTES.edufine.flatMap((route) => (
       route.steps.flatMap((step) => step.candidateLabels)
     ));
     expect(clickedLabels).not.toContain('문서관리');
-    expect(clickedLabels).not.toContain('결재(긴급)');
+    expect(clickedLabels).toContain('결재(긴급)');
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ interaction }) => interaction,
     )).toEqual(['edufine-top-menu', 'edufine-mega-menu']);

@@ -17,7 +17,6 @@ import type {
   WebWorkflowSystem,
 } from '../../../shared/types';
 import {
-  createEducationOfficePatch,
   createWebWorkBrowserCards,
   shouldShowWebWorkSettings,
 } from './webWorkViewModel';
@@ -487,10 +486,14 @@ export function SettingsModal({
                   <select
                     value={config.educationOfficeCode}
                     disabled={connectorBusy !== null}
-                    onChange={(event) => setConfig((current) => createEducationOfficePatch(
-                      current,
-                      event.target.value as EducationOfficeCode,
-                    ))}
+                    onChange={(event) => {
+                      const educationOfficeCode = event.target.value as EducationOfficeCode;
+                      // Send only the central setting. The main process retargets
+                      // its authoritative, most recent deck so a queued renderer
+                      // write cannot restore stale workflow URLs.
+                      setConfig(() => ({ educationOfficeCode }));
+                      setMessage('소속 교육청과 등록된 모든 웹 업무를 함께 변경하고 있습니다.');
+                    }}
                   >
                     {EDUCATION_OFFICES.map((office) => (
                       <option key={office.code} value={office.code}>{office.name}</option>

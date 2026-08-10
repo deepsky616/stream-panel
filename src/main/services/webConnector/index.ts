@@ -12,6 +12,7 @@ import type {
 } from '../../../shared/types';
 import {
   getWebWorkflowTarget,
+  getWebWorkflowTargetForSpec,
   getWebWorkflowSystem,
   isAllowedWebWorkflowSpecTarget,
   isWebWorkflowSpec,
@@ -387,10 +388,17 @@ export function createWebConnectorService({
           message: '웹 업무 종류가 지정되지 않았습니다. 편집기에서 업무 키를 다시 만들어 주세요.',
         };
       }
-      const workflowSpec = item.webWorkflow;
+      const officeCode = currentOffice();
+      // The central office is authoritative at launch time. This protects an
+      // already-rendered key from opening the previous office during the short
+      // interval between a settings change and the updated deck broadcast.
+      const workflowSpec: WebWorkflowSpec = {
+        ...item.webWorkflow,
+        officeCode,
+      };
       const workflowSystem = getWebWorkflowSystem(workflowSpec);
-      const officeCode = workflowSpec.officeCode ?? currentOffice();
-      if (!isAllowedWebWorkflowSpecTarget(workflowSpec, item.target, officeCode)) {
+      const workflowTarget = getWebWorkflowTargetForSpec(workflowSpec, officeCode);
+      if (!isAllowedWebWorkflowSpecTarget(workflowSpec, workflowTarget, officeCode)) {
         return {
           queued: false,
           message: '선택한 교육청과 업무 주소가 일치하지 않습니다. 설정에서 소속 교육청을 다시 선택해 주세요.',
@@ -531,12 +539,23 @@ export function createWebConnectorService({
           throw new Error('나이스·K-에듀파인 연결 기능이 준비되지 않았습니다. 앱을 다시 시작해 주세요.');
         }
         const systems: readonly WebWorkflowSystem[] = ['neis', 'edufine'];
+        const connectionResults = new Map<WebWorkflowSystem, WebSystemConnectionStatus>();
         await controller.connectSystems({
           officeCode,
           browserId,
           systems,
           foreground: true,
-        }, (status) => setSystemStatus(officeCode, browserId, status));
+        }, (status) => {
+          connectionResults.set(status.system, status);
+          setSystemStatus(officeCode, browserId, status);
+        });
+        const failed = systems.flatMap((system) => {
+          const status = connectionResults.get(system);
+          if (!status || status.state === 'connected') return [];
+          const label = system === 'neis' ? '나이스' : 'K-에듀파인';
+          return [`${label}: ${status.message ?? '연결을 완료하지 못했습니다.'}`];
+        });
+        if (failed.length > 0) throw new Error(failed.join(' / '));
         return { ok: true };
       } catch (error) {
         return { ok: false, message: errorDetail(error) };

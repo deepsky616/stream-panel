@@ -1440,7 +1440,8 @@ describe('Windows managed web automation', () => {
     expect(ssoExpressions).toHaveLength(2);
     expect(ssoExpressions.every((expression) => (
       expression.includes("querySelectorAll('iframe,frame')") &&
-      expression.includes("[onclick]")
+      expression.includes("[onclick]") &&
+      expression.includes('input[type="image"]')
     ))).toBe(true);
     for (const expression of ssoExpressions) {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
@@ -1454,6 +1455,93 @@ describe('Windows managed web automation', () => {
       method: 'Target.activateTarget',
       params: { targetId: 'edufine' },
       sessionId: undefined,
+    });
+  });
+
+  it('selects the authenticated portal main tab instead of an older login tab', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const reports: Array<{ system: string; state: string }> = [];
+    let neisOpened = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'portal-login', type: 'page', url: 'https://goe.eduptl.kr/login.do' },
+            { targetId: 'portal-main', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
+            ...(neisOpened
+              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' }]
+              : []),
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Browser.getWindowForTarget') return { windowId: 31 };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('const ssoLabels=')) {
+            return { result: { value: sessionId === 'portal-main-session'
+              ? { clicked: true, count: 1, x: 150, y: 90 }
+              : { clicked: false, count: 0 } } };
+          }
+          if (expression.includes('loginVisible')) {
+            const login = sessionId === 'portal-login-session';
+            const main = sessionId === 'portal-main-session';
+            return { result: { value: {
+              href: login
+                ? 'https://goe.eduptl.kr/login.do'
+                : main
+                  ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
+                  : 'https://goe.neis.go.kr/main',
+              origin: main || login ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: login,
+            } } };
+          }
+        }
+        if (
+          method === 'Input.dispatchMouseEvent' &&
+          sessionId === 'portal-main-session' &&
+          params.type === 'mouseReleased'
+        ) neisOpened = true;
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(
+      session as never,
+      ['neis'],
+      ({ system, state }) => reports.push({ system, state }),
+      undefined,
+      true,
+    );
+
+    expect(reports.at(-1)).toEqual({ system: 'neis', state: 'connected' });
+    expect(commands.some(({ method, sessionId }) => (
+      method === 'Input.dispatchMouseEvent' && sessionId === 'portal-login-session'
+    ))).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseReleased', x: 150, y: 90, button: 'left', clickCount: 1 },
+      sessionId: 'portal-main-session',
     });
   });
 
