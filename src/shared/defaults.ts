@@ -115,7 +115,7 @@ export function createDefaultConfig(
 ): AppConfig {
   const configPlatform = resolveConfigPlatform(platform);
   return {
-    version: 2,
+    version: 3,
     platform: configPlatform,
     educationOfficeCode: 'goe',
     root: createDefaultItems(paths, createId),

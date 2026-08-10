@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultConfig } from '../src/shared/defaults';
-import { recoverConfigText } from '../src/main/store';
+import { mergeConfigPatch, recoverConfigText } from '../src/main/store';
 
 const defaults = createDefaultConfig(
   { downloads: '/Users/test/Downloads', documents: '/Users/test/Documents' },
@@ -22,7 +22,7 @@ describe('store migration', () => {
     const future = JSON.stringify({ ...defaults, version: 99 });
     const result = recoverConfigText(future, defaults);
     expect(result).toMatchObject({ recovered: true, reason: 'future-version', backupText: future });
-    expect(result.config.version).toBe(2);
+    expect(result.config.version).toBe(3);
   });
 
   it('backs up and resets malformed json', () => {
@@ -56,7 +56,7 @@ describe('store migration', () => {
     const result = recoverConfigText(JSON.stringify(legacy), defaults);
 
     expect(result.config.root).toHaveLength(3);
-    expect(result.config.version).toBe(2);
+    expect(result.config.version).toBe(3);
     expect(result.config.platform).toBe('darwin');
     expect(result.config.behavior).toMatchObject({ hideAfterLaunch: true, edgePeek: true });
     expect(result.config.keyboard).toMatchObject({
@@ -81,7 +81,33 @@ describe('store migration', () => {
     });
   });
 
-  it('preserves a version-two choice to disable an approval source', () => {
+  it('repairs a stale version-two NEIS leave office while upgrading the config', () => {
+    const legacy = structuredClone(defaults);
+    legacy.version = 2;
+    legacy.educationOfficeCode = 'sen';
+    legacy.root = [{
+      id: 'leave',
+      kind: 'action',
+      type: 'url',
+      label: '나이스 복무',
+      target: 'https://goe.neis.go.kr/',
+      args: [],
+      icon: { kind: 'auto' },
+      color: '#5B8CFF',
+      position: 0,
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'goe' },
+    }];
+
+    const result = recoverConfigText(JSON.stringify(legacy), defaults);
+
+    expect(result.config.version).toBe(3);
+    expect(result.config.root[0]).toMatchObject({
+      target: 'https://sen.neis.go.kr/',
+      webWorkflow: { id: 'neis-leave', officeCode: 'sen' },
+    });
+  });
+
+  it('preserves a current-version choice to disable an approval source', () => {
     const current = structuredClone(defaults);
     current.approvalMonitor.sources.neis.enabled = false;
     const result = recoverConfigText(JSON.stringify(current), defaults);
@@ -154,5 +180,33 @@ describe('platform defaults', () => {
     });
     expect(config.autoUpdate).toBe(true);
     expect(config.educationOfficeCode).toBe('goe');
+  });
+
+  it('retargets every stored web workflow when the central education office changes', () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:/Users/test/Downloads', documents: 'C:/Users/test/Documents' },
+      () => 'fixed-id',
+      'win32',
+    );
+    config.root = [{
+      id: 'leave',
+      kind: 'action',
+      type: 'url',
+      label: '나이스 복무',
+      target: 'https://goe.neis.go.kr/',
+      args: [],
+      icon: { kind: 'auto' },
+      color: '#5B8CFF',
+      position: 0,
+      webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'goe' },
+    }];
+
+    const updated = mergeConfigPatch(config, { educationOfficeCode: 'sen' });
+
+    expect(updated.educationOfficeCode).toBe('sen');
+    expect(updated.root[0]).toMatchObject({
+      target: 'https://sen.neis.go.kr/',
+      webWorkflow: { id: 'neis-leave', officeCode: 'sen' },
+    });
   });
 });

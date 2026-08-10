@@ -83,6 +83,7 @@ export type WindowsWorkflowExecutionState =
 export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   readonly connection: ManagedBrowserConnection;
   bootstrapTargetId?: string;
+  systemTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   workflowState: WindowsWorkflowExecutionState;
 }
 
@@ -280,6 +281,7 @@ export async function createWindowsManagedBrowserSession(
     browserId,
     connection,
     bootstrapTargetId,
+    systemTargetIds: {},
     workflowState: 'IDLE',
     isAlive() {
       return !closed && !connection.process.exited && !connection.protocol.isClosed;
@@ -313,7 +315,7 @@ export async function createWindowsManagedBrowserSession(
   return managedSession;
 }
 
-const FRESH_START_WORKFLOW_IDS = new Set<WebWorkflowId>([
+const RESTART_IN_SYSTEM_TARGET_WORKFLOW_IDS = new Set<WebWorkflowId>([
   'neis-leave',
   'neis-trip',
   'edufine-draft',
@@ -321,40 +323,32 @@ const FRESH_START_WORKFLOW_IDS = new Set<WebWorkflowId>([
   'custom',
 ]);
 
+function systemTargetMap(
+  session: WindowsManagedBrowserSession,
+): Partial<Record<WebWorkflowSystem, string>> {
+  session.systemTargetIds ??= {};
+  return session.systemTargetIds;
+}
+
 export async function resetWindowsWorkflowTargets(
   session: WindowsManagedBrowserSession,
   workflowId: WebWorkflowId,
   workflowSpec?: WebWorkflowSpec,
 ): Promise<void> {
-  if (!FRESH_START_WORKFLOW_IDS.has(workflowId)) return;
+  if (!RESTART_IN_SYSTEM_TARGET_WORKFLOW_IDS.has(workflowId)) return;
   const protocol = session.connection.protocol;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  const workflowTargets = targets.filter((target) => (
+  const system = requestSystem(workflowId, workflowSpec);
+  if (!system) return;
+  const rememberedTargetId = systemTargetMap(session)[system];
+  const rememberedTarget = targets.find((target) => (
+    target.targetId === rememberedTargetId &&
     target.type === 'page' &&
     workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec)
   ));
-  // Keep the oldest matching page as the authenticated session anchor. Closing
-  // every system page can discard client-side SSO state and force another login
-  // before the fresh workflow tab is created.
-  const sessionAnchor = workflowTargets[0];
-  const targetIds = workflowTargets.slice(sessionAnchor ? 1 : 0).map(({ targetId }) => targetId);
-  for (const targetId of targetIds) {
-    const result = await protocol.send<{ success?: unknown }>('Target.closeTarget', { targetId });
-    if (result.success === false) {
-      throw new Error('기존 업무 화면을 닫지 못했습니다. 열린 신청·작성 창을 확인한 뒤 다시 눌러 주세요.');
-    }
-    if (session.bootstrapTargetId === targetId) session.bootstrapTargetId = undefined;
-  }
-  for (let attempt = 0; attempt < 10 && targetIds.length > 0; attempt += 1) {
-    const remaining = new Set(readTargetInfos(
-      await protocol.send('Target.getTargets', {}),
-    ).map(({ targetId }) => targetId));
-    if (targetIds.every((targetId) => !remaining.has(targetId))) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
-  }
-  if (targetIds.length > 0) {
-    throw new Error('기존 업무 화면이 아직 닫히는 중입니다. 잠시 뒤 버튼을 다시 눌러 주세요.');
-  }
+  if (rememberedTarget) return;
+  delete systemTargetMap(session)[system];
+  await findAuthenticatedSystemTarget(session, system);
 }
 
 function validateWorkflowOrigin(
@@ -1408,6 +1402,7 @@ interface WorkflowTargetOptions {
   failFastOnLoginRequired?: boolean;
   forceNewTarget?: boolean;
   keepCreatedTargetOnFailure?: boolean;
+  navigateExistingTarget?: boolean;
   /** Recreate an expired system session through the authenticated office portal. */
   recoverViaPortal?: boolean;
   signal?: AbortSignal;
@@ -1704,16 +1699,24 @@ async function acquireDirectWorkflowTarget(
 ): Promise<AttachedWindowsTarget> {
   const protocol = session.connection.protocol;
   const targetUrl = requestTarget(workflowId, session.officeCode, workflowSpec);
-  const existingTarget = selectWindowsWorkflowTarget(
+  const system = requestSystem(workflowId, workflowSpec);
+  const rememberedTargetId = system ? systemTargetMap(session)[system] : undefined;
+  const rememberedTarget = targets.find((target) => (
+    target.targetId === rememberedTargetId &&
+    target.type === 'page' &&
+    workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec)
+  ));
+  const existingTarget = rememberedTarget ?? selectWindowsWorkflowTarget(
     targets,
     session.officeCode,
     workflowId,
     workflowSpec,
   );
+  if (system && existingTarget) systemTargetMap(session)[system] = existingTarget.targetId;
   let target = options.forceNewTarget
     ? null
     : existingTarget;
-  let shouldNavigate = false;
+  let shouldNavigate = Boolean(target && options.navigateExistingTarget);
   if (!target && !options.forceNewTarget) {
     target = targets.find((candidate) => (
       candidate.targetId === session.bootstrapTargetId && isBootstrapTarget(candidate)
@@ -2333,17 +2336,17 @@ async function detachWindowsTarget(
   }
 }
 
-async function hasAuthenticatedSystemTarget(
+async function findAuthenticatedSystemTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
-): Promise<boolean> {
+): Promise<WindowsTargetInfo | null> {
   let targets: WindowsTargetInfo[];
   try {
     targets = readTargetInfos(
       await session.connection.protocol.send('Target.getTargets', {}),
     ).filter((target) => systemTargetAllowed(target, session.officeCode, system));
   } catch {
-    return false;
+    return null;
   }
   for (const target of targets) {
     let attached: AttachedWindowsTarget | undefined;
@@ -2356,14 +2359,42 @@ async function hasAuthenticatedSystemTarget(
         { ...target, url: state.href },
         session.officeCode,
         system,
-      )) return true;
+      )) {
+        const authenticatedTarget = { ...target, url: state.href };
+        systemTargetMap(session)[system] = target.targetId;
+        return authenticatedTarget;
+      }
     } catch {
       // Loading or closed system tabs are retried through the portal or direct route.
     } finally {
       if (attached) await detachWindowsTarget(session, attached);
     }
   }
-  return false;
+  delete systemTargetMap(session)[system];
+  return null;
+}
+
+async function hasAuthenticatedSystemTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<boolean> {
+  return Boolean(await findAuthenticatedSystemTarget(session, system));
+}
+
+async function focusExistingSystemTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<boolean> {
+  const target = await findAuthenticatedSystemTarget(session, system);
+  if (!target) return false;
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    await restoreAndActivateTarget(session, target.targetId, attached.sessionId);
+    return true;
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
 }
 
 async function acquireLoggedInPortalTarget(
@@ -2589,6 +2620,7 @@ export async function connectWindowsOfficeSystems(
   const portalPreparations = foreground
     ? await prepareOfficeSystemsViaPortal(session, systems, report, signal, true)
     : null;
+  const connectedSystems: WebWorkflowSystem[] = [];
   try {
     for (const system of [...new Set(systems)]) {
       throwIfApprovalCheckCancelled(signal);
@@ -2619,6 +2651,7 @@ export async function connectWindowsOfficeSystems(
         );
         throwIfApprovalCheckCancelled(signal);
         report({ system, state: 'connected', checkedAt: Date.now() });
+        connectedSystems.push(system);
       } catch (error) {
         if (signal?.aborted) throw error;
         const message = error instanceof Error ? error.message : `${label} 연결에 실패했습니다.`;
@@ -2634,10 +2667,20 @@ export async function connectWindowsOfficeSystems(
     }
   } finally {
     if (foreground) {
-      try {
-        await focusExistingPortalTarget(session);
-      } catch {
-        // System connection status is more important than best-effort portal focus.
+      let systemFocused = false;
+      for (const system of connectedSystems) {
+        try {
+          systemFocused = await focusExistingSystemTarget(session, system) || systemFocused;
+        } catch {
+          // Keep the other connected system available when one tab disappears.
+        }
+      }
+      if (!systemFocused) {
+        try {
+          await focusExistingPortalTarget(session);
+        } catch {
+          // System connection status is more important than best-effort portal focus.
+        }
       }
     }
   }
@@ -2831,7 +2874,7 @@ export function createWindowsManagedSessionManager(
         windowsSession,
         workflowId,
         workflowSpec,
-        { forceNewTarget: FRESH_START_WORKFLOW_IDS.has(workflowId) },
+        { navigateExistingTarget: RESTART_IN_SYSTEM_TARGET_WORKFLOW_IDS.has(workflowId) },
       );
     },
     isWxsClientRegistered,

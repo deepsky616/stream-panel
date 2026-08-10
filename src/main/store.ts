@@ -5,6 +5,7 @@ import { normalizeAccelerator } from '../shared/accelerator';
 import { isEducationOfficeCode } from '../shared/educationOffices';
 import { normalizeHintKeys } from '../shared/hintMap';
 import { normalizeDeckPositions } from '../shared/layout';
+import { retargetWebWorkflowItems } from '../shared/webWorkflows';
 import type {
   AppConfig,
   ApprovalMonitorConfig,
@@ -16,7 +17,7 @@ import type {
   WindowConfig,
 } from '../shared/types';
 
-export const CURRENT_CONFIG_VERSION = 2;
+export const CURRENT_CONFIG_VERSION = 3;
 
 export type RecoveryReason = 'future-version' | 'corrupt-json';
 
@@ -29,6 +30,23 @@ export interface ConfigRecoveryResult {
 
 function cloneConfig(config: AppConfig): AppConfig {
   return structuredClone(config) as AppConfig;
+}
+
+export function mergeConfigPatch(
+  current: AppConfig,
+  patch: Partial<AppConfig>,
+): AppConfig {
+  const candidate = {
+    ...cloneConfig(current),
+    ...structuredClone(patch),
+  } as AppConfig;
+  if (
+    patch.educationOfficeCode !== undefined &&
+    patch.educationOfficeCode !== current.educationOfficeCode
+  ) {
+    candidate.root = retargetWebWorkflowItems(candidate.root, patch.educationOfficeCode);
+  }
+  return candidate;
 }
 
 function looksLikeConfig(value: unknown): value is AppConfig {
@@ -69,6 +87,10 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
   const grid = partialObject<GridConfig>(parsed.grid);
   const window = partialObject<WindowConfig>(parsed.window);
   const normalized = normalizeDeckPositions(parsed.root);
+  const educationOfficeCode = isEducationOfficeCode(parsed.educationOfficeCode)
+    ? parsed.educationOfficeCode
+    : defaultConfig.educationOfficeCode;
+  const normalizedRoot = normalizeItemHotkeys(normalized.items);
   const hintKeys = typeof keyboard.hintKeys === 'string' ? keyboard.hintKeys : defaultConfig.keyboard.hintKeys;
   const globalNumberModifier =
     typeof keyboard.globalNumberModifier === 'string'
@@ -100,10 +122,10 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
       parsed.platform === 'win32' || parsed.platform === 'darwin'
         ? parsed.platform
         : defaultConfig.platform,
-    educationOfficeCode: isEducationOfficeCode(parsed.educationOfficeCode)
-      ? parsed.educationOfficeCode
-      : defaultConfig.educationOfficeCode,
-    root: normalizeItemHotkeys(normalized.items),
+    educationOfficeCode,
+    root: parsed.version < 3
+      ? retargetWebWorkflowItems(normalizedRoot, educationOfficeCode)
+      : normalizedRoot,
     grid: { ...defaultConfig.grid, ...grid },
     window: { ...defaultConfig.window, ...window },
     behavior: { ...defaultConfig.behavior, ...behavior },
@@ -248,7 +270,7 @@ export class ConfigStore {
   }
 
   patch(patch: Partial<AppConfig>): AppConfig {
-    return this.set({ ...this.get(), ...cloneConfig(patch as AppConfig) });
+    return this.set(mergeConfigPatch(this.get(), patch));
   }
 
   reset(defaultConfig: AppConfig = this.defaultConfig): AppConfig {

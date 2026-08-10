@@ -104,7 +104,7 @@ describe('Windows managed web automation', () => {
     expect(protocol.isClosed).toBe(true);
   });
 
-  it('keeps one authenticated system tab and closes older workflow tabs before starting fresh', async () => {
+  it('keeps every existing tab and remembers the authenticated NEIS tab for an in-place restart', async () => {
     let targets = [
       { targetId: 'neis-main', type: 'page', url: 'https://goe.neis.go.kr/main' },
       { targetId: 'neis-form', type: 'page', url: 'https://goe.neis.go.kr/leave/request' },
@@ -129,17 +129,23 @@ describe('Windows managed web automation', () => {
     await resetWindowsWorkflowTargets({
       officeCode: 'goe',
       browserId: 'edge',
+      systemTargetIds: { neis: 'neis-main' },
       connection: { protocol, process: { exited: false }, transportKind: 'pipe' },
       workflowState: 'IDLE',
       isAlive: () => true,
       close: async () => undefined,
     } as never, 'neis-leave');
 
-    expect(closed).toEqual(['neis-form']);
-    expect(targets.map(({ targetId }) => targetId)).toEqual(['neis-main', 'edufine', 'personal']);
+    expect(closed).toEqual([]);
+    expect(targets.map(({ targetId }) => targetId)).toEqual([
+      'neis-main',
+      'neis-form',
+      'edufine',
+      'personal',
+    ]);
   });
 
-  it('keeps the Edufine session anchor while closing its previous form page', async () => {
+  it('keeps every existing tab and remembers the authenticated Edufine tab for an in-place restart', async () => {
     let targets = [
       { targetId: 'edufine-main', type: 'page', url: 'https://klef.goe.go.kr/main' },
       { targetId: 'edufine-form', type: 'page', url: 'https://klef.goe.go.kr/purchase/popup' },
@@ -165,17 +171,23 @@ describe('Windows managed web automation', () => {
     await resetWindowsWorkflowTargets({
       officeCode: 'goe',
       browserId: 'edge',
+      systemTargetIds: { edufine: 'edufine-main' },
       connection: { protocol, process: { exited: false }, transportKind: 'pipe' },
       workflowState: 'IDLE',
       isAlive: () => true,
       close: async () => undefined,
     } as never, 'edufine-purchase');
 
-    expect(closed).toEqual(['edufine-form']);
-    expect(targets.map(({ targetId }) => targetId)).toEqual(['edufine-main', 'neis', 'personal']);
+    expect(closed).toEqual([]);
+    expect(targets.map(({ targetId }) => targetId)).toEqual([
+      'edufine-main',
+      'edufine-form',
+      'neis',
+      'personal',
+    ]);
   });
 
-  it('uses the selected system anchor for a custom web workflow too', async () => {
+  it('keeps custom workflow tabs and reuses its remembered system tab too', async () => {
     let targets = [
       { targetId: 'edufine-main', type: 'page', url: 'https://klef.goe.go.kr/main' },
       { targetId: 'edufine-custom-work', type: 'page', url: 'https://klef.goe.go.kr/custom/work' },
@@ -200,6 +212,7 @@ describe('Windows managed web automation', () => {
     await resetWindowsWorkflowTargets({
       officeCode: 'goe',
       browserId: 'edge',
+      systemTargetIds: { edufine: 'edufine-main' },
       connection: { protocol, process: { exited: false }, transportKind: 'pipe' },
       workflowState: 'IDLE',
       isAlive: () => true,
@@ -216,8 +229,12 @@ describe('Windows managed web automation', () => {
       },
     });
 
-    expect(closed).toEqual(['edufine-custom-work']);
-    expect(targets.map(({ targetId }) => targetId)).toEqual(['edufine-main', 'neis-main']);
+    expect(closed).toEqual([]);
+    expect(targets.map(({ targetId }) => targetId)).toEqual([
+      'edufine-main',
+      'edufine-custom-work',
+      'neis-main',
+    ]);
   });
 
   it('extends sessions only on the selected office system origins', async () => {
@@ -869,6 +886,70 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
+  it('restarts a workflow inside the remembered authenticated tab without opening another tab', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'neis-anchor', type: 'page', url: 'https://goe.neis.go.kr/leave/old' },
+            { targetId: 'edufine-anchor', type: 'page', url: 'https://klef.goe.go.kr/main' },
+          ] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'neis-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 10 };
+        if (method === 'Runtime.evaluate' && String(params.expression ?? '').includes('loginVisible')) {
+          return { result: { value: {
+            href: 'https://goe.neis.go.kr/',
+            origin: 'https://goe.neis.go.kr',
+            readyState: 'complete',
+            loginVisible: false,
+          } } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      systemTargetIds: { neis: 'neis-anchor' },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    const workflowPage = await openCdpWindowsWorkflowPage(
+      session as never,
+      'neis-leave',
+      undefined,
+      { navigateExistingTarget: true },
+    );
+
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.some(({ method, params }) => (
+      method === 'Runtime.evaluate' && String(params.expression).includes('window.open')
+    ))).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Page.navigate',
+      params: { url: 'https://goe.neis.go.kr/' },
+    });
+    expect(commands).toContainEqual({
+      method: 'Target.activateTarget',
+      params: { targetId: 'neis-anchor' },
+    });
+    expect(commands.some(({ method, params }) => (
+      method === 'Target.activateTarget' && params.targetId === 'edufine-anchor'
+    ))).toBe(false);
+    await workflowPage.release?.();
+  });
+
   it('scans nested frames and safely extends an exact session timeout prompt', async () => {
     const evaluationParams: Record<string, unknown>[] = [];
     const inputCommands: Array<{ params: Record<string, unknown>; sessionId?: string }> = [];
@@ -1268,7 +1349,10 @@ describe('Windows managed web automation', () => {
       method: 'Target.attachToTarget',
       params: { targetId: 'neis-ready', flatten: true },
     });
-    expect(commands.some(({ method }) => method === 'Target.activateTarget')).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Target.activateTarget',
+      params: { targetId: 'neis-ready' },
+    });
   });
 
   it('uses the logged-in portal official SSO items before validating both system tabs', async () => {
@@ -1368,7 +1452,7 @@ describe('Windows managed web automation', () => {
     ]);
     expect(commands.filter(({ method }) => method === 'Target.activateTarget').at(-1)).toEqual({
       method: 'Target.activateTarget',
-      params: { targetId: 'portal' },
+      params: { targetId: 'edufine' },
       sessionId: undefined,
     });
   });
