@@ -45,6 +45,8 @@ export interface WorkflowStep {
     | 'edufine-job'
     | 'edufine-job-toggle'
     | 'edufine-job-option'
+    | 'edufine-left-menu'
+    | 'edufine-left-toggle'
     | 'edufine-top-menu'
     | 'edufine-mega-menu'
     | 'edufine-exact-text';

@@ -10,7 +10,7 @@ export interface EducationOffice {
 
 export const EDUCATION_OFFICES: readonly EducationOffice[] = [
   { code: 'sen', name: '서울특별시교육청', portalUrl: 'https://sen.eduptl.kr/', neisUrl: 'https://sen.neis.go.kr/', edufineUrl: 'https://klef.sen.go.kr/' },
-  { code: 'goe', name: '경기도교육청', portalUrl: 'https://goe.eduptl.kr/', neisUrl: 'https://goe.neis.go.kr/', edufineUrl: 'https://klef.goe.go.kr/' },
+  { code: 'goe', name: '경기도교육청', portalUrl: 'https://goe.eduptl.kr/', neisUrl: 'https://goe.neis.go.kr/jsp/main.jsp', edufineUrl: 'https://klef.goe.go.kr/' },
   { code: 'gne', name: '경상남도교육청', portalUrl: 'https://gne.eduptl.kr/', neisUrl: 'https://gne.neis.go.kr/', edufineUrl: 'https://klef.gne.go.kr/' },
   { code: 'pen', name: '부산광역시교육청', portalUrl: 'https://pen.eduptl.kr/', neisUrl: 'https://pen.neis.go.kr/', edufineUrl: 'https://klef.pen.go.kr/' },
   { code: 'dge', name: '대구광역시교육청', portalUrl: 'https://dge.eduptl.kr/', neisUrl: 'https://dge.neis.go.kr/', edufineUrl: 'https://klef.dge.go.kr/' },

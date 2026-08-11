@@ -13,7 +13,7 @@ describe('education office catalog', () => {
     expect(getEducationOffice('goe')).toMatchObject({
       name: '경기도교육청',
       portalUrl: 'https://goe.eduptl.kr/',
-      neisUrl: 'https://goe.neis.go.kr/',
+      neisUrl: 'https://goe.neis.go.kr/jsp/main.jsp',
       edufineUrl: 'https://klef.goe.go.kr/',
     });
     expect(getEducationOffice('gbe').edufineUrl).toBe('https://klef.gbe.kr/');

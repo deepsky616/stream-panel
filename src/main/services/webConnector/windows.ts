@@ -873,6 +873,63 @@ const choose=(selector,label,preferred)=>{
   )).map(element=>({element,offsetX,offsetY}))).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
   return fallback.sort((left,right)=>left.element.children.length-right.element.children.length)[0]||null;
 };
+const leftMenuMatch=(label)=>{
+  const marker=/leftframe|leftmenu|left_menu|lnb|sidemenu|side_menu|workmenu|work_menu|navmenu|nav_menu|treemenu|tree_menu/;
+  const excluded=/topframe|topmenu|top_menu|pdvmegamenu|megamenu|mega_menu/;
+  return documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element,offsetX,offsetY}=entry;
+      const rect=element.getBoundingClientRect();
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<7;current=current.parentElement,depth+=1){
+        ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
+      }
+      const signal=ancestry.join(' ');
+      if(excluded.test(signal))return null;
+      const width=Math.max(1,Number(element.ownerDocument?.defaultView?.innerWidth)||1920);
+      const globalLeft=offsetX+rect.left;
+      const globalTop=offsetY+rect.top;
+      const explicit=marker.test(signal);
+      const leftPosition=globalLeft<=Math.max(360,width*0.34)&&globalTop>=40;
+      if(!explicit&&!leftPosition)return null;
+      const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      return {...entry,element:clickable,score:(explicit?200:0)+(leftPosition?80:0)+(clickable!==element?20:0)-Math.min(20,element.children.length)};
+    })
+    .filter(Boolean)
+    .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)[0]||null;
+};
+const leftToggleMatch=(label)=>{
+  const menu=leftMenuMatch(label);
+  if(!menu)return null;
+  const scope=menu.element.closest?.('[role="treeitem"],li,[id*="menu"],[id*="Menu"],[class*="menu"],[class*="Menu"]')||menu.element.parentElement;
+  if(!scope)return menu;
+  const controls=[scope,...Array.from(scope.querySelectorAll?.(
+    'button,[role="button"],[aria-expanded],[id*="toggle"],[id*="Toggle"],[id*="expand"],[id*="Expand"],[class*="toggle"],[class*="Toggle"],[class*="expand"],[class*="Expand"],[title],[aria-label]'
+  )||[])].filter((element,index,array)=>array.indexOf(element)===index&&visible(element)&&enabled(element));
+  const ranked=controls.map((element)=>{
+    const signal=[element.id,element.className,element.getAttribute?.('title'),element.getAttribute?.('aria-label'),element.getAttribute?.('aria-expanded'),textOf(element)]
+      .map(value=>normalize(value).toLowerCase()).join(' ');
+    const explicit=/toggle|expand|collapsed|plus|open|펼치|열기|\\+/.test(signal);
+    const collapsed=element.getAttribute?.('aria-expanded')==='false';
+    return {element,score:(collapsed?200:0)+(explicit?120:0)+(element===scope?10:0)};
+  }).sort((left,right)=>right.score-left.score);
+  return ranked[0]?.score>10?{...menu,element:ranked[0].element}:menu;
+};
+if(interaction==='edufine-left-toggle'){
+  return labels.flatMap((label,index)=>{
+    const match=leftToggleMatch(label);
+    return match?[summary(match.element,index,label,'NEXACRO-LEFT-TOGGLE',match.offsetX,match.offsetY)]:[];
+  });
+}
+if(interaction==='edufine-left-menu'){
+  return labels.flatMap((label,index)=>{
+    const match=leftMenuMatch(label);
+    return match?[summary(match.element,index,label,'NEXACRO-LEFT-MENU',match.offsetX,match.offsetY)]:[];
+  });
+}
 if(interaction==='edufine-top-menu'){
   return labels.flatMap((label,index)=>{
     const match=choose('[id*="TopFrame"][id*="btnMenu_"],[id*="topframe"][id*="btnmenu_"]',label,':icontext');
@@ -1006,10 +1063,59 @@ const choose=(selector,preferred)=>{
   )).map(element=>({element,offsetX,offsetY}))).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
   return fallback.sort((left,right)=>left.element.children.length-right.element.children.length)[0]||null;
 };
-if(interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
-  const match=interaction==='edufine-top-menu'
-    ? choose('[id*="TopFrame"][id*="btnMenu_"],[id*="topframe"][id*="btnmenu_"]',':icontext')
-    : choose('[id*="pdvMegaMenu"],[id*="pdvmegamenu"],[id*="megaMenu"],[id*="megamenu"]',':text');
+const leftMenuMatch=()=>{
+  const marker=/leftframe|leftmenu|left_menu|lnb|sidemenu|side_menu|workmenu|work_menu|navmenu|nav_menu|treemenu|tree_menu/;
+  const excluded=/topframe|topmenu|top_menu|pdvmegamenu|megamenu|mega_menu/;
+  return documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element,offsetX,offsetY}=entry;
+      const rect=element.getBoundingClientRect();
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<7;current=current.parentElement,depth+=1){
+        ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
+      }
+      const signal=ancestry.join(' ');
+      if(excluded.test(signal))return null;
+      const width=Math.max(1,Number(element.ownerDocument?.defaultView?.innerWidth)||1920);
+      const globalLeft=offsetX+rect.left;
+      const globalTop=offsetY+rect.top;
+      const explicit=marker.test(signal);
+      const leftPosition=globalLeft<=Math.max(360,width*0.34)&&globalTop>=40;
+      if(!explicit&&!leftPosition)return null;
+      const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      return {...entry,element:clickable,score:(explicit?200:0)+(leftPosition?80:0)+(clickable!==element?20:0)-Math.min(20,element.children.length)};
+    })
+    .filter(Boolean)
+    .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)[0]||null;
+};
+const leftToggleMatch=()=>{
+  const menu=leftMenuMatch();
+  if(!menu)return null;
+  const scope=menu.element.closest?.('[role="treeitem"],li,[id*="menu"],[id*="Menu"],[class*="menu"],[class*="Menu"]')||menu.element.parentElement;
+  if(!scope)return menu;
+  const controls=[scope,...Array.from(scope.querySelectorAll?.(
+    'button,[role="button"],[aria-expanded],[id*="toggle"],[id*="Toggle"],[id*="expand"],[id*="Expand"],[class*="toggle"],[class*="Toggle"],[class*="expand"],[class*="Expand"],[title],[aria-label]'
+  )||[])].filter((element,index,array)=>array.indexOf(element)===index&&visible(element)&&enabled(element));
+  const ranked=controls.map((element)=>{
+    const signal=[element.id,element.className,element.getAttribute?.('title'),element.getAttribute?.('aria-label'),element.getAttribute?.('aria-expanded'),textOf(element)]
+      .map(value=>normalize(value).toLowerCase()).join(' ');
+    const explicit=/toggle|expand|collapsed|plus|open|펼치|열기|\\+/.test(signal);
+    const collapsed=element.getAttribute?.('aria-expanded')==='false';
+    return {element,score:(collapsed?200:0)+(explicit?120:0)+(element===scope?10:0)};
+  }).sort((left,right)=>right.score-left.score);
+  return ranked[0]?.score>10?{...menu,element:ranked[0].element}:menu;
+};
+if(interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
+  const match=interaction==='edufine-left-toggle'
+    ? leftToggleMatch()
+    : interaction==='edufine-left-menu'
+      ? leftMenuMatch()
+    : interaction==='edufine-top-menu'
+      ? choose('[id*="TopFrame"][id*="btnMenu_"],[id*="topframe"][id*="btnmenu_"]',':icontext')
+      : choose('[id*="pdvMegaMenu"],[id*="pdvmegamenu"],[id*="megaMenu"],[id*="megamenu"]',':text');
   if(!match)return returnElement?null:{ok:false};
   if(returnElement)return match.element;
   const rect=match.element.getBoundingClientRect();
@@ -2426,6 +2532,13 @@ const PORTAL_SSO_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
   ],
 };
 
+function orderedConnectionSystems(
+  systems: readonly WebWorkflowSystem[],
+): WebWorkflowSystem[] {
+  const requested = new Set(systems);
+  return (['neis', 'edufine'] as const).filter((system) => requested.has(system));
+}
+
 function portalSsoClickExpression(
   system: WebWorkflowSystem,
   returnElement = false,
@@ -2645,6 +2758,28 @@ function systemTargetAllowed(
   );
 }
 
+function systemConnectionLandingUrl(
+  officeCode: EducationOfficeCode,
+  system: WebWorkflowSystem,
+): string {
+  const office = getEducationOffice(officeCode);
+  return system === 'neis' ? office.neisUrl : office.edufineUrl;
+}
+
+function isSystemConnectionLandingUrl(current: string, expected: string): boolean {
+  try {
+    const currentUrl = new URL(current);
+    const expectedUrl = new URL(expected);
+    const normalizedPath = (value: string): string => (
+      value === '/' ? value : value.replace(/\/+$/, '')
+    );
+    return currentUrl.origin === expectedUrl.origin &&
+      normalizedPath(currentUrl.pathname) === normalizedPath(expectedUrl.pathname);
+  } catch {
+    return false;
+  }
+}
+
 async function detachWindowsTarget(
   session: WindowsManagedBrowserSession,
   attached: AttachedWindowsTarget,
@@ -2655,6 +2790,55 @@ async function detachWindowsTarget(
     });
   } catch {
     // A navigation can detach a target before the best-effort cleanup runs.
+  }
+}
+
+async function normalizeConnectedSystemTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  target: WindowsTargetInfo,
+  signal?: AbortSignal,
+): Promise<WindowsTargetInfo> {
+  // Other offices can redirect their configured root to a product-specific path.
+  // Gyeonggi publishes stable landing addresses, so make those exact addresses
+  // the visible, reusable tabs created by the explicit Connect action.
+  if (session.officeCode !== 'goe') return target;
+  const destination = systemConnectionLandingUrl(session.officeCode, system);
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    let currentState: PageReadinessState | null = null;
+    try {
+      currentState = readPageReadinessState(
+        await evaluateValue(session, attached.sessionId, PAGE_READINESS_EXPRESSION),
+      );
+    } catch {
+      // An SSO redirect can still be replacing the initial document.
+    }
+    if (!currentState || !isSystemConnectionLandingUrl(currentState.href, destination)) {
+      await navigateAttachedTarget(session, attached, destination);
+    }
+    const readyState = await waitForReadyPage(
+      session,
+      attached.sessionId,
+      (state) => !state.loginVisible &&
+        isSystemConnectionLandingUrl(state.href, destination) &&
+        systemTargetAllowed(
+          { ...target, url: state.href },
+          session.officeCode,
+          system,
+        ),
+      30_000,
+      (state) => state.loginVisible
+        ? new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 추가 로그인이 필요합니다.`)
+        : null,
+      signal,
+    );
+    const normalizedTarget = { ...target, url: readyState.href };
+    systemTargetMap(session)[system] = target.targetId;
+    return normalizedTarget;
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
   }
 }
 
@@ -2724,13 +2908,6 @@ async function findAuthenticatedSystemTarget(
 ): Promise<WindowsTargetInfo | null> {
   const inspected = await inspectSystemTarget(session, system);
   return inspected && !inspected.loginRequired ? inspected.target : null;
-}
-
-async function hasAuthenticatedSystemTarget(
-  session: WindowsManagedBrowserSession,
-  system: WebWorkflowSystem,
-): Promise<boolean> {
-  return Boolean(await findAuthenticatedSystemTarget(session, system));
 }
 
 async function focusExistingSystemTarget(
@@ -2896,13 +3073,19 @@ async function prepareOfficeSystemsViaPortal(
 ): Promise<Map<WebWorkflowSystem, PortalSystemPreparation>> {
   const results = new Map<WebWorkflowSystem, PortalSystemPreparation>();
   const pending: WebWorkflowSystem[] = [];
-  for (const system of [...new Set(systems)]) {
+  for (const system of orderedConnectionSystems(systems)) {
     throwIfApprovalCheckCancelled(signal);
-    if (await hasAuthenticatedSystemTarget(session, system)) {
-      results.set(system, { ready: true });
-    } else {
-      pending.push(system);
+    const authenticatedTarget = await findAuthenticatedSystemTarget(session, system);
+    if (authenticatedTarget) {
+      try {
+        await normalizeConnectedSystemTarget(session, system, authenticatedTarget, signal);
+        results.set(system, { ready: true });
+        continue;
+      } catch {
+        delete systemTargetMap(session)[system];
+      }
     }
+    pending.push(system);
   }
   if (pending.length === 0) return results;
   for (const system of pending) {
@@ -3000,8 +3183,23 @@ async function prepareOfficeSystemsViaPortal(
         portalTargetId: portal?.target.targetId,
       },
     );
-    if (targetResult.state === 'connected') {
-      results.set(system, { ready: true });
+    if (targetResult.state === 'connected' && targetResult.target) {
+      try {
+        await normalizeConnectedSystemTarget(
+          session,
+          system,
+          targetResult.target,
+          signal,
+        );
+        results.set(system, { ready: true });
+      } catch (error) {
+        results.set(system, {
+          ready: false,
+          message: error instanceof Error
+            ? error.message
+            : `${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭을 준비하지 못했습니다.`,
+        });
+      }
     } else if (targetResult.state === 'login-required') {
       results.set(system, {
         ready: false,
@@ -3028,7 +3226,7 @@ export async function connectWindowsOfficeSystems(
     ? await prepareOfficeSystemsViaPortal(session, systems, report, signal, true)
     : null;
   try {
-    for (const system of [...new Set(systems)]) {
+    for (const system of orderedConnectionSystems(systems)) {
       throwIfApprovalCheckCancelled(signal);
       const label = system === 'neis' ? '나이스' : 'K-에듀파인';
       const preparation = portalPreparations?.get(system);
@@ -3073,7 +3271,7 @@ export async function connectWindowsOfficeSystems(
   } finally {
     if (foreground) {
       let systemFocused = false;
-      for (const system of [...new Set(systems)]) {
+      for (const system of orderedConnectionSystems(systems)) {
         try {
           systemFocused = await focusExistingSystemTarget(session, system, true) || systemFocused;
         } catch {

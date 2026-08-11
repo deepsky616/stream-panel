@@ -790,7 +790,7 @@ describe('Windows managed web automation', () => {
     const workflowPage = await openCdpWindowsWorkflowPage(session as never, 'neis-leave');
     expect(commands).toContainEqual({
       method: 'Target.createTarget',
-      params: { url: 'https://goe.neis.go.kr/' },
+      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp' },
     });
     expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(commands.some(({ method, params }) => (
@@ -981,7 +981,7 @@ describe('Windows managed web automation', () => {
     ))).toBe(false);
     expect(commands).toContainEqual({
       method: 'Page.navigate',
-      params: { url: 'https://goe.neis.go.kr/' },
+      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp' },
     });
     expect(commands).toContainEqual({
       method: 'Target.activateTarget',
@@ -1077,7 +1077,7 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
-  it('uses Nexacro job, top-menu, and mega-menu controls for Edufine navigation', async () => {
+  it('uses Nexacro job, left-menu, top-menu, and mega-menu controls for Edufine navigation', async () => {
     const expressions: string[] = [];
     const inputCommands: string[] = [];
     const protocol = {
@@ -1128,9 +1128,21 @@ describe('Windows managed web automation', () => {
           if (expression.includes("'NEXACRO-MEGA-MENU'")) {
             return { result: { value: [safeCandidate(0, '품의등록')] } };
           }
+          if (expression.includes("'NEXACRO-LEFT-MENU'")) {
+            return { result: { value: [safeCandidate(0, '사업담당')] } };
+          }
+          if (expression.includes("'NEXACRO-LEFT-TOGGLE'")) {
+            return { result: { value: [safeCandidate(0, '업무관리')] } };
+          }
           if (expression.includes('const interaction="edufine-top-menu"') ||
             expression.includes('const interaction="edufine-mega-menu"')) {
             return { result: { value: { ok: true, x: 100, y: 50 } } };
+          }
+          if (expression.includes('const interaction="edufine-left-menu"')) {
+            return { result: { value: { ok: true, x: 55, y: 140 } } };
+          }
+          if (expression.includes('const interaction="edufine-left-toggle"')) {
+            return { result: { value: { ok: true, x: 42, y: 120 } } };
           }
           if (expression.includes('const interaction="edufine-job-toggle"') ||
             expression.includes('const interaction="edufine-job-option"')) {
@@ -1168,7 +1180,7 @@ describe('Windows managed web automation', () => {
     const jobToggleStep = {
       id: 'open-job-selector',
       candidateLabels: ['업무관리'],
-      interaction: 'edufine-job-toggle' as const,
+      interaction: 'edufine-left-toggle' as const,
       postcondition: { kind: 'visible-any' as const, labels: ['학교회계'] },
       maxChecks: 1,
       checkDelayMs: 1,
@@ -1194,6 +1206,14 @@ describe('Windows managed web automation', () => {
       candidateLabels: ['사업관리'],
       interaction: 'edufine-top-menu' as const,
       postcondition: { kind: 'visible-any' as const, labels: ['품의등록'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+    const leftStep = {
+      id: 'open-business-owner-left',
+      candidateLabels: ['사업담당'],
+      interaction: 'edufine-left-menu' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['품의/정산'] },
       maxChecks: 1,
       checkDelayMs: 1,
     };
@@ -1228,6 +1248,10 @@ describe('Windows managed web automation', () => {
       jobStep,
     );
     await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(leftStep))[0],
+      leftStep,
+    );
+    await workflowPage.pressCandidate(
       (await workflowPage.inspectCandidates(topStep))[0],
       topStep,
     );
@@ -1246,6 +1270,8 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => expression.includes('_on_value_change'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="TopFrame"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="pdvMegaMenu"]'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('leftframe|leftmenu|left_menu|lnb'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('NEXACRO-LEFT-TOGGLE'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('const interaction="frame-exact-text"'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('surfaceTextsOf(element).some'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('offsetX+rect.left+rect.width/2'))).toBe(true);
@@ -1254,6 +1280,7 @@ describe('Windows managed web automation', () => {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
     expect(inputCommands).toEqual([
+      'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
@@ -1317,12 +1344,12 @@ describe('Windows managed web automation', () => {
                 }
               : { candidates: [], rowCounts: [], emptyList: false, listReady: false } } };
           }
-          if (expression.includes("'NEXACRO-TOP-MENU'")) {
+          if (expression.includes("'NEXACRO-LEFT-MENU'")) {
             return { result: { value: params.contextId === 222
               ? [safeCandidate(0, '기안')]
               : [] } };
           }
-          if (expression.includes('const interaction="edufine-top-menu"')) {
+          if (expression.includes('const interaction="edufine-left-menu"')) {
             if (params.contextId === 222 && expression.includes('const returnElement=true')) {
               return { result: { objectId: 'draft-menu-node', subtype: 'node' } };
             }
@@ -1354,10 +1381,10 @@ describe('Windows managed web automation', () => {
     const step = {
       id: 'open-draft',
       candidateLabels: ['기안'],
-      interaction: 'edufine-top-menu' as const,
+      interaction: 'edufine-left-menu' as const,
       selection: 'first-available' as const,
       postcondition: {
-        kind: 'edufine-mega-menu-any' as const,
+        kind: 'visible-any' as const,
         labels: ['공용서식'],
       },
       maxChecks: 1,
@@ -1472,6 +1499,7 @@ describe('Windows managed web automation', () => {
 
   it('reuses an authenticated system tab without creating or closing a portal tab', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let neisUrl = 'https://goe.neis.go.kr/main';
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>) {
@@ -1480,19 +1508,20 @@ describe('Windows managed web automation', () => {
           return { targetInfos: [{
             targetId: 'neis-ready',
             type: 'page',
-            url: 'https://goe.neis.go.kr/main',
+            url: neisUrl,
           }] };
         }
         if (method === 'Target.attachToTarget') return { sessionId: 'neis-session' };
         if (method === 'Browser.getWindowForTarget') return { windowId: 13 };
         if (method === 'Runtime.evaluate' && String(params.expression ?? '').includes('loginVisible')) {
           return { result: { value: {
-            href: 'https://goe.neis.go.kr/main',
+            href: neisUrl,
             origin: 'https://goe.neis.go.kr',
             readyState: 'complete',
             loginVisible: false,
           } } };
         }
+        if (method === 'Page.navigate') neisUrl = String(params.url);
         return {};
       },
       close() { this.isClosed = true; },
@@ -1514,6 +1543,10 @@ describe('Windows managed web automation', () => {
     expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
     expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
     expect(commands).toContainEqual({
+      method: 'Page.navigate',
+      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp' },
+    });
+    expect(commands).toContainEqual({
       method: 'Target.attachToTarget',
       params: { targetId: 'neis-ready', flatten: true },
     });
@@ -1523,7 +1556,7 @@ describe('Windows managed web automation', () => {
     });
   });
 
-  it('uses the logged-in portal official SSO items before validating both system tabs', async () => {
+  it('opens the logged-in portal SSO tabs in NEIS then K-Edufine order', async () => {
     const commands: Array<{
       method: string;
       params: Record<string, unknown>;
@@ -1533,6 +1566,8 @@ describe('Windows managed web automation', () => {
     const ssoExpressions: string[] = [];
     let neisOpened = false;
     let edufineOpened = false;
+    let neisUrl = 'https://goe.neis.go.kr/main';
+    let edufineUrl = 'https://klef.goe.go.kr/main';
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>, sessionId?: string) {
@@ -1541,10 +1576,10 @@ describe('Windows managed web automation', () => {
           return { targetInfos: [
             { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
             ...(neisOpened
-              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main', openerId: 'portal' }]
+              ? [{ targetId: 'neis', type: 'page', url: neisUrl, openerId: 'portal' }]
               : []),
             ...(edufineOpened
-              ? [{ targetId: 'edufine', type: 'page', url: 'https://klef.goe.go.kr/main', openerId: 'portal' }]
+              ? [{ targetId: 'edufine', type: 'page', url: edufineUrl, openerId: 'portal' }]
               : []),
           ] };
         }
@@ -1569,8 +1604,8 @@ describe('Windows managed web automation', () => {
               href: portal
                 ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
                 : edufine
-                  ? 'https://klef.goe.go.kr/main'
-                  : 'https://goe.neis.go.kr/main',
+                  ? edufineUrl
+                  : neisUrl,
               origin: portal
                 ? 'https://goe.eduptl.kr'
                 : edufine
@@ -1580,6 +1615,12 @@ describe('Windows managed web automation', () => {
               loginVisible: false,
             } } };
           }
+        }
+        if (method === 'Page.navigate' && sessionId === 'neis-session') {
+          neisUrl = String(params.url);
+        }
+        if (method === 'Page.navigate' && sessionId === 'edufine-session') {
+          edufineUrl = String(params.url);
         }
         return {};
       },
@@ -1599,7 +1640,7 @@ describe('Windows managed web automation', () => {
 
     await connectWindowsOfficeSystems(
       session as never,
-      ['neis', 'edufine'],
+      ['edufine', 'neis'],
       ({ system, state }) => reports.push({ system, state }),
       undefined,
       true,
@@ -1619,6 +1660,10 @@ describe('Windows managed web automation', () => {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
     expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.filter(({ method }) => method === 'Page.navigate').map(({ params }) => params.url)).toEqual([
+      'https://goe.neis.go.kr/jsp/main.jsp',
+      'https://klef.goe.go.kr/',
+    ]);
     expect(reports.filter(({ state }) => state === 'connected')).toEqual([
       { system: 'neis', state: 'connected' },
       { system: 'edufine', state: 'connected' },
@@ -1638,6 +1683,7 @@ describe('Windows managed web automation', () => {
     }> = [];
     const reports: Array<{ system: string; state: string }> = [];
     let neisOpened = false;
+    let neisUrl = 'https://goe.neis.go.kr/main';
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>, sessionId?: string) {
@@ -1647,7 +1693,7 @@ describe('Windows managed web automation', () => {
             { targetId: 'portal-login', type: 'page', url: 'https://goe.eduptl.kr/login.do' },
             { targetId: 'portal-main', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
             ...(neisOpened
-              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' }]
+              ? [{ targetId: 'neis', type: 'page', url: neisUrl }]
               : []),
           ] };
         }
@@ -1670,7 +1716,7 @@ describe('Windows managed web automation', () => {
                 ? 'https://goe.eduptl.kr/login.do'
                 : main
                   ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
-                  : 'https://goe.neis.go.kr/main',
+                  : neisUrl,
               origin: main || login ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
               readyState: 'complete',
               loginVisible: login,
@@ -1682,6 +1728,9 @@ describe('Windows managed web automation', () => {
           sessionId === 'portal-main-session' &&
           params.type === 'mouseReleased'
         ) neisOpened = true;
+        if (method === 'Page.navigate' && sessionId === 'neis-session') {
+          neisUrl = String(params.url);
+        }
         return {};
       },
       close() { this.isClosed = true; },
@@ -1725,6 +1774,7 @@ describe('Windows managed web automation', () => {
     }> = [];
     const reports: Array<{ system: string; state: string }> = [];
     let neisOpened = false;
+    let neisUrl = 'https://goe.neis.go.kr/main';
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>, sessionId?: string) {
@@ -1733,7 +1783,7 @@ describe('Windows managed web automation', () => {
           return { targetInfos: [
             { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
             ...(neisOpened
-              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' }]
+              ? [{ targetId: 'neis', type: 'page', url: neisUrl }]
               : []),
           ] };
         }
@@ -1766,7 +1816,7 @@ describe('Windows managed web automation', () => {
             return { result: { value: {
               href: portal
                 ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
-                : 'https://goe.neis.go.kr/main',
+                : neisUrl,
               origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
               readyState: 'complete',
               loginVisible: false,
@@ -1787,6 +1837,9 @@ describe('Windows managed web automation', () => {
           sessionId === 'portal-session' &&
           params.type === 'mouseReleased'
         ) neisOpened = true;
+        if (method === 'Page.navigate' && sessionId === 'neis-session') {
+          neisUrl = String(params.url);
+        }
         return {};
       },
       close() { this.isClosed = true; },
@@ -1836,13 +1889,14 @@ describe('Windows managed web automation', () => {
       sessionId?: string;
     }> = [];
     let authenticated = false;
+    let neisUrl = 'https://goe.neis.go.kr/login';
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>, sessionId?: string) {
         commands.push({ method, params, sessionId });
         if (method === 'Target.getTargets') {
           return { targetInfos: [
-            { targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/login' },
+            { targetId: 'neis', type: 'page', url: neisUrl },
             { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
           ] };
         }
@@ -1861,7 +1915,7 @@ describe('Windows managed web automation', () => {
               href: portal
                 ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
                 : authenticated
-                  ? 'https://goe.neis.go.kr/main'
+                  ? neisUrl
                   : 'https://goe.neis.go.kr/login',
               origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
               readyState: 'complete',
@@ -1874,6 +1928,9 @@ describe('Windows managed web automation', () => {
           sessionId === 'portal-session' &&
           params.type === 'mouseReleased'
         ) authenticated = true;
+        if (method === 'Page.navigate' && sessionId === 'neis-session') {
+          neisUrl = String(params.url);
+        }
         return {};
       },
       close() { this.isClosed = true; },
@@ -1899,7 +1956,7 @@ describe('Windows managed web automation', () => {
     ))).toHaveLength(3);
     expect(commands).toContainEqual({
       method: 'Page.navigate',
-      params: { url: 'https://goe.neis.go.kr/' },
+      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp' },
       sessionId: 'neis-session',
     });
     await workflowPage.release?.();
@@ -2022,7 +2079,7 @@ describe('Windows managed web automation', () => {
 
     expect(commands).toContainEqual({
       method: 'Target.createTarget',
-      params: { url: 'https://goe.neis.go.kr/', background: true },
+      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp', background: true },
       sessionId: undefined,
     });
     expect(commands).toContainEqual({

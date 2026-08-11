@@ -158,9 +158,9 @@ describe('managed web workflow definitions', () => {
     ]);
     expect(definitions['edufine-draft'].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-top-menu', 'edufine-mega-menu', 'frame-exact-text']);
+    )).toEqual(['edufine-left-menu', 'edufine-left-menu', 'frame-exact-text']);
     expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
-      kind: 'edufine-mega-menu-any',
+      kind: 'visible-any',
       labels: ['공용서식', '공용 서식'],
     });
     expect(definitions['edufine-draft'].steps.at(-1)?.postcondition).toEqual({
@@ -176,11 +176,11 @@ describe('managed web workflow definitions', () => {
       ['품의등록', '품의 등록'],
     ]);
     expect(definitions['edufine-purchase'].steps.map(({ interaction }) => interaction)).toEqual([
-      'edufine-job-toggle',
-      'edufine-job-option',
-      'frame-exact-text',
-      'frame-exact-text',
-      'frame-exact-text',
+      'edufine-left-toggle',
+      'edufine-left-menu',
+      'edufine-left-menu',
+      'edufine-left-menu',
+      'edufine-left-menu',
     ]);
     expect(definitions['edufine-purchase'].steps.at(-1)?.postcondition).toEqual({
       kind: 'visible-groups',

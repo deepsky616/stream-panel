@@ -326,7 +326,7 @@ describe('web workflow templates', () => {
 
     expect(webWorkflows.retargetWebWorkflowItems([pinned], 'goe')[0]).toMatchObject({
       id: 'pinned-leave',
-      target: 'https://goe.neis.go.kr/',
+      target: 'https://goe.neis.go.kr/jsp/main.jsp',
       webWorkflow: { id: 'neis-leave', browserId: 'edge', officeCode: 'goe' },
     });
   });
