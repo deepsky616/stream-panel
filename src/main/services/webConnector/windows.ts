@@ -364,13 +364,23 @@ export async function resetWindowsWorkflowTargets(
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
   const system = requestSystem(workflowId, workflowSpec);
   if (!system) return;
+  const connectedTargetId = connectionTargetMap(session)[system];
   const rememberedTargetId = systemTargetMap(session)[system];
-  const rememberedTarget = targets.find((target) => (
-    target.targetId === rememberedTargetId &&
-    target.type === 'page' &&
-    workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec)
-  ));
-  if (rememberedTarget) return;
+  const anchorTarget = [connectedTargetId, rememberedTargetId]
+    .filter((targetId): targetId is string => typeof targetId === 'string')
+    .map((targetId) => targets.find((target) => target.targetId === targetId))
+    .find((target): target is WindowsTargetInfo => Boolean(
+      target &&
+      target.type === 'page' &&
+      workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec),
+    ));
+  if (anchorTarget) {
+    systemTargetMap(session)[system] = anchorTarget.targetId;
+    return;
+  }
+  if (connectedTargetId && !targets.some((target) => target.targetId === connectedTargetId)) {
+    delete connectionTargetMap(session)[system];
+  }
   delete systemTargetMap(session)[system];
   await findAuthenticatedSystemTarget(session, system);
 }
@@ -2060,12 +2070,16 @@ async function acquireDirectWorkflowTarget(
   const protocol = session.connection.protocol;
   const targetUrl = requestTarget(workflowId, session.officeCode, workflowSpec);
   const system = requestSystem(workflowId, workflowSpec);
+  const connectedTargetId = system ? connectionTargetMap(session)[system] : undefined;
   const rememberedTargetId = system ? systemTargetMap(session)[system] : undefined;
-  const rememberedTarget = targets.find((target) => (
-    target.targetId === rememberedTargetId &&
-    target.type === 'page' &&
-    workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec)
-  ));
+  const rememberedTarget = [connectedTargetId, rememberedTargetId]
+    .filter((targetId): targetId is string => typeof targetId === 'string')
+    .map((targetId) => targets.find((target) => target.targetId === targetId))
+    .find((target): target is WindowsTargetInfo => Boolean(
+      target &&
+      target.type === 'page' &&
+      workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec),
+    ));
   const existingTarget = rememberedTarget ?? selectWindowsWorkflowTarget(
     targets,
     session.officeCode,
@@ -2587,6 +2601,7 @@ const fold=(value)=>normalize(value).toLowerCase().replace(/[\\s\\-()（）]/g,'
 const wantedKeys=Array.from(new Set(ssoLabels.map(fold).filter(Boolean)));
 const otherKeys=Array.from(new Set(otherLabels.map(fold).filter(Boolean)));
 const selector='a,button,input[type="button"],input[type="image"],[role="link"],[role="button"],[role="menuitem"],[onclick],[tabindex],img,span,div,strong,p';
+const topContainerSelector='header,nav,#header,#gnb,.header,.gnb,.top-menu,.topMenu,[class*="header"],[class*="gnb"],[id*="header"],[id*="gnb"]';
 const candidates=[];
 const seen=new Set();
 for(const {document} of documents){
@@ -2622,6 +2637,11 @@ for(const {document} of documents){
     if(clickType==='submit')continue;
     if(clickableAncestor)score+=20;
     const rect=clickElement.getBoundingClientRect();
+    // The official portal exposes NEIS and K-Edufine in its upper service bar.
+    // Prefer that exact route over similarly named notices or dashboard cards.
+    if(clickElement.closest?.(topContainerSelector))score+=80;
+    const viewportHeight=Number(clickElement.ownerDocument?.defaultView?.innerHeight)||0;
+    if(rect.top>=-4&&rect.top<=Math.min(420,Math.max(220,viewportHeight*0.45)))score+=25;
     seen.add(element);
     seen.add(clickElement);
     candidates.push({element:clickElement,score,area:Math.max(1,rect.width*rect.height),matchedText});
@@ -2852,6 +2872,8 @@ async function normalizeConnectedSystemTarget(
     if (!currentState || !isSystemConnectionLandingUrl(currentState.href, destination)) {
       await navigateAttachedTarget(session, attached, destination);
     }
+    let loginHref = '';
+    let stableLoginChecks = 0;
     const readyState = await waitForReadyPage(
       session,
       attached.sessionId,
@@ -2862,10 +2884,22 @@ async function normalizeConnectedSystemTarget(
           session.officeCode,
           system,
         ),
-      30_000,
-      (state) => state.loginVisible
-        ? new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 추가 로그인이 필요합니다.`)
-        : null,
+      60_000,
+      (state) => {
+        if (!state.loginVisible) {
+          loginHref = '';
+          stableLoginChecks = 0;
+          return null;
+        }
+        stableLoginChecks = state.href === loginHref ? stableLoginChecks + 1 : 1;
+        loginHref = state.href;
+        // K-Edufine briefly renders its login shell before the portal SSO
+        // assertion is consumed. Only report login-required after the same
+        // screen has remained stable long enough to rule out that redirect.
+        return stableLoginChecks >= 100
+          ? new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 추가 로그인이 필요합니다.`)
+          : null;
+      },
       signal,
     );
     const normalizedTarget = { ...target, url: readyState.href };
@@ -3004,6 +3038,36 @@ async function claimDedicatedConnectionTarget(
   } finally {
     if (attached) await detachWindowsTarget(session, attached);
   }
+}
+
+async function openDirectConnectionTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<WindowsTargetInfo> {
+  const destination = systemConnectionLandingUrl(session.officeCode, system);
+  let target = await findDedicatedConnectionTarget(session, system);
+  if (target) {
+    let attached: AttachedWindowsTarget | undefined;
+    try {
+      attached = await attachWindowsTarget(session, target);
+      await navigateAttachedTarget(session, attached, destination);
+      target = { ...target, url: destination };
+    } finally {
+      if (attached) await detachWindowsTarget(session, attached);
+    }
+  } else {
+    const created = await session.connection.protocol.send<{ targetId?: unknown }>(
+      'Target.createTarget',
+      { url: destination },
+    );
+    if (typeof created.targetId !== 'string') {
+      throw new Error('업무 시스템 링크를 새 탭으로 열지 못했습니다. 업무용 브라우저를 다시 열어 주세요.');
+    }
+    target = { targetId: created.targetId, type: 'page', url: destination };
+  }
+  connectionTargetMap(session)[system] = target.targetId;
+  systemTargetMap(session)[system] = target.targetId;
+  return target;
 }
 
 async function findAuthenticatedConnectionTarget(
@@ -3183,19 +3247,12 @@ async function waitForSystemTarget(
       if (
         target.targetId === options.connectionTargetId ||
         !options.knownTargetIds?.has(target.targetId) ||
-        target.openerId === options.portalTargetId
+        (
+          target.openerId === options.portalTargetId &&
+          systemTargetAllowed(target, session.officeCode, system)
+        )
       ) {
         candidateTargetIds.add(target.targetId);
-      }
-    }
-    if (!targetDetected && candidateTargetIds.size > 0) {
-      const detected = targets.find((target) => (
-        candidateTargetIds.has(target.targetId) &&
-        systemTargetAllowed(target, session.officeCode, system)
-      )) ?? targets.find((target) => candidateTargetIds.has(target.targetId));
-      if (detected) {
-        targetDetected = true;
-        await options.onTargetDetected?.(detected);
       }
     }
     const inspected = candidateTargetIds.size > 0
@@ -3204,6 +3261,16 @@ async function waitForSystemTarget(
           allowedTargetIds: candidateTargetIds,
         })
       : null;
+    if (!targetDetected) {
+      const detected = inspected?.target ?? targets.find((target) => (
+        candidateTargetIds.has(target.targetId) &&
+        systemTargetAllowed(target, session.officeCode, system)
+      ));
+      if (detected) {
+        targetDetected = true;
+        await options.onTargetDetected?.(detected);
+      }
+    }
     if (inspected && !inspected.loginRequired) {
       return { state: 'connected', target: inspected.target };
     }
@@ -3294,13 +3361,14 @@ async function prepareOfficeSystemsViaPortal(
         }
       }
 
-      const existingDedicated = await findDedicatedConnectionTarget(session, system);
+      let existingDedicated = await findDedicatedConnectionTarget(session, system);
       const knownTargetIds = new Set(readTargetInfos(
         await session.connection.protocol.send('Target.getTargets', {}),
       ).map(({ targetId }) => targetId));
       const clickStartedAt = Date.now();
       let clicked = false;
       let candidateCount = 0;
+      let clickFailureMessage: string | undefined;
       try {
         await restoreAndActivateTarget(session, portal.target.targetId, portal.sessionId);
         const clickDeadline = Date.now() + 30_000;
@@ -3351,41 +3419,55 @@ async function prepareOfficeSystemsViaPortal(
         }
       } catch (error) {
         throwIfApprovalCheckCancelled(signal);
-        const message = error instanceof Error ? error.message : `${label} 공식 연결 실행에 실패했습니다.`;
-        await recordConnectionDiagnostic(diagnose, {
-          system,
-          stepId: 'connection-sso-click',
-          outcome: 'failed',
-          durationMs: Math.max(0, Date.now() - clickStartedAt),
-        });
-        results.set(system, { ready: false, message });
-        continue;
+        clickFailureMessage = error instanceof Error
+          ? error.message
+          : `${label} 공식 연결 실행에 실패했습니다.`;
       }
       if (!clicked) {
-        const message = `${label} 공식 연결 메뉴를 업무포털 메인에서 찾지 못했습니다${candidateCount > 0 ? `(${candidateCount}개 후보)` : ''}. 포털 메인 화면을 새로 고친 뒤 다시 시도해 주세요.`;
+        const message = clickFailureMessage ?? `${label} 공식 연결 메뉴를 업무포털 메인에서 찾지 못했습니다${candidateCount > 0 ? `(${candidateCount}개 후보)` : ''}.`;
         await recordConnectionDiagnostic(diagnose, {
           system,
           stepId: 'connection-sso-click',
           outcome: 'failed',
           durationMs: Math.max(0, Date.now() - clickStartedAt),
         });
-        results.set(system, { ready: false, message });
-        continue;
+        const directStartedAt = Date.now();
+        try {
+          existingDedicated = await openDirectConnectionTarget(session, system);
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-direct-link',
+            outcome: 'success',
+            durationMs: Math.max(0, Date.now() - directStartedAt),
+            currentUrl: existingDedicated.url,
+          });
+        } catch (error) {
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-direct-link',
+            outcome: 'failed',
+            durationMs: Math.max(0, Date.now() - directStartedAt),
+          });
+          const directMessage = error instanceof Error ? error.message : '교육청 업무 시스템 링크를 열지 못했습니다.';
+          results.set(system, { ready: false, message: `${message} ${directMessage}` });
+          continue;
+        }
+      } else {
+        await recordConnectionDiagnostic(diagnose, {
+          system,
+          stepId: 'connection-sso-click',
+          outcome: 'success',
+          durationMs: Math.max(0, Date.now() - clickStartedAt),
+        });
       }
-      await recordConnectionDiagnostic(diagnose, {
-        system,
-        stepId: 'connection-sso-click',
-        outcome: 'success',
-        durationMs: Math.max(0, Date.now() - clickStartedAt),
-      });
 
       const targetStartedAt = Date.now();
       let targetWasDetected = false;
-      const targetResult = await waitForSystemTarget(
+      let targetResult = await waitForSystemTarget(
         session,
         system,
         signal,
-        30_000,
+        clicked ? 90_000 : 45_000,
         {
           knownTargetIds,
           portalTargetId: portal.target.targetId,
@@ -3402,6 +3484,47 @@ async function prepareOfficeSystemsViaPortal(
           },
         },
       );
+      if (targetResult.state === 'missing' && clicked) {
+        const directStartedAt = Date.now();
+        try {
+          existingDedicated = await openDirectConnectionTarget(session, system);
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-direct-link',
+            outcome: 'success',
+            durationMs: Math.max(0, Date.now() - directStartedAt),
+            currentUrl: existingDedicated.url,
+          });
+          targetResult = await waitForSystemTarget(
+            session,
+            system,
+            signal,
+            45_000,
+            {
+              knownTargetIds,
+              portalTargetId: portal.target.targetId,
+              connectionTargetId: existingDedicated.targetId,
+              onTargetDetected: async (target) => {
+                targetWasDetected = true;
+                await recordConnectionDiagnostic(diagnose, {
+                  system,
+                  stepId: 'connection-target-detected',
+                  outcome: 'success',
+                  durationMs: Math.max(0, Date.now() - targetStartedAt),
+                  currentUrl: target.url,
+                });
+              },
+            },
+          );
+        } catch {
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-direct-link',
+            outcome: 'failed',
+            durationMs: Math.max(0, Date.now() - directStartedAt),
+          });
+        }
+      }
       if (!targetWasDetected) {
         await recordConnectionDiagnostic(diagnose, {
           system,
