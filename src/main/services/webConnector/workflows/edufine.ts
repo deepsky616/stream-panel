@@ -83,7 +83,7 @@ export const EDUFINE_WORKFLOWS = {
         candidateLabels: ['기안', '기안작성', '기안 작성', '기안문작성', '기안문 작성'],
         selection: 'first-available',
         interaction: 'edufine-top-menu',
-        postcondition: { kind: 'visible-any', labels: ['공용서식', '공용 서식'] },
+        postcondition: { kind: 'edufine-mega-menu-any', labels: ['공용서식', '공용 서식'] },
         ...COMMON_CHECKS,
       },
       {

@@ -551,8 +551,17 @@ export function createWebConnectorService({
         });
         const failed = systems.flatMap((system) => {
           const status = connectionResults.get(system);
-          if (!status || status.state === 'connected') return [];
           const label = system === 'neis' ? '나이스' : 'K-에듀파인';
+          if (!status) {
+            const message = `${label} 연결 결과를 확인하지 못했습니다. 업무포털 메인에서 다시 연결해 주세요.`;
+            setSystemStatus(officeCode, browserId, {
+              system,
+              state: 'error',
+              message,
+            });
+            return [message];
+          }
+          if (status.state === 'connected') return [];
           return [`${label}: ${status.message ?? '연결을 완료하지 못했습니다.'}`];
         });
         if (failed.length > 0) throw new Error(failed.join(' / '));

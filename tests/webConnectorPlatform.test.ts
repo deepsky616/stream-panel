@@ -455,7 +455,7 @@ describe('Windows managed web automation', () => {
     });
   });
 
-  it('uses a new temporary tab for approval checks and closes it after release', async () => {
+  it('reuses the connected system tab for approval checks without creating or closing a tab', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     const protocol = {
       isClosed: false,
@@ -471,7 +471,6 @@ describe('Windows managed web automation', () => {
             }],
           };
         }
-        if (method === 'Target.createTarget') return { targetId: 'approval-target' };
         if (method === 'Target.attachToTarget') return { sessionId: 'approval-session' };
         if (method === 'Runtime.evaluate') {
           if (String(params.expression ?? '').includes('loginVisible')) {
@@ -491,6 +490,7 @@ describe('Windows managed web automation', () => {
     const managedSession = {
       officeCode: 'sen' as const,
       browserId: 'edge' as const,
+      systemTargetIds: { neis: 'user-work-target' },
       connection: {
         protocol,
         transportKind: 'pipe' as const,
@@ -512,21 +512,64 @@ describe('Windows managed web automation', () => {
     await releasablePage.release?.();
 
     expect(commands).toContainEqual({
-      method: 'Target.createTarget',
-      params: { url: 'https://sen.neis.go.kr/working-document', background: true },
+      method: 'Target.attachToTarget',
+      params: { targetId: 'user-work-target', flatten: true },
     });
     expect(commands).toContainEqual({
-      method: 'Target.attachToTarget',
-      params: { targetId: 'approval-target', flatten: true },
+      method: 'Page.navigate',
+      params: { url: 'https://sen.neis.go.kr/' },
     });
     expect(commands).toContainEqual({
       method: 'Target.detachFromTarget',
       params: { sessionId: 'approval-session' },
     });
-    expect(commands).toContainEqual({
-      method: 'Target.closeTarget',
-      params: { targetId: 'approval-target' },
-    });
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
+  });
+
+  it('does not let a scheduled approval check navigate away from an active work form', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'edufine-work-form',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/purchase',
+          }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-work-session' };
+        if (
+          method === 'Runtime.evaluate' &&
+          String(params.expression ?? '').includes('const activeWorkSystem="edufine"')
+        ) return { result: { value: true } };
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const managedSession = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      systemTargetIds: { edufine: 'edufine-work-form' },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await expect(openCdpWindowsApprovalPage(managedSession as never, {
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
   });
 
   it('counts only the Edufine approval-list grid and ignores an unrelated 100-row selector', async () => {
@@ -1220,6 +1263,131 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
+  it('finds, clicks, and verifies an Edufine menu inside a cross-origin child frame', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'edufine-main',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/main',
+          }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 29 };
+        if (method === 'Page.getFrameTree') {
+          return {
+            frameTree: {
+              frame: { id: 'main-frame' },
+              childFrames: [{ frame: { id: 'nexacro-frame' } }],
+            },
+          };
+        }
+        if (method === 'Page.createIsolatedWorld') return { executionContextId: 222 };
+        if (method === 'DOM.getContentQuads') {
+          return { quads: [[310, 170, 410, 170, 410, 230, 310, 230]] };
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://klef.goe.go.kr/main',
+              origin: 'https://klef.goe.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes("[id$='btnUseTimeExtn']")) {
+            return { result: { value: { handled: false } } };
+          }
+          if (expression.includes('const approvalSystem="edufine"')) {
+            return { result: { value: params.contextId === 222
+              ? {
+                  candidates: [],
+                  rowCounts: [{ count: 1, area: 10_000, relevant: true, source: 'nexacro' }],
+                  emptyList: false,
+                  listReady: true,
+                }
+              : { candidates: [], rowCounts: [], emptyList: false, listReady: false } } };
+          }
+          if (expression.includes("'NEXACRO-TOP-MENU'")) {
+            return { result: { value: params.contextId === 222
+              ? [safeCandidate(0, '기안')]
+              : [] } };
+          }
+          if (expression.includes('const interaction="edufine-top-menu"')) {
+            if (params.contextId === 222 && expression.includes('const returnElement=true')) {
+              return { result: { objectId: 'draft-menu-node', subtype: 'node' } };
+            }
+            return { result: { value: { ok: false } } };
+          }
+          if (expression.includes('const selector=')) {
+            return { result: { value: params.contextId === 222 } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+    const workflowPage = await openCdpWindowsWorkflowPage(
+      session as never,
+      'edufine-draft',
+    );
+    const step = {
+      id: 'open-draft',
+      candidateLabels: ['기안'],
+      interaction: 'edufine-top-menu' as const,
+      selection: 'first-available' as const,
+      postcondition: {
+        kind: 'edufine-mega-menu-any' as const,
+        labels: ['공용서식'],
+      },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+
+    const candidates = await workflowPage.inspectCandidates(step);
+    expect(candidates).toHaveLength(1);
+    await workflowPage.pressCandidate(candidates[0], step);
+    await expect(workflowPage.checkPostcondition(step)).resolves.toBe(true);
+    await expect(workflowPage.readApprovalCount!('edufine')).resolves.toBe(1);
+
+    expect(commands).toContainEqual({
+      method: 'Page.createIsolatedWorld',
+      params: expect.objectContaining({ frameId: 'nexacro-frame' }),
+      sessionId: 'edufine-session',
+    });
+    expect(commands).toContainEqual({
+      method: 'DOM.getContentQuads',
+      params: { objectId: 'draft-menu-node' },
+      sessionId: 'edufine-session',
+    });
+    expect(commands).toContainEqual({
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseReleased', x: 360, y: 200, button: 'left', clickCount: 1 },
+      sessionId: 'edufine-session',
+    });
+    await workflowPage.release?.();
+  });
+
   it('switches to a newly opened NEIS request page and activates that target', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
     let clicked = false;
@@ -1373,10 +1541,10 @@ describe('Windows managed web automation', () => {
           return { targetInfos: [
             { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
             ...(neisOpened
-              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' }]
+              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main', openerId: 'portal' }]
               : []),
             ...(edufineOpened
-              ? [{ targetId: 'edufine', type: 'page', url: 'https://klef.goe.go.kr/main' }]
+              ? [{ targetId: 'edufine', type: 'page', url: 'https://klef.goe.go.kr/main', openerId: 'portal' }]
               : []),
           ] };
         }
@@ -1441,8 +1609,12 @@ describe('Windows managed web automation', () => {
     expect(ssoExpressions.every((expression) => (
       expression.includes("querySelectorAll('iframe,frame')") &&
       expression.includes("[onclick]") &&
-      expression.includes('input[type="image"]')
+      expression.includes('input[type="image"]') &&
+      expression.includes("setAttribute?.('target',tabName)") &&
+      expression.includes('original.call(this,url,tabName)')
     ))).toBe(true);
+    expect(ssoExpressions[0]).toContain('const tabName="stream-panel-neis"');
+    expect(ssoExpressions[1]).toContain('const tabName="stream-panel-edufine"');
     for (const expression of ssoExpressions) {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }

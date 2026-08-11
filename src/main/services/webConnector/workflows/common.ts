@@ -27,6 +27,7 @@ export interface CandidateSummary {
 
 export type WorkflowPostcondition =
   | { kind: 'visible-any'; labels: readonly string[] }
+  | { kind: 'edufine-mega-menu-any'; labels: readonly string[] }
   | { kind: 'visible-all'; labels: readonly string[] }
   | { kind: 'visible-groups'; groups: readonly (readonly string[])[] }
   | { kind: 'dialog-title-any'; labels: readonly string[] }

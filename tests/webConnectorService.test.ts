@@ -361,7 +361,12 @@ describe('managed web connector service', () => {
     config.webConnection.autoConnectTarget = 'neis';
     const inputs: unknown[] = [];
     const controller = createController();
-    controller.connectSystems = async (input) => { inputs.push(input); };
+    controller.connectSystems = async (input, report) => {
+      inputs.push(input);
+      for (const system of input.systems) {
+        report?.({ system, state: 'connected', checkedAt: 1_800_000_000_001 });
+      }
+    };
     const service = createWebConnectorService({
       userDataPath: 'C:\\StreamPanel',
       platform: 'win32',
@@ -377,6 +382,36 @@ describe('managed web connector service', () => {
     await expect(service.openSetup('edge', 'connect')).resolves.toEqual({ ok: true });
 
     expect(inputs).toEqual([expect.objectContaining({ systems: ['neis', 'edufine'] })]);
+  });
+
+  it('does not report success when a system connection result is missing', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    controller.connectSystems = async (_input, report) => {
+      report?.({ system: 'neis', state: 'connected', checkedAt: 1_800_000_000_001 });
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+    });
+    await service.start();
+
+    await expect(service.openSetup('edge', 'connect')).resolves.toEqual({
+      ok: false,
+      message: 'K-에듀파인 연결 결과를 확인하지 못했습니다. 업무포털 메인에서 다시 연결해 주세요.',
+    });
+    expect(service.getStatuses()[0].systems).toContainEqual(expect.objectContaining({
+      system: 'edufine',
+      state: 'error',
+    }));
   });
 
   it('clears stale system failures after the managed browser is opened successfully', async () => {

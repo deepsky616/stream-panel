@@ -159,6 +159,10 @@ describe('managed web workflow definitions', () => {
     expect(definitions['edufine-draft'].steps.map(
       ({ interaction }) => interaction,
     )).toEqual(['edufine-top-menu', 'edufine-mega-menu', 'frame-exact-text']);
+    expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
+      kind: 'edufine-mega-menu-any',
+      labels: ['공용서식', '공용 서식'],
+    });
     expect(definitions['edufine-draft'].steps.at(-1)?.postcondition).toEqual({
       kind: 'new-window',
       processName: 'WXSClient',
@@ -272,6 +276,10 @@ describe('managed web workflow definitions', () => {
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ interaction }) => interaction,
     )).toEqual(['edufine-top-menu', 'edufine-mega-menu']);
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps[0].postcondition).toEqual({
+      kind: 'edufine-mega-menu-any',
+      labels: ['결재대기', '결재 대기', '결재대기함', '결재 대기함'],
+    });
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ skipWhenSatisfied }) => skipWhenSatisfied,
     )).toEqual([false, true]);

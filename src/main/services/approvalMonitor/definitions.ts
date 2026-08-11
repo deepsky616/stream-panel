@@ -9,7 +9,7 @@ export interface ApprovalScanInput {
   system: WebWorkflowSystem;
   officeCode: EducationOfficeCode;
   browserId: WebConnectorBrowserId;
-  /** Keep and show the temporary check tab when a user-triggered check needs attention. */
+  /** Show the connected system tab when a user-triggered check needs attention. */
   interactive?: boolean;
 }
 
@@ -59,7 +59,7 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       selection: 'first-available',
       interaction: 'edufine-top-menu',
       allowActionText: true,
-      postcondition: { kind: 'visible-any', labels: EDUFINE_WAITING_LABELS },
+      postcondition: { kind: 'edufine-mega-menu-any', labels: EDUFINE_WAITING_LABELS },
       ...COMMON_CHECKS,
       // `결재대기` can remain visible as a breadcrumb or an already opened tab.
       // Always open the real Nexacro top menu so the next step can only select

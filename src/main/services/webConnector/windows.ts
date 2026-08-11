@@ -68,6 +68,7 @@ export interface WindowsTargetInfo {
   type: string;
   url: string;
   title?: string;
+  openerId?: string;
 }
 
 export type WindowsWorkflowExecutionState =
@@ -753,6 +754,8 @@ const displayedLabelMatches=(value,label)=>{
 const selector=${JSON.stringify(
     condition.kind === 'tab-selected-any'
       ? '[role="tab"][aria-selected="true"],[aria-current="page"],[role="tab"].active,.tab.active,a.active,a.on,a.selected,li.active>a,li.on>a,li.selected>a'
+      : condition.kind === 'edufine-mega-menu-any'
+        ? '[id*="pdvMegaMenu"],[id*="pdvMegaMenu"] *,[id*="pdvmegamenu"],[id*="pdvmegamenu"] *,[id*="megaMenu"],[id*="megaMenu"] *,[id*="megamenu"],[id*="megamenu"] *'
       : 'h1,h2,h3,label,span,div,button,input,[role="button"],[role="dialog"],[aria-label],[title],[role="tab"]',
   )};
 const found=new Set();
@@ -803,6 +806,11 @@ const summary=(element,index,text,tag,offsetX=0,offsetY=0)=>{
     shadowedByEquivalentDescendant:false
   };
 };
+const located=(element)=>{
+  if(!element)return null;
+  const owner=documents.find(({document})=>document===element.ownerDocument);
+  return {element,offsetX:owner?.offsetX||0,offsetY:owner?.offsetY||0};
+};
 if(interaction==='edufine-job'){
   const application=globalThis.nexacro?.getApplication?.()||globalThis.application;
   const combo=application?.mainframe?.MainVFrameSet?.TopFrame?.form?.cboJobList;
@@ -834,46 +842,47 @@ const jobToggle=()=>{
   const controls=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
     "[id*='cboJobList'][id*='dropbutton'],[id*='cboJobList'][id$=':button'],[id*='cboJobList'][role='button'],[id*='cboJobList'] button,[aria-controls*='cboJobList']"
   ))).filter(element=>visible(element)&&enabled(element));
-  return controls.find(element=>String(element.id||'').endsWith('dropbutton'))||
-    controls.find(element=>String(element.id||'').includes('dropbutton'))||input;
+  return located(controls.find(element=>String(element.id||'').endsWith('dropbutton'))||
+    controls.find(element=>String(element.id||'').includes('dropbutton'))||input);
 };
 const jobOption=(label)=>{
-  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll(
     "[id*='cboJobList'],[id*='ComboPopup'],[id*='combolist'],[role='option']"
-  ))).filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
-  return matches.find(element=>String(element.id||'').endsWith(':text'))||
-    matches.sort((left,right)=>left.children.length-right.children.length)[0]||null;
+  )).map(element=>({element,offsetX,offsetY}))).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
+  return matches.find(({element})=>String(element.id||'').endsWith(':text'))||
+    matches.sort((left,right)=>left.element.children.length-right.element.children.length)[0]||null;
 };
 if(interaction==='edufine-job-toggle'){
-  const element=jobToggle();
-  return element?[summary(element,0,labels[0]||'업무관리','NEXACRO-JOB-TOGGLE')]:[];
+  const match=jobToggle();
+  return match?[summary(match.element,0,labels[0]||'업무관리','NEXACRO-JOB-TOGGLE',match.offsetX,match.offsetY)]:[];
 }
 if(interaction==='edufine-job-option'){
   return labels.flatMap((label,index)=>{
-    const element=jobOption(label);
-    return element?[summary(element,index,label,'NEXACRO-JOB-OPTION')]:[];
+    const match=jobOption(label);
+    return match?[summary(match.element,index,label,'NEXACRO-JOB-OPTION',match.offsetX,match.offsetY)]:[];
   });
 }
 const choose=(selector,label,preferred)=>{
-  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(selector)))
-    .filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
-  const preferredMatch=matches.find(element=>String(element.id||'').endsWith(preferred))||matches.at(-1);
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll(selector))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
+  const preferredMatch=matches.find(({element})=>String(element.id||'').endsWith(preferred))||matches.at(-1);
   if(preferredMatch)return preferredMatch;
-  const fallback=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+  const fallback=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll(
     'a,button,[role="button"],[role="menuitem"],[role="tab"],[onclick],[id*="btnMenu"],[id*="MegaMenu"],[id*="megaMenu"]'
-  ))).filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
-  return fallback.sort((left,right)=>left.children.length-right.children.length)[0]||null;
+  )).map(element=>({element,offsetX,offsetY}))).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element));
+  return fallback.sort((left,right)=>left.element.children.length-right.element.children.length)[0]||null;
 };
 if(interaction==='edufine-top-menu'){
   return labels.flatMap((label,index)=>{
-    const element=choose('[id*="TopFrame"][id*="btnMenu_"]',label,':icontext');
-    return element?[summary(element,index,label,'NEXACRO-TOP-MENU')]:[];
+    const match=choose('[id*="TopFrame"][id*="btnMenu_"],[id*="topframe"][id*="btnmenu_"]',label,':icontext');
+    return match?[summary(match.element,index,label,'NEXACRO-TOP-MENU',match.offsetX,match.offsetY)]:[];
   });
 }
 if(interaction==='edufine-mega-menu'){
   return labels.flatMap((label,index)=>{
-    const element=choose('[id*="pdvMegaMenu"]',label,':text');
-    return element?[summary(element,index,label,'NEXACRO-MEGA-MENU')]:[];
+    const match=choose('[id*="pdvMegaMenu"],[id*="pdvmegamenu"],[id*="megaMenu"],[id*="megamenu"]',label,':text');
+    return match?[summary(match.element,index,label,'NEXACRO-MEGA-MENU',match.offsetX,match.offsetY)]:[];
   });
 }
 if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
@@ -905,11 +914,13 @@ function edufineCandidateActionExpression(
   expectedText: string,
   allowActionText: boolean,
   allowedActionLabels: readonly string[],
+  returnElement = false,
 ): string {
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const wanted=${JSON.stringify(expectedText)};
 const interaction=${JSON.stringify(interaction)};
+const returnElement=${JSON.stringify(returnElement)};
 const forbiddenTokens=${JSON.stringify(FORBIDDEN_ACTION_TOKENS)};
 const approvedNonActions=new Set(${JSON.stringify([...APPROVED_NON_ACTION_LABELS])});
 const allowedActionLabels=new Set(${JSON.stringify(allowedActionLabels)}.map(normalize));
@@ -925,7 +936,7 @@ const displayedLabelMatches=(value,label)=>{
 const forbidden=forbiddenTokens.some(token=>normalizedWanted.includes(token))&&
   !approvedNonActions.has(normalizedWanted)&&
   (!${JSON.stringify(allowActionText)}||!allowedActionLabels.has(normalizedWanted));
-if(forbidden)return {ok:false};
+if(forbidden)return returnElement?null:{ok:false};
 if(interaction==='edufine-job'){
   const application=globalThis.nexacro?.getApplication?.()||globalThis.application;
   const combo=application?.mainframe?.MainVFrameSet?.TopFrame?.form?.cboJobList;
@@ -949,6 +960,11 @@ const jobCombo=()=>documents.map(({document})=>{
   return application?.mainframe?.MainVFrameSet?.TopFrame?.form?.cboJobList||
     application?.mainframe?.mainframe?.TopFrame?.form?.cboJobList;
 }).find(Boolean)||null;
+const located=(element)=>{
+  if(!element)return null;
+  const owner=documents.find(({document})=>document===element.ownerDocument);
+  return {element,offsetX:owner?.offsetX||0,offsetY:owner?.offsetY||0};
+};
 const jobInput=()=>documents.flatMap(({document})=>
   Array.from(document.querySelectorAll(
     "[id$='cboJobList.comboedit:input'],input[id*='cboJobList'],[id*='cboJobList'] input,[id*='cboJobList'][role='combobox']"
@@ -960,41 +976,44 @@ const jobToggle=()=>{
   const controls=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
     "[id*='cboJobList'][id*='dropbutton'],[id*='cboJobList'][id$=':button'],[id*='cboJobList'][role='button'],[id*='cboJobList'] button,[aria-controls*='cboJobList']"
   ))).filter(element=>visible(element)&&enabled(element));
-  return controls.find(element=>String(element.id||'').endsWith('dropbutton'))||
-    controls.find(element=>String(element.id||'').includes('dropbutton'))||input;
+  return located(controls.find(element=>String(element.id||'').endsWith('dropbutton'))||
+    controls.find(element=>String(element.id||'').includes('dropbutton'))||input);
 };
 const jobOption=()=>{
-  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll(
     "[id*='cboJobList'],[id*='ComboPopup'],[id*='combolist'],[role='option']"
-  ))).filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
-  return matches.find(element=>String(element.id||'').endsWith(':text'))||
-    matches.sort((left,right)=>left.children.length-right.children.length)[0]||null;
+  )).map(element=>({element,offsetX,offsetY}))).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
+  return matches.find(({element})=>String(element.id||'').endsWith(':text'))||
+    matches.sort((left,right)=>left.element.children.length-right.element.children.length)[0]||null;
 };
 if(interaction==='edufine-job-toggle'||interaction==='edufine-job-option'){
-  const element=interaction==='edufine-job-toggle'
+  const match=interaction==='edufine-job-toggle'
     ? jobToggle()
     : interaction==='edufine-job-option'?jobOption():null;
-  if(!element)return {ok:false};
-  const rect=element.getBoundingClientRect();
-  return {ok:true,x:rect.left+rect.width/2,y:rect.top+rect.height/2};
+  if(!match)return returnElement?null:{ok:false};
+  if(returnElement)return match.element;
+  const rect=match.element.getBoundingClientRect();
+  return {ok:true,x:match.offsetX+rect.left+rect.width/2,y:match.offsetY+rect.top+rect.height/2};
 }
 const choose=(selector,preferred)=>{
-  const matches=documents.flatMap(({document})=>Array.from(document.querySelectorAll(selector)))
-    .filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
-  const preferredMatch=matches.find(element=>String(element.id||'').endsWith(preferred))||matches.at(-1);
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll(selector))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
+  const preferredMatch=matches.find(({element})=>String(element.id||'').endsWith(preferred))||matches.at(-1);
   if(preferredMatch)return preferredMatch;
-  const fallback=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+  const fallback=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll(
     'a,button,[role="button"],[role="menuitem"],[role="tab"],[onclick],[id*="btnMenu"],[id*="MegaMenu"],[id*="megaMenu"]'
-  ))).filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
-  return fallback.sort((left,right)=>left.children.length-right.children.length)[0]||null;
+  )).map(element=>({element,offsetX,offsetY}))).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element));
+  return fallback.sort((left,right)=>left.element.children.length-right.element.children.length)[0]||null;
 };
 if(interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
-  const element=interaction==='edufine-top-menu'
-    ? choose('[id*="TopFrame"][id*="btnMenu_"]',':icontext')
-    : choose('[id*="pdvMegaMenu"]',':text');
-  if(!element)return {ok:false};
-  const rect=element.getBoundingClientRect();
-  return {ok:true,x:rect.left+rect.width/2,y:rect.top+rect.height/2};
+  const match=interaction==='edufine-top-menu'
+    ? choose('[id*="TopFrame"][id*="btnMenu_"],[id*="topframe"][id*="btnmenu_"]',':icontext')
+    : choose('[id*="pdvMegaMenu"],[id*="pdvmegamenu"],[id*="megaMenu"],[id*="megamenu"]',':text');
+  if(!match)return returnElement?null:{ok:false};
+  if(returnElement)return match.element;
+  const rect=match.element.getBoundingClientRect();
+  return {ok:true,x:match.offsetX+rect.left+rect.width/2,y:match.offsetY+rect.top+rect.height/2};
 }
 if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
   const matches=documents.flatMap(({document,offsetX,offsetY})=>
@@ -1002,11 +1021,12 @@ if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
   ).filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
     .sort((left,right)=>left.element.children.length-right.element.children.length);
   const exact=matches[0];
-  if(!exact)return {ok:false};
+  if(!exact)return returnElement?null:{ok:false};
   const {offsetX,offsetY}=exact;
   const exactElement=exact.element;
   const element=exactElement.closest?.('a,button')||exactElement;
-  if(!element||!visible(element))return {ok:false};
+  if(!element||!visible(element))return returnElement?null:{ok:false};
+  if(returnElement)return element;
   if(interaction==='frame-exact-text'){
     const rect=element.getBoundingClientRect();
     return {ok:true,x:offsetX+rect.left+rect.width/2,y:offsetY+rect.top+rect.height/2};
@@ -1050,6 +1070,26 @@ return {
   y:offsetY+rect.top+rect.height/2
 };
 })()`;
+
+function activeWorkFormExpression(system: WebWorkflowSystem): string {
+  return `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const activeWorkSystem=${JSON.stringify(system)};
+const texts=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+  'h1,h2,h3,label,span,div,[aria-label],[title]'
+))).filter(visible).flatMap(surfaceTextsOf).map(normalize);
+const has=(labels)=>labels.some(label=>texts.some(text=>text===label));
+const editable=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
+  'input:not([type="hidden"]),textarea,select,[contenteditable="true"]'
+))).filter(element=>visible(element)&&enabled(element));
+if(editable.length===0)return false;
+if(activeWorkSystem==='neis'){
+  return has(['근무상황신청','개인근무상황신청','출장신청']);
+}
+return has(['품의등록','품의 등록'])&&
+  has(['기본정보','제목','개요','예산내역','품목내역']);
+})()`;
+}
 
 function approvalCounterExpression(system: WebWorkflowSystem): string {
   const labels = system === 'neis'
@@ -1415,6 +1455,7 @@ function readTargetInfos(value: unknown): WindowsTargetInfo[] {
       type: target.type,
       url: target.url,
       ...(typeof target.title === 'string' ? { title: target.title } : {}),
+      ...(typeof target.openerId === 'string' ? { openerId: target.openerId } : {}),
     }];
   });
 }
@@ -1684,6 +1725,14 @@ async function pressCandidateWithCdp(
     interaction === 'dom-click' || interaction === 'edufine-job' || interaction === 'edufine-exact-text',
   );
   if (!action?.ok) {
+    if (isSpecializedInteraction && await pressEdufineCandidateAcrossFrames(
+      session,
+      sessionId,
+      interaction,
+      normalizedText,
+      allowActionText,
+      allowedActionLabels,
+    )) return;
     throw new Error(`'${normalizedText}' 메뉴의 위치가 바뀌었습니다. 화면을 확인한 뒤 다시 시도해 주세요.`);
   }
   if (
@@ -1704,6 +1753,169 @@ async function pressCandidateWithCdp(
   await protocol.send('Input.dispatchMouseEvent', {
     type: 'mouseReleased', x: action.x, y: action.y, button: 'left', clickCount: 1,
   }, sessionId);
+}
+
+async function childFrameExecutionContexts(
+  session: WindowsManagedBrowserSession,
+  sessionId: string,
+  purpose: string,
+): Promise<number[]> {
+  let frameIds: string[];
+  try {
+    frameIds = portalFrameIds(
+      await session.connection.protocol.send('Page.getFrameTree', {}, sessionId),
+    ).slice(1);
+  } catch {
+    return [];
+  }
+  const contexts: number[] = [];
+  for (const frameId of frameIds) {
+    try {
+      const world = await session.connection.protocol.send<{ executionContextId?: unknown }>(
+        'Page.createIsolatedWorld',
+        {
+          frameId,
+          worldName: `stream-panel-${purpose}`,
+          grantUniveralAccess: false,
+        },
+        sessionId,
+      );
+      if (Number.isInteger(world.executionContextId)) {
+        contexts.push(Number(world.executionContextId));
+      }
+    } catch {
+      // A Nexacro frame can be replaced while a menu is opening.
+    }
+  }
+  return contexts;
+}
+
+async function evaluateValuesInChildFrames<T>(
+  session: WindowsManagedBrowserSession,
+  sessionId: string,
+  expression: string,
+  purpose: string,
+): Promise<T[]> {
+  const values: T[] = [];
+  for (const contextId of await childFrameExecutionContexts(session, sessionId, purpose)) {
+    try {
+      const response = await session.connection.protocol.send<CdpEvaluationResponse>(
+        'Runtime.evaluate',
+        {
+          expression,
+          contextId,
+          returnByValue: true,
+          awaitPromise: false,
+        },
+        sessionId,
+      );
+      if (!response.exceptionDetails && response.result && 'value' in response.result) {
+        values.push(response.result.value as T);
+      }
+    } catch {
+      // Continue with another live frame when this one navigates.
+    }
+  }
+  return values;
+}
+
+async function inspectEdufineCandidatesAcrossFrames(
+  session: WindowsManagedBrowserSession,
+  sessionId: string,
+  step: WorkflowStep,
+): Promise<CandidateSummary[]> {
+  const values = await evaluateValuesInChildFrames<unknown>(
+    session,
+    sessionId,
+    edufineCandidateScanExpression(step),
+    `edufine-scan-${step.id}`,
+  );
+  for (const value of values) {
+    const candidates = readCandidateSummaries(value);
+    if (candidates.length > 0) return candidates;
+  }
+  return [];
+}
+
+async function checkEdufinePostconditionAcrossFrames(
+  session: WindowsManagedBrowserSession,
+  sessionId: string,
+  step: WorkflowStep,
+): Promise<boolean> {
+  const values = await evaluateValuesInChildFrames<unknown>(
+    session,
+    sessionId,
+    postconditionExpression(step),
+    `edufine-state-${step.id}`,
+  );
+  return values.some((value) => value === true);
+}
+
+async function pressEdufineCandidateAcrossFrames(
+  session: WindowsManagedBrowserSession,
+  sessionId: string,
+  interaction: WorkflowStep['interaction'],
+  expectedText: string,
+  allowActionText: boolean,
+  allowedActionLabels: readonly string[],
+): Promise<boolean> {
+  const expression = edufineCandidateActionExpression(
+    interaction,
+    expectedText,
+    allowActionText,
+    allowedActionLabels,
+    true,
+  );
+  for (const contextId of await childFrameExecutionContexts(
+    session,
+    sessionId,
+    `edufine-action-${expectedText.slice(0, 24)}`,
+  )) {
+    let objectId: string | undefined;
+    try {
+      const response = await session.connection.protocol.send<CdpEvaluationResponse>(
+        'Runtime.evaluate',
+        {
+          expression,
+          contextId,
+          returnByValue: false,
+          awaitPromise: false,
+          userGesture: true,
+          objectGroup: 'stream-panel-edufine-action',
+        },
+        sessionId,
+      );
+      if (
+        response.exceptionDetails ||
+        response.result?.subtype !== 'node' ||
+        typeof response.result.objectId !== 'string'
+      ) continue;
+      objectId = response.result.objectId;
+      const center = portalQuadCenter(await session.connection.protocol.send(
+        'DOM.getContentQuads',
+        { objectId },
+        sessionId,
+      ));
+      if (!center) continue;
+      await dispatchCdpMouseClick(session, sessionId, center.x, center.y);
+      return true;
+    } catch {
+      // Continue with another frame if the menu was re-rendered mid-click.
+    } finally {
+      if (objectId) {
+        try {
+          await session.connection.protocol.send(
+            'Runtime.releaseObject',
+            { objectId },
+            sessionId,
+          );
+        } catch {
+          // The frame may already have navigated after the successful click.
+        }
+      }
+    }
+  }
+  return false;
 }
 
 async function navigateAttachedTarget(
@@ -1828,6 +2040,7 @@ function createWindowsWorkflowPage(
   let active = attached;
   let targetIdsBeforeNewPage: Set<string> | null = null;
   const newPageAttachments = new Map<string, AttachedWindowsTarget>();
+  const workflowSystem = requestSystem(workflowId, workflowSpec);
   const approvalListSystem = (step: WorkflowStep): WebWorkflowSystem | null => {
     if (workflowId === 'neis-approval-inbox' && step.id === 'open-pending-cooperation-inbox') {
       return 'neis';
@@ -1837,17 +2050,44 @@ function createWindowsWorkflowPage(
     }
     return null;
   };
-  const approvalListReady = async (system: WebWorkflowSystem): Promise<boolean> => {
+  const readApprovalCountFromCurrentPage = async (
+    system: WebWorkflowSystem,
+    requireListReady: boolean,
+  ): Promise<number> => {
+    let rootError: unknown;
     try {
-      parseApprovalCounterCandidates(
+      return parseApprovalCounterCandidates(
         system,
         await evaluateValue<unknown>(
           session,
           active.sessionId,
           approvalCounterExpression(system),
         ),
-        true,
+        requireListReady,
       );
+    } catch (error) {
+      rootError = error;
+    }
+    if (system === 'edufine') {
+      const values = await evaluateValuesInChildFrames<unknown>(
+        session,
+        active.sessionId,
+        approvalCounterExpression(system),
+        'edufine-approval-count',
+      );
+      for (const value of values) {
+        try {
+          return parseApprovalCounterCandidates(system, value, requireListReady);
+        } catch {
+          // The approval list can live in only one of several Nexacro frames.
+        }
+      }
+    }
+    throw rootError;
+  };
+  const approvalListReady = async (system: WebWorkflowSystem): Promise<boolean> => {
+    try {
+      await readApprovalCountFromCurrentPage(system, true);
       return true;
     } catch {
       return false;
@@ -1861,9 +2101,11 @@ function createWindowsWorkflowPage(
     },
     async inspectCandidates(step) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
-      return readCandidateSummaries(
+      const candidates = readCandidateSummaries(
         await evaluateValue(session, active.sessionId, candidateScanExpression(step)),
       );
+      if (candidates.length > 0 || workflowSystem !== 'edufine') return candidates;
+      return inspectEdufineCandidatesAcrossFrames(session, active.sessionId, step);
     },
     async pressCandidate(candidate, step) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
@@ -1889,11 +2131,14 @@ function createWindowsWorkflowPage(
       await extendSystemSessionIfPrompted(session, active.sessionId);
       const approvalSystem = approvalListSystem(step);
       if (approvalSystem) return approvalListReady(approvalSystem);
-      return Boolean(await evaluateValue(
+      if (await evaluateValue(
         session,
         active.sessionId,
         postconditionExpression(step),
-      ));
+      )) return true;
+      return workflowSystem === 'edufine'
+        ? checkEdufinePostconditionAcrossFrames(session, active.sessionId, step)
+        : false;
     },
     async checkPostcondition(step) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
@@ -1904,6 +2149,10 @@ function createWindowsWorkflowPage(
         active.sessionId,
         postconditionExpression(step),
       )) return true;
+      if (
+        workflowSystem === 'edufine' &&
+        await checkEdufinePostconditionAcrossFrames(session, active.sessionId, step)
+      ) return true;
       if (step.postcondition.kind !== 'new-page-any' || !targetIdsBeforeNewPage) {
         return false;
       }
@@ -1952,14 +2201,7 @@ function createWindowsWorkflowPage(
     release,
     async readApprovalCount(system) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
-      return parseApprovalCounterCandidates(
-        system,
-        await evaluateValue<unknown>(
-          session,
-          active.sessionId,
-          approvalCounterExpression(system),
-        ),
-      );
+      return readApprovalCountFromCurrentPage(system, false);
     },
   };
 }
@@ -1969,17 +2211,59 @@ export async function openCdpWindowsApprovalPage(
   input: ApprovalScanInput,
   signal?: AbortSignal,
 ): Promise<WindowsApprovalPage> {
+  if (!input.interactive) {
+    const workflowId = input.system === 'neis'
+      ? 'neis-approval-inbox' as const
+      : 'edufine-approval-inbox' as const;
+    const targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    );
+    const rememberedTargetId = systemTargetMap(session)[input.system];
+    const target = targets.find((candidate) => candidate.targetId === rememberedTargetId) ??
+      selectWindowsWorkflowTarget(targets, session.officeCode, workflowId);
+    if (target) {
+      let attached: AttachedWindowsTarget | undefined;
+      try {
+        attached = await attachWindowsTarget(session, target);
+        const expression = activeWorkFormExpression(input.system);
+        let rootActive: unknown = false;
+        try {
+          rootActive = await evaluateValue<unknown>(
+            session,
+            attached.sessionId,
+            expression,
+          );
+        } catch {
+          // A frame can be rebuilding before the normal workflow readiness wait.
+        }
+        const childActive = rootActive === true
+          ? []
+          : await evaluateValuesInChildFrames<unknown>(
+              session,
+              attached.sessionId,
+              expression,
+              `${input.system}-active-work-form`,
+            );
+        if (rootActive === true || childActive.some((value) => value === true)) {
+          throw createApprovalCheckCancelledError();
+        }
+      } finally {
+        if (attached) await detachWindowsTarget(session, attached);
+      }
+    }
+  }
   const page = await openCdpWindowsWorkflowPage(
     session,
     input.system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
     undefined,
     {
-      background: true,
-      cloneExistingTargetUrl: true,
-      closeCreatedTargetOnRelease: true,
+      background: input.interactive !== true,
       failFastOnLoginRequired: true,
-      forceNewTarget: true,
+      navigateExistingTarget: true,
       keepCreatedTargetOnFailure: input.interactive === true,
+      // The explicit Connect button owns SSO preparation. Approval scans reuse
+      // that verified tab and fail quickly instead of creating another login flow.
+      recoverViaPortal: false,
       signal,
     },
   );
@@ -2149,6 +2433,7 @@ function portalSsoClickExpression(
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const returnElement=${JSON.stringify(returnElement)};
+const tabName=${JSON.stringify(`stream-panel-${system}`)};
 const ssoLabels=${JSON.stringify(PORTAL_SSO_LABELS[system])}.map(normalize);
 const otherLabels=${JSON.stringify(PORTAL_SSO_LABELS[system === 'neis' ? 'edufine' : 'neis'])}.map(normalize);
 const systemTokens=${JSON.stringify(system === 'neis'
@@ -2206,13 +2491,21 @@ if(candidates.length===0)return returnElement?null:{clicked:false,count:0};
 const winner=candidates[0];
 winner.element.scrollIntoView?.({block:'center',inline:'center'});
 winner.element.focus?.({preventScroll:false});
+const targetElements=[];
+const anchor=winner.element.matches?.('a')?winner.element:winner.element.querySelector?.('a');
+const form=winner.element.matches?.('form')?winner.element:winner.element.closest?.('form');
+for(const element of [anchor,form]){
+  if(!element||targetElements.includes(element))continue;
+  targetElements.push(element);
+  element.setAttribute?.('target',tabName);
+}
 const restored=[];
 for(const {document} of documents){
   const view=document.defaultView;
   if(!view||typeof view.open!=='function'||restored.some(entry=>entry.view===view))continue;
   const original=view.open;
   try{
-    view.open=function(url,target){return original.call(this,url,target||'_blank');};
+    view.open=function(url){return original.call(this,url,tabName);};
     restored.push({view,original});
   }catch{}
 }
@@ -2370,9 +2663,15 @@ interface InspectedSystemTarget {
   loginRequired: boolean;
 }
 
+interface InspectSystemTargetOptions {
+  knownTargetIds?: ReadonlySet<string>;
+  portalTargetId?: string;
+}
+
 async function inspectSystemTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
+  options: InspectSystemTargetOptions = {},
 ): Promise<InspectedSystemTarget | null> {
   let targets: WindowsTargetInfo[];
   try {
@@ -2382,6 +2681,13 @@ async function inspectSystemTarget(
   } catch {
     return null;
   }
+  const rememberedTargetId = systemTargetMap(session)[system];
+  const priority = (target: WindowsTargetInfo): number => (
+    (!options.knownTargetIds?.has(target.targetId) ? 100 : 0) +
+    (target.openerId === options.portalTargetId ? 50 : 0) +
+    (target.targetId === rememberedTargetId ? 25 : 0)
+  );
+  targets.sort((left, right) => priority(right) - priority(left));
   let loginTarget: WindowsTargetInfo | null = null;
   for (const target of targets) {
     let attached: AttachedWindowsTarget | undefined;
@@ -2560,17 +2866,25 @@ async function waitForSystemTarget(
   system: WebWorkflowSystem,
   signal?: AbortSignal,
   timeoutMs = 30_000,
-): Promise<'connected' | 'login-required' | 'missing'> {
+  options: InspectSystemTargetOptions = {},
+): Promise<{
+  state: 'connected' | 'login-required' | 'missing';
+  target?: WindowsTargetInfo;
+}> {
   const deadline = Date.now() + timeoutMs;
-  let loginRequired = false;
+  let loginTarget: WindowsTargetInfo | undefined;
   while (Date.now() < deadline) {
     throwIfApprovalCheckCancelled(signal);
-    const inspected = await inspectSystemTarget(session, system);
-    if (inspected && !inspected.loginRequired) return 'connected';
-    loginRequired ||= inspected?.loginRequired === true;
+    const inspected = await inspectSystemTarget(session, system, options);
+    if (inspected && !inspected.loginRequired) {
+      return { state: 'connected', target: inspected.target };
+    }
+    if (inspected?.loginRequired) loginTarget = inspected.target;
     await new Promise<void>((resolve) => setTimeout(resolve, 150));
   }
-  return loginRequired ? 'login-required' : 'missing';
+  return loginTarget
+    ? { state: 'login-required', target: loginTarget }
+    : { state: 'missing' };
 }
 
 async function prepareOfficeSystemsViaPortal(
@@ -2602,8 +2916,12 @@ async function prepareOfficeSystemsViaPortal(
   for (const system of pending) {
     throwIfApprovalCheckCancelled(signal);
     let portal: AttachedWindowsTarget | undefined;
+    let knownTargetIds = new Set<string>();
     try {
       portal = await acquireLoggedInPortalTarget(session, signal, foreground);
+      knownTargetIds = new Set(readTargetInfos(
+        await session.connection.protocol.send('Target.getTargets', {}),
+      ).map(({ targetId }) => targetId));
       const clickDeadline = Date.now() + 30_000;
       let clicked = false;
       let candidateCount = 0;
@@ -2672,10 +2990,19 @@ async function prepareOfficeSystemsViaPortal(
       if (portal) await detachWindowsTarget(session, portal);
     }
     if (results.has(system)) continue;
-    const targetState = await waitForSystemTarget(session, system, signal);
-    if (targetState === 'connected') {
+    const targetResult = await waitForSystemTarget(
+      session,
+      system,
+      signal,
+      30_000,
+      {
+        knownTargetIds,
+        portalTargetId: portal?.target.targetId,
+      },
+    );
+    if (targetResult.state === 'connected') {
       results.set(system, { ready: true });
-    } else if (targetState === 'login-required') {
+    } else if (targetResult.state === 'login-required') {
       results.set(system, {
         ready: false,
         message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 창은 열렸지만 공식 SSO 로그인이 완료되지 않았습니다. 열린 시스템 창에서 추가 인증을 완료해 주세요.`,
