@@ -197,7 +197,7 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(8);
-    expect(presses).toBe(2);
+    expect(presses).toBe(3);
   });
 
   it('waits briefly for a dynamically rendered list count', async () => {
@@ -216,7 +216,7 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(6);
-    expect({ reads, waits }).toEqual({ reads: 3, waits: 4 });
+    expect({ reads, waits }).toEqual({ reads: 3, waits: 5 });
   });
 
   it('accepts only a bounded non-negative integer returned by the page', () => {

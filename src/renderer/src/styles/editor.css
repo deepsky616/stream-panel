@@ -1298,7 +1298,8 @@
 .custom-workflow-basics input,
 .custom-workflow-basics select,
 .custom-workflow-final input,
-.custom-workflow-step input {
+.custom-workflow-step input,
+.custom-workflow-step select {
   width: 100%;
   min-width: 0;
   margin: 0;
@@ -1326,7 +1327,7 @@
 
 .custom-workflow-step {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto;
+  grid-template-columns: 26px minmax(96px, 0.35fr) minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
 }

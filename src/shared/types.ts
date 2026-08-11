@@ -80,6 +80,16 @@ export type EducationOfficeCode =
 export interface CustomWebWorkflowStep {
   id: string;
   label: string;
+  /**
+   * System-specific navigation adapter. Missing on legacy custom workflows,
+   * which continue to use recursive exact-text navigation.
+   */
+  kind?:
+    | 'exact-text'
+    | 'edufine-job'
+    | 'edufine-top-menu'
+    | 'edufine-mega-menu'
+    | 'edufine-left-menu';
 }
 
 export interface CustomWebWorkflowDefinition {

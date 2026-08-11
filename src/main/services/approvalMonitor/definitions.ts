@@ -54,6 +54,14 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   finalState: 'approval-inbox-ready',
   steps: [
     {
+      id: 'select-business-management-job',
+      candidateLabels: ['업무관리'],
+      selection: 'first-available',
+      interaction: 'edufine-job',
+      postcondition: { kind: 'visible-any', labels: ['결재', '결재(긴급)', '결재 (긴급)'] },
+      ...COMMON_CHECKS,
+    },
+    {
       id: 'open-document-approval-menu',
       candidateLabels: ['결재', '결재(긴급)', '결재 (긴급)'],
       selection: 'first-available',

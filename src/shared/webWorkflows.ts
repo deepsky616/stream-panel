@@ -1,5 +1,6 @@
 import type {
   BuiltInWebWorkflowId,
+  CustomWebWorkflowStep,
   CustomWebWorkflowDefinition,
   DeckItem,
   EducationOfficeCode,
@@ -139,10 +140,19 @@ function isCustomWebWorkflowDefinition(value: unknown): value is CustomWebWorkfl
     if (!step || typeof step !== 'object' || Array.isArray(step)) return false;
     const candidate = step as Record<string, unknown>;
     const label = normalizeWorkflowText(candidate.label);
+    const supportedKind = candidate.kind === undefined || [
+      'exact-text',
+      'edufine-job',
+      'edufine-top-menu',
+      'edufine-mega-menu',
+      'edufine-left-menu',
+    ].includes(String(candidate.kind));
     return (
-      Object.keys(candidate).every((key) => key === 'id' || key === 'label') &&
+      Object.keys(candidate).every((key) => key === 'id' || key === 'label' || key === 'kind') &&
       candidate.id === `step-${index + 1}` &&
       candidate.label === label &&
+      supportedKind &&
+      (record.system === 'edufine' || candidate.kind === undefined || candidate.kind === 'exact-text') &&
       label.length > 0 &&
       Array.from(label).length <= 40 &&
       !isForbiddenCustomWorkflowLabel(label)
@@ -345,6 +355,7 @@ export interface CreateCustomWebWorkflowInput {
   system: WebWorkflowSystem;
   browserId: WebConnectorBrowserId;
   stepLabels: string[];
+  stepKinds?: Array<CustomWebWorkflowStep['kind']>;
   finalText: string;
   officeCode?: EducationOfficeCode;
 }
@@ -354,6 +365,7 @@ export function createCustomWebWorkflowTemplate({
   system,
   browserId,
   stepLabels,
+  stepKinds,
   finalText,
   officeCode = 'goe',
 }: CreateCustomWebWorkflowInput): Extract<LibraryEntry, { kind: 'action-template' }> {
@@ -393,7 +405,11 @@ export function createCustomWebWorkflowTemplate({
       custom: {
         name: normalizedName,
         system,
-        steps: normalizedSteps.map((label, index) => ({ id: `step-${index + 1}`, label })),
+        steps: normalizedSteps.map((label, index) => ({
+          id: `step-${index + 1}`,
+          label,
+          ...(stepKinds?.[index] ? { kind: stepKinds[index] } : {}),
+        })),
         finalText: normalizedFinalText,
       },
     },

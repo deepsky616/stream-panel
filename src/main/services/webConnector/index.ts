@@ -398,7 +398,6 @@ export function createWebConnectorService({
         ...item.webWorkflow,
         officeCode,
       };
-      const workflowSystem = getWebWorkflowSystem(workflowSpec);
       const workflowTarget = getWebWorkflowTargetForSpec(workflowSpec, officeCode);
       if (!isAllowedWebWorkflowSpecTarget(workflowSpec, workflowTarget, officeCode)) {
         return {
@@ -437,11 +436,6 @@ export function createWebConnectorService({
             await persist();
           }
           await controller.run(request);
-          setSystemStatus(officeCode, request.browserId, {
-            system: workflowSystem,
-            state: 'connected',
-            checkedAt: now(),
-          });
           notify(workflowSuccessMessage(workflowSpec), 'info');
           await diagnostics.record({
             at: now(),
@@ -456,17 +450,6 @@ export function createWebConnectorService({
         } catch (error) {
           const detail = errorDetail(error);
           const cancelledByUser = /단계 실행을 취소했습니다/.test(detail);
-          setSystemStatus(officeCode, request.browserId, {
-            system: workflowSystem,
-            state: cancelledByUser
-              ? 'connected'
-              : (
-                /로그인|인증|기다리는 시간이 지났습니다/.test(detail)
-                  ? 'login-required'
-                  : 'error'
-              ),
-            ...(cancelledByUser ? { checkedAt: now() } : { message: detail }),
-          });
           notify(detail, cancelledByUser ? 'info' : 'error');
           try {
             await diagnostics.record({
@@ -559,6 +542,10 @@ export function createWebConnectorService({
                 outcome: event.outcome,
                 durationMs: event.durationMs,
                 ...(event.currentUrl ? { currentUrl: event.currentUrl } : {}),
+                ...(event.screenMarker ? { screenMarker: event.screenMarker } : {}),
+                ...(event.selectedJob ? { selectedJob: event.selectedJob } : {}),
+                ...(event.jobNames ? { jobNames: event.jobNames } : {}),
+                ...(event.failureCode ? { failureCode: event.failureCode } : {}),
               });
             } catch {
               // Connection diagnostics must not alter the official SSO result.
@@ -631,25 +618,12 @@ export function createWebConnectorService({
       if (!controller.checkApproval) {
         throw new Error('결재 대기 확인 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
       }
-      const previousStatus = connectionStates
-        .get(connectionKey(input.officeCode, input.browserId))
-        ?.get(input.system);
       const startedAt = now();
       const workflowId = input.system === 'neis'
         ? 'neis-approval-inbox' as const
         : 'edufine-approval-inbox' as const;
-      setSystemStatus(input.officeCode, input.browserId, {
-        system: input.system,
-        state: 'connecting',
-        message: `${input.system === 'neis' ? '나이스' : 'K-에듀파인'} 결재함에 연결하고 있습니다.`,
-      });
       try {
         const count = await controller.checkApproval(input);
-        setSystemStatus(input.officeCode, input.browserId, {
-          system: input.system,
-          state: 'connected',
-          checkedAt: now(),
-        });
         try {
           await diagnostics.record({
             at: now(),
@@ -667,11 +641,6 @@ export function createWebConnectorService({
         return count;
       } catch (error) {
         if (isApprovalCheckCancelled(error)) {
-          setSystemStatus(
-            input.officeCode,
-            input.browserId,
-            previousStatus ?? { system: input.system, state: 'idle' },
-          );
           try {
             await diagnostics.record({
               at: now(),
@@ -688,14 +657,6 @@ export function createWebConnectorService({
           }
           throw error;
         }
-        const message = errorDetail(error);
-        setSystemStatus(input.officeCode, input.browserId, {
-          system: input.system,
-          state: /로그인|인증|기다리는 시간이 지났습니다/.test(message)
-            ? 'login-required'
-            : 'error',
-          message,
-        });
         try {
           await diagnostics.record({
             at: now(),

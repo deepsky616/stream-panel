@@ -6,11 +6,24 @@ import {
 } from '../../../shared/webWorkflows';
 import type {
   ActionItem,
+  CustomWebWorkflowStep,
   EducationOfficeCode,
   LibraryEntry,
   WebConnectorBrowserId,
   WebWorkflowSystem,
 } from '../../../shared/types';
+
+const EXACT_TEXT_STEP: CustomWebWorkflowStep['kind'] = 'exact-text';
+const EDUFINE_STEP_OPTIONS: ReadonlyArray<{
+  value: NonNullable<CustomWebWorkflowStep['kind']>;
+  label: string;
+}> = [
+  { value: 'exact-text', label: '화면 글씨' },
+  { value: 'edufine-job', label: '업무 전환' },
+  { value: 'edufine-top-menu', label: '상단 메뉴' },
+  { value: 'edufine-mega-menu', label: '펼침 메뉴' },
+  { value: 'edufine-left-menu', label: '왼쪽 메뉴' },
+];
 
 interface CustomWebWorkflowBuilderProps {
   officeCode: EducationOfficeCode;
@@ -40,6 +53,9 @@ export function CustomWebWorkflowBuilder({
   const [stepLabels, setStepLabels] = useState(
     initialSpec?.custom.steps.map((step) => step.label) ?? [''],
   );
+  const [stepKinds, setStepKinds] = useState<Array<CustomWebWorkflowStep['kind']>>(
+    initialSpec?.custom.steps.map((step) => step.kind ?? EXACT_TEXT_STEP) ?? [EXACT_TEXT_STEP],
+  );
   const [finalText, setFinalText] = useState(initialSpec?.custom.finalText ?? '');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -51,6 +67,12 @@ export function CustomWebWorkflowBuilder({
   };
   const removeStep = (index: number) => {
     setStepLabels((current) => current.filter((_, stepIndex) => stepIndex !== index));
+    setStepKinds((current) => current.filter((_, stepIndex) => stepIndex !== index));
+  };
+  const updateStepKind = (index: number, kind: CustomWebWorkflowStep['kind']) => {
+    setStepKinds((current) => current.map((value, stepIndex) => (
+      stepIndex === index ? kind : value
+    )));
   };
   const saveWorkflow = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -62,6 +84,9 @@ export function CustomWebWorkflowBuilder({
         system,
         browserId,
         stepLabels,
+        stepKinds: system === 'edufine'
+          ? stepKinds
+          : stepKinds.map(() => EXACT_TEXT_STEP),
         finalText,
         officeCode: selectedOfficeCode,
       });
@@ -71,6 +96,7 @@ export function CustomWebWorkflowBuilder({
       if (!editing) {
         setName('');
         setStepLabels(['']);
+        setStepKinds([EXACT_TEXT_STEP]);
         setFinalText('');
       }
       setFeedback(editing
@@ -136,11 +162,29 @@ export function CustomWebWorkflowBuilder({
         </label>
       </div>
       <fieldset className="custom-workflow-steps">
-        <legend>누를 메뉴 이름</legend>
-        <p>주소나 선택자가 아니라 화면에 실제로 보이는 이름을 정확히 입력하세요.</p>
+        <legend>업무 이동 단계</legend>
+        <p>{system === 'edufine'
+          ? '업무 전환·상단 메뉴·펼침 메뉴를 구분하면 K-에듀파인의 실제 Nexacro 컨트롤을 사용합니다.'
+          : '나이스 화면과 iframe에서 실제로 보이는 메뉴 이름을 정확히 입력하세요.'}</p>
         {stepLabels.map((label, index) => (
           <div className="custom-workflow-step" key={`step-${index + 1}`}>
             <span>{index + 1}</span>
+            <select
+              value={system === 'edufine' ? (stepKinds[index] ?? EXACT_TEXT_STEP) : EXACT_TEXT_STEP}
+              disabled={system !== 'edufine'}
+              aria-label={`${index + 1}번째 단계 유형`}
+              onChange={(event) => updateStepKind(
+                index,
+                event.target.value as NonNullable<CustomWebWorkflowStep['kind']>,
+              )}
+            >
+              {(system === 'edufine'
+                ? EDUFINE_STEP_OPTIONS
+                : [{ value: 'exact-text' as const, label: '화면 글씨' }]
+              ).map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
             <input
               value={label}
               maxLength={40}
@@ -160,7 +204,10 @@ export function CustomWebWorkflowBuilder({
           className="custom-workflow-add-step"
           type="button"
           disabled={stepLabels.length >= 8}
-          onClick={() => setStepLabels((current) => [...current, ''])}
+          onClick={() => {
+            setStepLabels((current) => [...current, '']);
+            setStepKinds((current) => [...current, EXACT_TEXT_STEP]);
+          }}
         >단계 추가</button>
       </fieldset>
       <label className="custom-workflow-final">
@@ -176,9 +223,11 @@ export function CustomWebWorkflowBuilder({
       <div className="custom-workflow-route" aria-label="웹 업무 이동 경로 미리보기">
         <span>{EDUCATION_OFFICES.find((office) => office.code === selectedOfficeCode)?.name}</span>
         <span>{system === 'neis' ? '나이스' : '에듀파인'}</span>
-        {stepLabels.filter((label) => label.trim()).map((label, index) => (
-          <span key={`${label}-${index}`}>→ {label.trim()}</span>
-        ))}
+        {stepLabels.map((label, index) => label.trim() ? (
+          <span key={`${label}-${index}`}>→ {system === 'edufine'
+            ? `${EDUFINE_STEP_OPTIONS.find((option) => option.value === stepKinds[index])?.label ?? '화면 글씨'}: `
+            : ''}{label.trim()}</span>
+        ) : null)}
         {finalText.trim() && <strong>도착: {finalText.trim()}</strong>}
       </div>
       <div className="custom-workflow-submit">

@@ -221,18 +221,29 @@ export function createCustomManagedWorkflowDefinition(
     finalState: 'custom-target-ready',
     steps: spec.custom.steps.map((step, index) => {
       const requiresConfirmation = customWorkflowStepRequiresConfirmation(step.label);
+      const interaction: WorkflowStep['interaction'] = spec.custom.system === 'edufine'
+        ? {
+            'edufine-job': 'edufine-job' as const,
+            'edufine-top-menu': 'edufine-top-menu' as const,
+            'edufine-mega-menu': 'edufine-mega-menu' as const,
+            'edufine-left-menu': 'edufine-left-menu' as const,
+            'exact-text': 'frame-exact-text' as const,
+          }[step.kind ?? 'exact-text']
+        : 'frame-exact-text';
+      const nextLabel = spec.custom.steps[index + 1]?.label ?? spec.custom.finalText;
+      const constrainedEdufineMenu = interaction.startsWith('edufine-');
       return {
         id: step.id,
         candidateLabels: [step.label],
-        interaction: 'frame-exact-text',
+        interaction,
         selection: 'first-available',
         navigationOnly: false,
-        ...(requiresConfirmation ? { requiresConfirmation: true } : {}),
-        skipWhenSatisfied: true,
-        postcondition: {
-          kind: 'visible-any' as const,
-          labels: [spec.custom.steps[index + 1]?.label ?? spec.custom.finalText],
-        },
+        ...(requiresConfirmation && !constrainedEdufineMenu ? { requiresConfirmation: true } : {}),
+        ...(requiresConfirmation && constrainedEdufineMenu ? { allowActionText: true } : {}),
+        skipWhenSatisfied: interaction !== 'edufine-top-menu',
+        postcondition: interaction === 'edufine-top-menu'
+          ? { kind: 'edufine-mega-menu-any' as const, labels: [nextLabel] }
+          : { kind: 'visible-any' as const, labels: [nextLabel] },
         maxChecks: 67,
         checkDelayMs: 150,
       };

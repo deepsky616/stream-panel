@@ -283,7 +283,11 @@ describe('Windows managed web automation', () => {
         }),
       });
 
-      await vi.advanceTimersByTimeAsync(15_000);
+      session.maintenancePauseDepth = 1;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(commands.some(({ method }) => method === 'Target.attachToTarget')).toBe(false);
+      session.maintenancePauseDepth = 0;
+      await vi.advanceTimersByTimeAsync(60_000);
 
       const attachedTargets = commands
         .filter(({ method }) => method === 'Target.attachToTarget')
@@ -1133,7 +1137,9 @@ describe('Windows managed web automation', () => {
     const extension = evaluationParams.find(({ expression }) => (
       String(expression).includes("[id$='btnUseTimeExtn']")
     ));
-    expect(String(extension?.expression)).toContain("classList?.contains('btn-primary')");
+    expect(String(extension?.expression)).toContain("[id$='staUseTime']");
+    expect(String(extension?.expression)).toContain('remainingSeconds>1200');
+    expect(String(extension?.expression)).toContain('candidates.length!==1');
     expect(String(extension?.expression)).toContain("querySelectorAll('iframe,frame')");
     expect(String(extension?.expression)).toContain("'자동 로그아웃'");
     expect(String(extension?.expression)).toContain("closest?.('[role=\"dialog\"]");
@@ -1576,6 +1582,7 @@ describe('Windows managed web automation', () => {
   it('reuses only the remembered Stream Panel connection tab after confirming the portal', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     let neisUrl = 'https://goe.neis.go.kr/main';
+    let neisMarkerChecks = 0;
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>, sessionId?: string) {
@@ -1600,11 +1607,14 @@ describe('Windows managed web automation', () => {
         if (method === 'Browser.getWindowForTarget') return { windowId: 13 };
         if (method === 'Runtime.evaluate' && String(params.expression ?? '').includes('loginVisible')) {
           const portal = sessionId === 'portal-session';
+          if (!portal) neisMarkerChecks += 1;
           return { result: { value: {
             href: portal ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do' : neisUrl,
             origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
             readyState: 'complete',
             loginVisible: false,
+            neisReady: portal ? false : neisMarkerChecks >= 3,
+            marker: portal || neisMarkerChecks < 3 ? 'unready' : 'neis-application-menu',
           } } };
         }
         if (method === 'Page.navigate') neisUrl = String(params.url);
@@ -1629,10 +1639,8 @@ describe('Windows managed web automation', () => {
 
     expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
     expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
-    expect(commands).toContainEqual({
-      method: 'Page.navigate',
-      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp' },
-    });
+    expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
+    expect(neisMarkerChecks).toBeGreaterThanOrEqual(3);
     expect(commands).toContainEqual({
       method: 'Target.attachToTarget',
       params: { targetId: 'neis-ready', flatten: true },
@@ -1718,11 +1726,7 @@ describe('Windows managed web automation', () => {
     expect((session as typeof session & {
       connectionTargetIds?: { neis?: string };
     }).connectionTargetIds?.neis).toBe('stream-neis');
-    expect(commands).toContainEqual({
-      method: 'Page.navigate',
-      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp' },
-      sessionId: 'stream-neis-session',
-    });
+    expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(commands.some(({ method, sessionId }) => (
       method === 'Page.navigate' && sessionId === 'personal-neis-session'
     ))).toBe(false);
@@ -1791,6 +1795,15 @@ describe('Windows managed web automation', () => {
                   : 'https://goe.neis.go.kr',
               readyState: 'complete',
               loginVisible: false,
+              neisReady: !portal && !edufine,
+              edufineReady: !portal && edufine,
+              marker: portal
+                ? 'unready'
+                : edufine
+                  ? 'edufine-job-list'
+                  : 'neis-application-menu',
+              selectedJob: edufine ? '업무관리' : '',
+              jobNames: edufine ? ['업무관리', '학교회계'] : [],
             } } };
           }
         }
@@ -1840,10 +1853,7 @@ describe('Windows managed web automation', () => {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
     expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
-    expect(commands.filter(({ method }) => method === 'Page.navigate').map(({ params }) => params.url)).toEqual([
-      'https://goe.neis.go.kr/jsp/main.jsp',
-      'https://klef.goe.go.kr/',
-    ]);
+    expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(reports.filter(({ state }) => state === 'connected')).toEqual([
       { system: 'neis', state: 'connected' },
       { system: 'edufine', state: 'connected' },
@@ -1863,6 +1873,15 @@ describe('Windows managed web automation', () => {
         expect.objectContaining({ system, stepId: 'connection-authenticated', outcome: 'success' }),
       ]));
     }
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        system: 'edufine',
+        stepId: 'connection-authenticated',
+        screenMarker: 'edufine-job-list',
+        selectedJob: '업무관리',
+        jobNames: ['업무관리', '학교회계'],
+      }),
+    ]));
     expect(diagnostics.filter(({ stepId }) => stepId === 'connection-target-detected')).toEqual([
       expect.objectContaining({ system: 'neis', currentUrl: expect.stringContaining('goe.neis.go.kr') }),
       expect.objectContaining({ system: 'edufine', currentUrl: expect.stringContaining('klef.goe.go.kr') }),

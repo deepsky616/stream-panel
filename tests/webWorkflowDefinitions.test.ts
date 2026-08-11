@@ -97,6 +97,45 @@ describe('managed web workflow definitions', () => {
     }));
   });
 
+  it('uses the selected Nexacro adapters for a structured custom Edufine route', () => {
+    const createCustomManagedWorkflowDefinition = (
+      workflowCommon as unknown as {
+        createCustomManagedWorkflowDefinition(spec: WebWorkflowSpec): {
+          steps: Array<Record<string, unknown>>;
+        };
+      }
+    ).createCustomManagedWorkflowDefinition;
+    const definition = createCustomManagedWorkflowDefinition({
+      id: 'custom',
+      browserId: 'edge',
+      custom: {
+        name: '사용자 품의 업무',
+        system: 'edufine',
+        steps: [
+          { id: 'step-1', label: '학교회계', kind: 'edufine-job' },
+          { id: 'step-2', label: '사업담당', kind: 'edufine-top-menu' },
+          { id: 'step-3', label: '품의등록', kind: 'edufine-mega-menu' },
+        ],
+        finalText: '품의 등록 화면',
+      },
+    });
+
+    expect(definition.steps.map(({ interaction }) => interaction)).toEqual([
+      'edufine-job',
+      'edufine-top-menu',
+      'edufine-mega-menu',
+    ]);
+    expect(definition.steps[1]).toEqual(expect.objectContaining({
+      skipWhenSatisfied: false,
+      postcondition: { kind: 'edufine-mega-menu-any', labels: ['품의등록'] },
+    }));
+    expect(definition.steps[2]).toEqual(expect.objectContaining({
+      allowActionText: true,
+      postcondition: { kind: 'visible-any', labels: ['품의 등록 화면'] },
+    }));
+    expect(definition.steps[2]).not.toHaveProperty('requiresConfirmation');
+  });
+
   it.each(['상신', '승인'])('allows %s as a confirmed custom step', (label) => {
     const createCustomManagedWorkflowDefinition = (
       workflowCommon as unknown as {
@@ -147,7 +186,8 @@ describe('managed web workflow definitions', () => {
       ['신청(새 창 열기)', '신청'],
     ]);
     expect(definitions['edufine-draft'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
-      ['기안', '기안작성', '기안 작성', '기안문작성', '기안문 작성'],
+      ['업무관리'],
+      ['문서관리', '문서 관리'],
       ['공용서식', '공용 서식', '공통서식', '공통 서식'],
       [
         '표준서식(결재4인,협조4인)',
@@ -158,10 +198,10 @@ describe('managed web workflow definitions', () => {
     ]);
     expect(definitions['edufine-draft'].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-left-menu', 'edufine-left-menu', 'frame-exact-text']);
+    )).toEqual(['edufine-job', 'edufine-top-menu', 'edufine-mega-menu', 'frame-exact-text']);
     expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
       kind: 'visible-any',
-      labels: ['공용서식', '공용 서식'],
+      labels: ['문서관리', '문서 관리'],
     });
     expect(definitions['edufine-draft'].steps.at(-1)?.postcondition).toEqual({
       kind: 'new-window',
@@ -169,18 +209,16 @@ describe('managed web workflow definitions', () => {
       titleIncludes: '표준서식',
     });
     expect(definitions['edufine-purchase'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
-      ['업무관리', '업무 관리', 'K-에듀파인 업무관리'],
-      ['학교회계', '학교 회계'],
-      ['사업담당', '사업 담당'],
+      ['학교회계'],
+      ['사업관리', '사업 관리', '사업담당', '사업 담당'],
       ['품의/정산', '품의 / 정산'],
       ['품의등록', '품의 등록'],
     ]);
     expect(definitions['edufine-purchase'].steps.map(({ interaction }) => interaction)).toEqual([
-      'edufine-left-toggle',
-      'edufine-left-menu',
-      'edufine-left-menu',
-      'edufine-left-menu',
-      'edufine-left-menu',
+      'edufine-job',
+      'edufine-top-menu',
+      'edufine-mega-menu',
+      'edufine-mega-menu',
     ]);
     expect(definitions['edufine-purchase'].steps.at(-1)?.postcondition).toEqual({
       kind: 'visible-groups',
@@ -204,7 +242,13 @@ describe('managed web workflow definitions', () => {
     expect(definitions['neis-leave'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
     expect(definitions['neis-trip'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
     expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
-      ({ id }) => !['open-leave-form', 'open-trip-form', 'open-purchase-registration'].includes(id),
+      ({ id }) => ![
+        'open-leave-form',
+        'open-trip-form',
+        'open-purchase-registration',
+        'open-document-management',
+        'open-business-menu',
+      ].includes(id),
     ).every(({ skipWhenSatisfied }) => skipWhenSatisfied === true)).toBe(true);
   });
 
@@ -265,6 +309,7 @@ describe('managed web workflow definitions', () => {
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map((step) => (
       step.candidateLabels
     ))).toEqual([
+      ['업무관리'],
       ['결재', '결재(긴급)', '결재 (긴급)'],
       ['결재대기', '결재 대기', '결재대기함', '결재 대기함'],
     ]);
@@ -275,14 +320,14 @@ describe('managed web workflow definitions', () => {
     expect(clickedLabels).toContain('결재(긴급)');
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-top-menu', 'edufine-mega-menu']);
-    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps[0].postcondition).toEqual({
+    )).toEqual(['edufine-job', 'edufine-top-menu', 'edufine-mega-menu']);
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps[1].postcondition).toEqual({
       kind: 'edufine-mega-menu-any',
       labels: ['결재대기', '결재 대기', '결재대기함', '결재 대기함'],
     });
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ skipWhenSatisfied }) => skipWhenSatisfied,
-    )).toEqual([false, true]);
+    )).toEqual([true, false, true]);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis.flatMap((route) => (
       route.steps.flatMap((step) => step.candidateLabels)
     ))).not.toContain('승인사항');

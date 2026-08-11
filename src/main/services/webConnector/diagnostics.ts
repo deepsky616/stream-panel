@@ -25,6 +25,10 @@ export interface WebConnectorDiagnosticInput {
   outcome: WebConnectorDiagnosticOutcome;
   durationMs: number;
   currentUrl?: string;
+  screenMarker?: string;
+  selectedJob?: string;
+  jobNames?: readonly string[];
+  failureCode?: string;
 }
 
 export interface WebConnectorDiagnosticEntry {
@@ -38,6 +42,10 @@ export interface WebConnectorDiagnosticEntry {
   outcome: WebConnectorDiagnosticOutcome;
   durationMs: number;
   host?: string;
+  screenMarker?: string;
+  selectedJob?: string;
+  jobNames?: string[];
+  failureCode?: string;
 }
 
 export interface CreateWebConnectorDiagnosticsOptions {
@@ -65,6 +73,12 @@ function diagnosticHost(currentUrl: string | undefined): string | undefined {
   }
 }
 
+function safeDiagnosticText(value: string | undefined, maxLength: number): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized && normalized.length <= maxLength ? normalized : undefined;
+}
+
 export function createDiagnosticEntry(
   input: WebConnectorDiagnosticInput,
 ): WebConnectorDiagnosticEntry {
@@ -87,6 +101,16 @@ export function createDiagnosticEntry(
     throw new TypeError('웹 업무 진단 값이 올바르지 않습니다. 연결을 다시 시험해 주세요.');
   }
   const host = diagnosticHost(input.currentUrl);
+  const screenMarker = safeDiagnosticText(input.screenMarker, 64);
+  const selectedJob = safeDiagnosticText(input.selectedJob, 64);
+  const failureCode = safeDiagnosticText(input.failureCode, 64);
+  const jobNames = Array.isArray(input.jobNames)
+    ? input.jobNames
+        .filter((name): name is string => typeof name === 'string')
+        .map((name) => safeDiagnosticText(name, 64))
+        .filter((name): name is string => Boolean(name))
+        .slice(0, 12)
+    : undefined;
   return {
     at: input.at,
     browserId: input.browserId,
@@ -98,6 +122,10 @@ export function createDiagnosticEntry(
     outcome: input.outcome,
     durationMs: input.durationMs,
     ...(host ? { host } : {}),
+    ...(screenMarker ? { screenMarker } : {}),
+    ...(selectedJob ? { selectedJob } : {}),
+    ...(jobNames && jobNames.length > 0 ? { jobNames } : {}),
+    ...(failureCode ? { failureCode } : {}),
   };
 }
 

@@ -109,8 +109,7 @@ describe('managed web connector service', () => {
     ]);
     expect(service.getStatuses()[0].systems).toContainEqual({
       system: 'neis',
-      state: 'connected',
-      checkedAt: expect.any(Number),
+      state: 'idle',
     });
   });
 
@@ -448,7 +447,7 @@ describe('managed web connector service', () => {
     }));
   });
 
-  it('clears stale system failures after the managed browser is opened successfully', async () => {
+  it('does not let approval failures overwrite the independent connection state', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
@@ -475,10 +474,10 @@ describe('managed web connector service', () => {
       officeCode: 'goe',
       browserId: 'edge',
     })).rejects.toThrow(/결재대기/);
-    expect(service.getStatuses()[0].systems).toContainEqual(expect.objectContaining({
+    expect(service.getStatuses()[0].systems).toContainEqual({
       system: 'edufine',
-      state: 'error',
-    }));
+      state: 'idle',
+    });
 
     await expect(service.test('edge')).resolves.toEqual({ ok: true });
     expect(service.getStatuses()[0].systems).toEqual([
