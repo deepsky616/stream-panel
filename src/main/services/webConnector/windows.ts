@@ -84,9 +84,12 @@ export type WindowsWorkflowExecutionState =
 export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   readonly connection: ManagedBrowserConnection;
   bootstrapTargetId?: string;
+  portalTargetId?: string;
   systemTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   /** Tabs explicitly acquired by the portal Connect action. */
   connectionTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
+  /** Result pages opened by Stream Panel from a connected system parent tab. */
+  workflowResultTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   /** Prevents the periodic session sweep from interleaving with an active workflow. */
   maintenancePauseDepth: number;
   /** Serializes all CDP work, including periodic session maintenance. */
@@ -105,6 +108,15 @@ export interface CreateWindowsManagedBrowserSessionOptions {
   connectBrowser?: (
     options: ManagedBrowserConnectOptions,
   ) => Promise<ManagedBrowserConnection>;
+  onManagedTargetClosed?: (
+    role: 'portal' | 'system',
+    system?: WebWorkflowSystem,
+  ) => void;
+}
+
+export interface WindowsConnectionPresence {
+  portal: boolean;
+  systems: Record<WebWorkflowSystem, boolean>;
 }
 
 export interface WxsClientWindow {
@@ -125,6 +137,7 @@ export interface ExecuteWindowsWorkflowDependencies {
     session: ManagedBrowserSession,
     workflowId: WebWorkflowId,
     workflowSpec?: WebWorkflowSpec,
+    signal?: AbortSignal,
   ): Promise<WindowsWorkflowPage>;
   isWxsClientRegistered(): Promise<boolean>;
   listWxsClientWindows(): Promise<readonly WxsClientWindow[]>;
@@ -274,6 +287,7 @@ export async function createWindowsManagedBrowserSession(
     exists = existsSync,
     makeDirectory = (path, options) => mkdir(path, options),
     connectBrowser = (options) => connectManagedBrowser(options),
+    onManagedTargetClosed,
   }: CreateWindowsManagedBrowserSessionOptions,
 ): Promise<WindowsManagedBrowserSession> {
   const executable = resolveWindowsManagedBrowserExecutable(browserId, { env, exists });
@@ -300,6 +314,7 @@ export async function createWindowsManagedBrowserSession(
   }
   let closed = false;
   let extensionSweepRunning = false;
+  let removeTargetEventListener = (): void => undefined;
   const managedSession: WindowsManagedBrowserSession = {
     officeCode,
     browserId,
@@ -307,6 +322,7 @@ export async function createWindowsManagedBrowserSession(
     bootstrapTargetId,
     systemTargetIds: {},
     connectionTargetIds: {},
+    workflowResultTargetIds: {},
     maintenancePauseDepth: 0,
     cdpOperationTail: Promise.resolve(),
     workflowState: 'IDLE',
@@ -316,6 +332,7 @@ export async function createWindowsManagedBrowserSession(
     async close() {
       if (closed) return;
       closed = true;
+      removeTargetEventListener();
       clearInterval(keepAliveTimer);
       await managedSession.cdpOperationTail;
       try {
@@ -332,6 +349,29 @@ export async function createWindowsManagedBrowserSession(
       }
     },
   };
+  if (typeof connection.protocol.onEvent === 'function') {
+    removeTargetEventListener = connection.protocol.onEvent((event) => {
+      if (event.method !== 'Target.targetDestroyed') return;
+      if (!event.params || typeof event.params !== 'object' || Array.isArray(event.params)) return;
+      const targetId = (event.params as Record<string, unknown>).targetId;
+      if (typeof targetId !== 'string') return;
+      if (managedSession.portalTargetId === targetId) {
+        managedSession.portalTargetId = undefined;
+        onManagedTargetClosed?.('portal');
+      }
+      for (const system of ['neis', 'edufine'] as const) {
+        const connectionTargets = connectionTargetMap(managedSession);
+        const systemTargets = systemTargetMap(managedSession);
+        const resultTargets = workflowResultTargetMap(managedSession);
+        const systemClosed = connectionTargets[system] === targetId ||
+          systemTargets[system] === targetId;
+        if (connectionTargets[system] === targetId) delete connectionTargets[system];
+        if (systemTargets[system] === targetId) delete systemTargets[system];
+        if (resultTargets[system] === targetId) delete resultTargets[system];
+        if (systemClosed) onManagedTargetClosed?.('system', system);
+      }
+    });
+  }
   const keepAliveTimer = setInterval(() => {
     if (closed || extensionSweepRunning || managedSession.maintenancePauseDepth > 0) return;
     extensionSweepRunning = true;
@@ -377,6 +417,66 @@ function connectionTargetMap(
   return session.connectionTargetIds;
 }
 
+function workflowResultTargetMap(
+  session: WindowsManagedBrowserSession,
+): Partial<Record<WebWorkflowSystem, string>> {
+  session.workflowResultTargetIds ??= {};
+  return session.workflowResultTargetIds;
+}
+
+export function getWindowsConnectionPresence(
+  session: WindowsManagedBrowserSession,
+): WindowsConnectionPresence {
+  const alive = session.isAlive();
+  const targets = connectionTargetMap(session);
+  return {
+    portal: alive && typeof session.portalTargetId === 'string',
+    systems: {
+      neis: alive && typeof targets.neis === 'string',
+      edufine: alive && typeof targets.edufine === 'string',
+    },
+  };
+}
+
+async function closeRememberedWorkflowResultTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  anchorTargetId: string,
+  targets: readonly WindowsTargetInfo[],
+): Promise<void> {
+  const resultTargets = workflowResultTargetMap(session);
+  const resultTargetId = resultTargets[system];
+  if (!resultTargetId || resultTargetId === anchorTargetId) {
+    delete resultTargets[system];
+    return;
+  }
+  if (!targets.some((target) => target.targetId === resultTargetId)) {
+    delete resultTargets[system];
+    return;
+  }
+  try {
+    await session.connection.protocol.send('Target.closeTarget', { targetId: resultTargetId });
+  } catch {
+    throw new Error(
+      `기존 ${system === 'neis' ? '나이스 신청' : 'K-에듀파인 업무'} 창을 닫지 못했습니다. 해당 창을 닫고 다시 시도해 주세요.`,
+    );
+  }
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const currentTargets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    );
+    if (!currentTargets.some((target) => target.targetId === resultTargetId)) {
+      delete resultTargets[system];
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `기존 ${system === 'neis' ? '나이스 신청' : 'K-에듀파인 업무'} 창이 닫히지 않았습니다. 해당 창을 닫고 다시 시도해 주세요.`,
+  );
+}
+
 export async function resetWindowsWorkflowTargets(
   session: WindowsManagedBrowserSession,
   workflowId: WebWorkflowId,
@@ -396,8 +496,14 @@ export async function resetWindowsWorkflowTargets(
       target &&
       target.type === 'page' &&
       workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec),
-    ));
+  ));
   if (anchorTarget) {
+    await closeRememberedWorkflowResultTarget(
+      session,
+      system,
+      anchorTarget.targetId,
+      targets,
+    );
     systemTargetMap(session)[system] = anchorTarget.targetId;
     return;
   }
@@ -443,6 +549,7 @@ export async function executeWindowsWorkflow(
   session: ManagedBrowserSession,
   request: ManagedWorkflowRequest,
   dependencies: ExecuteWindowsWorkflowDependencies,
+  signal?: AbortSignal,
 ): Promise<WorkflowRunResult> {
   if (
     session.officeCode !== request.officeCode ||
@@ -482,6 +589,7 @@ export async function executeWindowsWorkflow(
       session,
       request.workflowId,
       request.workflowSpec,
+      signal,
     );
   } catch (error) {
     setWorkflowState(session, 'FAILED');
@@ -545,7 +653,7 @@ export async function executeWindowsWorkflow(
       let routeError: unknown;
       for (const [index, route] of EDUFINE_PURCHASE_WORKFLOW_ROUTES.entries()) {
         try {
-          result = await runWorkflow(route, guardedPage);
+          result = await runWorkflow(route, guardedPage, { signal });
           routeError = undefined;
           break;
         } catch (error) {
@@ -560,7 +668,7 @@ export async function executeWindowsWorkflow(
       }
       if (routeError) throw routeError;
     } else {
-      result = await runWorkflow(definition, guardedPage);
+      result = await runWorkflow(definition, guardedPage, { signal });
     }
     if (!result) throw new Error('에듀파인 품의 이동 경로를 완료하지 못했습니다. 업무용 브라우저에서 메뉴 권한을 확인해 주세요.');
     if (request.workflowId === 'edufine-draft') {
@@ -2461,6 +2569,9 @@ function createWindowsWorkflowPage(
             postconditionExpression(step),
           )) continue;
           active = next;
+          if (workflowSystem) {
+            workflowResultTargetMap(session)[workflowSystem] = target.targetId;
+          }
           targetIdsBeforeNewPage = null;
           return true;
         } catch {
@@ -3282,6 +3393,7 @@ async function acquireLoggedInPortalTarget(
     }
     target = { targetId: created.targetId, type: 'page', url: office.portalUrl };
   }
+  session.portalTargetId = target.targetId;
   const attached = await attachWindowsTarget(session, target);
   try {
     if (shouldNavigate) await navigateAttachedTarget(session, attached, office.portalUrl);
@@ -3326,6 +3438,7 @@ async function focusExistingPortalTarget(
     }
   });
   if (!target) return;
+  session.portalTargetId = target.targetId;
   let attached: AttachedWindowsTarget | undefined;
   try {
     attached = await attachWindowsTarget(session, target);
@@ -3862,6 +3975,7 @@ export async function openWindowsOfficePortal(
       target = { targetId: created.targetId, type: 'page', url: office.portalUrl };
     }
   }
+  session.portalTargetId = target.targetId;
   const attached = await attachWindowsTarget(session, target);
   try {
     if (shouldNavigate) await navigateAttachedTarget(session, attached, office.portalUrl);
@@ -4003,13 +4117,17 @@ export type WindowsManagedSessionController = ManagedBrowserSessionManager<
     input: WindowsSystemConnectionRequest,
     report?: WindowsSystemConnectionReporter,
   ): Promise<void>;
+  getConnectionPresence(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): WindowsConnectionPresence | undefined;
 };
 
 export function createWindowsManagedSessionManager(
   options: CreateWindowsManagedSessionManagerOptions,
 ): WindowsManagedSessionController {
   const workflowDependencies: ExecuteWindowsWorkflowDependencies = {
-    openWorkflowPage: async (session, workflowId, workflowSpec) => {
+    openWorkflowPage: async (session, workflowId, workflowSpec, signal) => {
       if (!('connection' in session)) {
         throw new Error('업무용 브라우저 연결 정보가 없습니다. 브라우저를 다시 열어 주세요.');
       }
@@ -4021,7 +4139,7 @@ export function createWindowsManagedSessionManager(
         workflowSpec,
         // Keep the connected system at its current screen. Global/left menu
         // traversal can start there without discarding an already opened form.
-        { navigateExistingTarget: false },
+        { navigateExistingTarget: false, signal },
       );
     },
     isWxsClientRegistered,
@@ -4031,6 +4149,8 @@ export function createWindowsManagedSessionManager(
     ...options.workflowDependencies,
   };
   const approvalChecks = new Map<string, AbortController>();
+  const workflowRuns = new Map<string, AbortController>();
+  const connectionRuns = new Map<string, AbortController>();
   const interactiveWork = new Map<string, number>();
   const approvalKey = (
     officeCode: EducationOfficeCode,
@@ -4041,17 +4161,39 @@ export function createWindowsManagedSessionManager(
       const session = await createWindowsManagedBrowserSession(
         officeCode,
         browserId,
-        options,
+        {
+          ...options,
+          onManagedTargetClosed: (role, system) => {
+            options.onManagedTargetClosed?.(role, system);
+            const key = approvalKey(officeCode, browserId);
+            connectionRuns.get(key)?.abort();
+            workflowRuns.get(key)?.abort();
+            approvalChecks.get(key)?.abort();
+          },
+        },
       );
       session.maintenancePauseDepth = interactiveWork.get(
         approvalKey(officeCode, browserId),
       ) ?? 0;
       return session;
     },
-    executeWorkflow: (session, request) => runSerializedCdpOperation(
-      session,
-      () => executeWindowsWorkflow(session, request, workflowDependencies),
-    ),
+    executeWorkflow: (session, request) => {
+      const key = approvalKey(request.officeCode, request.browserId);
+      workflowRuns.get(key)?.abort();
+      const abortController = new AbortController();
+      workflowRuns.set(key, abortController);
+      return runSerializedCdpOperation(
+        session,
+        () => executeWindowsWorkflow(
+          session,
+          request,
+          workflowDependencies,
+          abortController.signal,
+        ),
+      ).finally(() => {
+        if (workflowRuns.get(key) === abortController) workflowRuns.delete(key);
+      });
+    },
     focusSession: (session, request) => runSerializedCdpOperation(
       session,
       () => focusWindowsWorkflow(session, request),
@@ -4062,7 +4204,13 @@ export function createWindowsManagedSessionManager(
       input: WindowsSystemConnectionRequest,
       report?: WindowsSystemConnectionReporter,
     ) {
-      return manager.use(input.officeCode, input.browserId, async (session) => {
+      const key = approvalKey(input.officeCode, input.browserId);
+      connectionRuns.get(key)?.abort();
+      const abortController = new AbortController();
+      const abortFromInput = (): void => abortController.abort();
+      input.signal?.addEventListener('abort', abortFromInput, { once: true });
+      connectionRuns.set(key, abortController);
+      const connection = manager.use(input.officeCode, input.browserId, async (session) => {
         session.maintenancePauseDepth += 1;
         try {
           return await runSerializedCdpOperation(
@@ -4071,7 +4219,7 @@ export function createWindowsManagedSessionManager(
               session,
               input.systems,
               report,
-              input.signal,
+              abortController.signal,
               input.foreground,
               input.diagnose,
             ),
@@ -4080,6 +4228,17 @@ export function createWindowsManagedSessionManager(
           session.maintenancePauseDepth = Math.max(0, session.maintenancePauseDepth - 1);
         }
       });
+      return connection.finally(() => {
+        input.signal?.removeEventListener('abort', abortFromInput);
+        if (connectionRuns.get(key) === abortController) connectionRuns.delete(key);
+      });
+    },
+    getConnectionPresence(
+      officeCode: EducationOfficeCode,
+      browserId: WebConnectorBrowserId,
+    ) {
+      const session = manager.getSession(officeCode, browserId);
+      return session ? getWindowsConnectionPresence(session) : undefined;
     },
     checkApproval(input: ApprovalScanInput) {
       const key = approvalKey(input.officeCode, input.browserId);
@@ -4130,6 +4289,8 @@ export function createWindowsManagedSessionManager(
       const session = manager.getSession(officeCode, browserId);
       if (session) session.maintenancePauseDepth = nextDepth;
       approvalChecks.get(key)?.abort();
+      workflowRuns.get(key)?.abort();
+      connectionRuns.get(key)?.abort();
     },
     endInteractiveWork(
       officeCode: EducationOfficeCode,

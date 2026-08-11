@@ -124,6 +124,16 @@ describe('web work settings view model', () => {
     expect(createWebWorkBrowserCards([{
       browserId: 'edge',
       paired: true,
+      connected: false,
+      systems: [{ system: 'neis', state: 'disconnected' }],
+    }])[0]).toMatchObject({
+      state: 'needs-connection',
+      stateLabel: '연결 필요',
+      systems: [{ system: 'neis', stateLabel: '다시 연결 필요' }],
+    });
+    expect(createWebWorkBrowserCards([{
+      browserId: 'edge',
+      paired: true,
       connected: true,
       systems: [
         { system: 'neis', state: 'connected' },

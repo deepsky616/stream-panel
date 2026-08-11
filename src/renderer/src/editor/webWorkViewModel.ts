@@ -45,6 +45,7 @@ const SYSTEM_STATE_LABELS: Record<WebSystemConnectionStatus['state'], string> = 
   idle: '확인 전',
   connecting: '연결 중',
   connected: '연결됨',
+  disconnected: '다시 연결 필요',
   'login-required': '추가 로그인 필요',
   error: '실패',
 };
@@ -70,7 +71,7 @@ export function createWebWorkBrowserCards(
       ? 'error'
       : busyBrowserId === browserId || hasConnecting
         ? 'running'
-        : status?.paired || status?.connected
+        : status?.connected
           ? 'ready'
           : 'needs-connection';
     const stateLabel = {

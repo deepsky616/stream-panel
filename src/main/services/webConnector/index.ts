@@ -84,6 +84,13 @@ export interface WebConnectorSessionController {
     },
     report?: (status: WebSystemConnectionStatus) => void,
   ): Promise<void>;
+  getConnectionPresence?(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): {
+    portal: boolean;
+    systems: Record<WebWorkflowSystem, boolean>;
+  } | undefined;
 }
 
 export interface WebConnectorService {
@@ -247,6 +254,9 @@ export function createWebConnectorService({
   const pending = new Set<Promise<void>>();
   const inFlightWorkflows = new Map<string, Promise<void>>();
   const connectionStates = new Map<string, Map<WebWorkflowSystem, WebSystemConnectionStatus>>();
+  let connectionMonitor: NodeJS.Timeout | undefined;
+  let publishedStatusSnapshot = '';
+  let reportedDisconnectMessages = new Set<string>();
   let configuredOfficeCode = getConfig().educationOfficeCode;
 
   const currentOffice = (): EducationOfficeCode => getConfig().educationOfficeCode;
@@ -260,13 +270,37 @@ export function createWebConnectorService({
     officeCode: EducationOfficeCode,
     browserId: WebConnectorBrowserId,
     sessionAlive: boolean,
+    presence?: {
+      portal: boolean;
+      systems: Record<WebWorkflowSystem, boolean>;
+    },
   ): WebSystemConnectionStatus[] => {
     const stored = connectionStates.get(connectionKey(officeCode, browserId));
     return (['neis', 'edufine'] as const).map((system) => {
       const status = stored?.get(system) ?? { system, state: 'idle' as const };
-      return !sessionAlive && status.state === 'connected'
-        ? { system, state: 'idle' as const }
-        : { ...status };
+      if (status.state !== 'connected') return { ...status };
+      if (!sessionAlive) {
+        return {
+          system,
+          state: 'disconnected' as const,
+          message: '업무용 브라우저가 닫혔습니다. 업무포털을 다시 열고 나이스·에듀파인 연결을 눌러 주세요.',
+        };
+      }
+      if (presence && !presence.portal) {
+        return {
+          system,
+          state: 'disconnected' as const,
+          message: '업무포털 창이 닫혔습니다. 업무포털을 다시 열고 나이스·에듀파인 연결을 눌러 주세요.',
+        };
+      }
+      if (presence && !presence.systems[system]) {
+        return {
+          system,
+          state: 'disconnected' as const,
+          message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 창이 닫혔습니다. 나이스·에듀파인 연결을 다시 눌러 주세요.`,
+        };
+      }
+      return { ...status };
     });
   };
 
@@ -276,19 +310,33 @@ export function createWebConnectorService({
       const handshake = state?.offices[officeCode]?.[browserId];
       const session = controller.getSession(officeCode, browserId);
       const sessionAlive = Boolean(session?.isAlive());
+      const presence = controller.getConnectionPresence?.(officeCode, browserId);
       return {
         browserId,
         paired: Boolean(handshake),
-        connected: sessionAlive,
-        systems: systemStatuses(officeCode, browserId, sessionAlive),
+        connected: sessionAlive && (presence?.portal ?? true),
+        systems: systemStatuses(officeCode, browserId, sessionAlive, presence),
         ...(handshake ? { lastSeenAt: handshake.lastSeenAt } : {}),
       };
     });
   };
 
   const publishStatuses = (): void => {
+    const statuses = readStatuses();
+    const disconnectMessages = new Set(statuses.flatMap(({ systems = [] }) => (
+      systems.flatMap((system) => (
+        system.state === 'disconnected' && system.message ? [system.message] : []
+      ))
+    )));
+    for (const message of disconnectMessages) {
+      if (!reportedDisconnectMessages.has(message)) notify(message, 'info');
+    }
+    reportedDisconnectMessages = disconnectMessages;
+    const snapshot = JSON.stringify(statuses);
+    if (snapshot === publishedStatusSnapshot) return;
+    publishedStatusSnapshot = snapshot;
     try {
-      broadcast(readStatuses());
+      broadcast(statuses);
     } catch {
       // A closed renderer must not stop browser connection work.
     }
@@ -329,6 +377,11 @@ export function createWebConnectorService({
       try {
         state = await loadManagedWebConnectorState(stateIo);
         started = true;
+        if (controller.getConnectionPresence && !connectionMonitor) {
+          connectionMonitor = setInterval(publishStatuses, 1_000);
+          connectionMonitor.unref();
+        }
+        publishStatuses();
         return { ok: true } as const;
       } catch (error) {
         return {
@@ -364,10 +417,14 @@ export function createWebConnectorService({
     start,
     async stop() {
       started = false;
+      if (connectionMonitor) clearInterval(connectionMonitor);
+      connectionMonitor = undefined;
       await Promise.allSettled([...pending]);
       await controller.closeAll();
       await persistTail;
       connectionStates.clear();
+      publishedStatusSnapshot = '';
+      reportedDisconnectMessages.clear();
       state = null;
       starting = null;
     },

@@ -327,6 +327,59 @@ describe('managed web connector service', () => {
     ]);
   });
 
+  it('reports closed portal and system tabs as requiring a new connection', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    const presence = {
+      portal: true,
+      systems: { neis: true, edufine: true },
+    };
+    controller.getConnectionPresence = () => presence;
+    controller.connectSystems = async (_input, report) => {
+      report?.({ system: 'neis', state: 'connected', checkedAt: 1 });
+      report?.({ system: 'edufine', state: 'connected', checkedAt: 1 });
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      openPortal: async () => undefined,
+    });
+    await service.start();
+    await expect(service.openSetup('edge', 'connect')).resolves.toEqual({ ok: true });
+
+    expect(service.getStatuses()[0]).toMatchObject({
+      connected: true,
+      systems: [
+        { system: 'neis', state: 'connected' },
+        { system: 'edufine', state: 'connected' },
+      ],
+    });
+
+    presence.systems.neis = false;
+    expect(service.getStatuses()[0].systems).toContainEqual(expect.objectContaining({
+      system: 'neis',
+      state: 'disconnected',
+      message: expect.stringContaining('연결 창이 닫혔습니다'),
+    }));
+
+    presence.portal = false;
+    expect(service.getStatuses()[0]).toMatchObject({
+      connected: false,
+      systems: [
+        { system: 'neis', state: 'disconnected' },
+        { system: 'edufine', state: 'disconnected' },
+      ],
+    });
+    await service.stop();
+  });
+
   it('returns a failure when either official system connection does not complete', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },

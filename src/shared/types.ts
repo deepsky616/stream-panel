@@ -132,7 +132,7 @@ export interface WebConnectionConfig {
 
 export interface WebSystemConnectionStatus {
   system: WebWorkflowSystem;
-  state: 'idle' | 'connecting' | 'connected' | 'login-required' | 'error';
+  state: 'idle' | 'connecting' | 'connected' | 'disconnected' | 'login-required' | 'error';
   checkedAt?: number;
   message?: string;
 }

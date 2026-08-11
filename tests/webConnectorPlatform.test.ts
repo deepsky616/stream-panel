@@ -5,6 +5,7 @@ import {
   connectWindowsOfficeSystems,
   createWindowsManagedBrowserSession,
   executeWindowsWorkflow,
+  getWindowsConnectionPresence,
   openCdpWindowsApprovalPage,
   openCdpWindowsWorkflowPage,
   restoreAndActivateTarget,
@@ -993,6 +994,58 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
+  it('invalidates live connection targets as soon as their managed tabs close', async () => {
+    let eventListener: ((event: { method: string; params?: unknown }) => void) | undefined;
+    let listenerRemoved = false;
+    const closed: Array<{ role: string; system?: string }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string) {
+        if (method === 'Target.getTargets') return { targetInfos: [] };
+        return {};
+      },
+      onEvent(listener: (event: { method: string; params?: unknown }) => void) {
+        eventListener = listener;
+        return () => { listenerRemoved = true; };
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = await createWindowsManagedBrowserSession('goe', 'edge', {
+      userDataPath: 'C:\\StreamPanel',
+      env: { 'ProgramFiles(x86)': 'C:\\Program Files (x86)' },
+      exists: (path) => path.endsWith('Microsoft\\Edge\\Application\\msedge.exe'),
+      makeDirectory: async () => undefined,
+      connectBrowser: async () => ({
+        transportKind: 'pipe',
+        protocol: protocol as never,
+        process: {
+          pid: 42,
+          exited: false,
+          close: async (graceful?: () => Promise<void>) => { await graceful?.(); },
+        } as never,
+      }),
+      onManagedTargetClosed: (role, system) => { closed.push({ role, system }); },
+    });
+    session.portalTargetId = 'portal';
+    session.connectionTargetIds = { neis: 'neis', edufine: 'edufine' };
+    session.systemTargetIds = { neis: 'neis', edufine: 'edufine' };
+
+    eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'neis' } });
+    expect(getWindowsConnectionPresence(session)).toEqual({
+      portal: true,
+      systems: { neis: false, edufine: true },
+    });
+    eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'portal' } });
+    expect(getWindowsConnectionPresence(session).portal).toBe(false);
+    expect(closed).toEqual([
+      { role: 'system', system: 'neis' },
+      { role: 'portal', system: undefined },
+    ]);
+
+    await session.close();
+    expect(listenerRemoved).toBe(true);
+  });
+
   it.each([
     {
       system: 'neis' as const,
@@ -1010,7 +1063,7 @@ describe('Windows managed web automation', () => {
       resultId: 'edufine-draft-form',
       resultUrl: 'https://klef.goe.go.kr/draft/form',
     },
-  ])('reuses the connected $system parent tab after its previous result window is closed', async ({
+  ])('closes the remembered $system result window before reusing its connected parent tab', async ({
     system,
     workflowId,
     anchorId,
@@ -1019,6 +1072,8 @@ describe('Windows managed web automation', () => {
     resultUrl,
   }) => {
     const attachedTargetIds: string[] = [];
+    const closedTargetIds: string[] = [];
+    let resultOpen = true;
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>) {
@@ -1026,9 +1081,16 @@ describe('Windows managed web automation', () => {
           // Put the former result first to prove it cannot replace the stable
           // system anchor when both pages still briefly appear in CDP.
           return { targetInfos: [
-            { targetId: resultId, type: 'page', url: resultUrl, openerId: anchorId },
+            ...(resultOpen
+              ? [{ targetId: resultId, type: 'page', url: resultUrl, openerId: anchorId }]
+              : []),
             { targetId: anchorId, type: 'page', url: anchorUrl },
           ] };
+        }
+        if (method === 'Target.closeTarget') {
+          closedTargetIds.push(String(params.targetId));
+          if (params.targetId === resultId) resultOpen = false;
+          return { success: true };
         }
         if (method === 'Target.attachToTarget') {
           const targetId = String(params.targetId);
@@ -1055,6 +1117,7 @@ describe('Windows managed web automation', () => {
       browserId: 'edge' as const,
       systemTargetIds: { [system]: resultId },
       connectionTargetIds: { [system]: anchorId },
+      workflowResultTargetIds: { [system]: resultId },
       connection: {
         protocol,
         transportKind: 'pipe' as const,
@@ -1067,9 +1130,11 @@ describe('Windows managed web automation', () => {
     await resetWindowsWorkflowTargets(session as never, workflowId);
     const workflowPage = await openCdpWindowsWorkflowPage(session as never, workflowId);
 
+    expect(closedTargetIds).toEqual([resultId]);
     expect(attachedTargetIds).toContain(anchorId);
     expect(attachedTargetIds).not.toContain(resultId);
     expect((session.systemTargetIds as Record<string, string>)[system]).toBe(anchorId);
+    expect((session.workflowResultTargetIds as Record<string, string>)[system]).toBeUndefined();
     await workflowPage.release?.();
   });
 
@@ -1576,6 +1641,9 @@ describe('Windows managed web automation', () => {
       params: { targetId: 'leave-form' },
       sessionId: undefined,
     });
+    expect((session as typeof session & {
+      workflowResultTargetIds?: { neis?: string };
+    }).workflowResultTargetIds?.neis).toBe('leave-form');
     await workflowPage.release?.();
   });
 
