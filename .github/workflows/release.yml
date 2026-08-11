@@ -3,6 +3,10 @@ name: Release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
   workflow_dispatch:
 
 permissions:
@@ -19,7 +23,7 @@ jobs:
         shell: bash
         run: |
           PKG=$(node -p "require('./package.json').version")
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_REF_TYPE" != "tag" ]; then
             TAG="$PKG"
           else
             TAG="${GITHUB_REF_NAME#v}"
@@ -95,7 +99,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_REF_TYPE" != "tag" ]; then
             TAG="v$VERSION"
             REMOTE_SHA=$(git ls-remote --tags origin "refs/tags/$TAG^{}" | awk '{print $1}')
             if [ -z "$REMOTE_SHA" ]; then

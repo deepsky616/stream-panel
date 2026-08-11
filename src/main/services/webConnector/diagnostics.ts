@@ -4,6 +4,7 @@ import { isEducationOfficeCode } from '../../../shared/educationOffices';
 import type {
   EducationOfficeCode,
   WebConnectorBrowserId,
+  WebWorkflowSystem,
   WebWorkflowId,
 } from '../../../shared/types';
 import {
@@ -17,6 +18,7 @@ export interface WebConnectorDiagnosticInput {
   at: number;
   browserId: WebConnectorBrowserId;
   officeCode: EducationOfficeCode;
+  system?: WebWorkflowSystem;
   workflowId?: WebWorkflowId;
   stepId: string;
   sequence: number;
@@ -29,6 +31,7 @@ export interface WebConnectorDiagnosticEntry {
   at: number;
   browserId: WebConnectorBrowserId;
   officeCode: EducationOfficeCode;
+  system?: WebWorkflowSystem;
   workflowId?: WebWorkflowId;
   stepId: string;
   sequence: number;
@@ -70,6 +73,7 @@ export function createDiagnosticEntry(
     input.at < 0 ||
     !isWebConnectorBrowserId(input.browserId) ||
     !isEducationOfficeCode(input.officeCode) ||
+    (input.system !== undefined && !['neis', 'edufine'].includes(input.system)) ||
     (input.workflowId !== undefined && !isWebWorkflowId(input.workflowId)) ||
     typeof input.stepId !== 'string' ||
     !/^[a-z0-9-]{1,64}$/.test(input.stepId) ||
@@ -87,6 +91,7 @@ export function createDiagnosticEntry(
     at: input.at,
     browserId: input.browserId,
     officeCode: input.officeCode,
+    ...(input.system ? { system: input.system } : {}),
     ...(input.workflowId ? { workflowId: input.workflowId } : {}),
     stepId: input.stepId,
     sequence: input.sequence,

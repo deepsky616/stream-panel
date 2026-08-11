@@ -54,6 +54,27 @@ describe('web connector diagnostics', () => {
     expect(JSON.stringify(entry)).not.toContain('secret-value');
   });
 
+  it('records the system for portal connection stages without storing the full address', () => {
+    const entry = createDiagnosticEntry({
+      at: 1_800_000_000_000,
+      browserId: 'edge',
+      officeCode: 'goe',
+      system: 'edufine',
+      stepId: 'connection-authenticated',
+      sequence: 0,
+      outcome: 'success',
+      durationMs: 320,
+      currentUrl: 'https://klef.goe.go.kr/private/path?token=secret',
+    });
+
+    expect(entry).toMatchObject({
+      system: 'edufine',
+      stepId: 'connection-authenticated',
+      host: 'klef.goe.go.kr',
+    });
+    expect(JSON.stringify(entry)).not.toMatch(/private\/path|token|secret/);
+  });
+
   it('writes a JSON line only inside the sanitized diagnostics directory', async () => {
     const directories: Array<{ path: string; mode?: number; recursive?: boolean }> = [];
     const writes: Array<{ path: string; text: string }> = [];

@@ -1,12 +1,34 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const resolveGitExecPath = () => {
+  if (process.platform !== 'win32' || process.env.GIT_EXEC_PATH) {
+    return process.env.GIT_EXEC_PATH
+  }
+  const probe = spawnSync('git', ['--exec-path'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    stdio: 'pipe'
+  })
+  if (probe.status !== 0) return undefined
+  const current = probe.stdout.trim()
+  if (existsSync(resolve(current, 'git-remote-https.exe'))) return current
+  const bundledBin = resolve(current, '..', '..', 'bin')
+  return existsSync(resolve(bundledBin, 'git-remote-https.exe')) ? bundledBin : undefined
+}
+
+const gitExecPath = resolveGitExecPath()
 
 const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
-    shell: process.platform === 'win32' && command === 'npm'
+    shell: process.platform === 'win32' && command === 'npm',
+    env: command === 'git' && gitExecPath
+      ? { ...process.env, GIT_EXEC_PATH: gitExecPath }
+      : process.env
   })
 
   if (result.status !== 0) {

@@ -85,6 +85,8 @@ export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   readonly connection: ManagedBrowserConnection;
   bootstrapTargetId?: string;
   systemTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
+  /** Tabs explicitly acquired by the portal Connect action. */
+  connectionTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   workflowState: WindowsWorkflowExecutionState;
 }
 
@@ -167,11 +169,24 @@ export interface WindowsSystemConnectionRequest {
   systems: readonly WebWorkflowSystem[];
   foreground?: boolean;
   signal?: AbortSignal;
+  diagnose?: WindowsConnectionDiagnosticReporter;
 }
 
 export type WindowsSystemConnectionReporter = (
   status: WebSystemConnectionStatus,
 ) => void;
+
+export interface WindowsConnectionDiagnosticEvent {
+  system?: WebWorkflowSystem;
+  stepId: string;
+  outcome: 'success' | 'failed' | 'cancelled';
+  durationMs: number;
+  currentUrl?: string;
+}
+
+export type WindowsConnectionDiagnosticReporter = (
+  event: WindowsConnectionDiagnosticEvent,
+) => void | Promise<void>;
 
 function isRecoverableRouteError(error: unknown): boolean {
   return error instanceof Error && /메뉴를 찾지 못했습니다|기대한 화면을 확인하지 못했습니다/.test(
@@ -283,6 +298,7 @@ export async function createWindowsManagedBrowserSession(
     connection,
     bootstrapTargetId,
     systemTargetIds: {},
+    connectionTargetIds: {},
     workflowState: 'IDLE',
     isAlive() {
       return !closed && !connection.process.exited && !connection.protocol.isClosed;
@@ -329,6 +345,13 @@ function systemTargetMap(
 ): Partial<Record<WebWorkflowSystem, string>> {
   session.systemTargetIds ??= {};
   return session.systemTargetIds;
+}
+
+function connectionTargetMap(
+  session: WindowsManagedBrowserSession,
+): Partial<Record<WebWorkflowSystem, string>> {
+  session.connectionTargetIds ??= {};
+  return session.connectionTargetIds;
 }
 
 export async function resetWindowsWorkflowTargets(
@@ -411,16 +434,6 @@ export async function executeWindowsWorkflow(
   const definition = managedWorkflowDefinition(request);
   if (request.workflowId === 'edufine-draft' && !await dependencies.isWxsClientRegistered()) {
     throw new Error('기안 편집 프로그램이 설치되어 있지 않습니다. 에듀파인 설치 안내에서 WXSClient를 설치한 뒤 다시 시도해 주세요.');
-  }
-  if (request.workflowId === 'edufine-draft' && dependencies.closeWxsClientWindow) {
-    const draftWindows = (await dependencies.listWxsClientWindows()).filter((window) => (
-      /표준서식|문서작성/.test(window.title)
-    ));
-    for (const window of draftWindows) {
-      if (!await dependencies.closeWxsClientWindow(window.id)) {
-        throw new Error('기존 기안 창을 닫지 못했습니다. 저장 확인창을 처리한 뒤 기안 버튼을 다시 눌러 주세요.');
-      }
-    }
   }
   const existingWindows = request.workflowId === 'edufine-draft'
     ? new Map((await dependencies.listWxsClientWindows()).map((window) => [
@@ -2539,6 +2552,21 @@ function orderedConnectionSystems(
   return (['neis', 'edufine'] as const).filter((system) => requested.has(system));
 }
 
+function connectionTabName(system: WebWorkflowSystem): string {
+  return `stream-panel-${system}`;
+}
+
+async function recordConnectionDiagnostic(
+  diagnose: WindowsConnectionDiagnosticReporter | undefined,
+  event: WindowsConnectionDiagnosticEvent,
+): Promise<void> {
+  try {
+    await diagnose?.(event);
+  } catch {
+    // Diagnostics must never turn a successful official SSO connection into an error.
+  }
+}
+
 function portalSsoClickExpression(
   system: WebWorkflowSystem,
   returnElement = false,
@@ -2546,7 +2574,7 @@ function portalSsoClickExpression(
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const returnElement=${JSON.stringify(returnElement)};
-const tabName=${JSON.stringify(`stream-panel-${system}`)};
+const tabName=${JSON.stringify(connectionTabName(system))};
 const ssoLabels=${JSON.stringify(PORTAL_SSO_LABELS[system])}.map(normalize);
 const otherLabels=${JSON.stringify(PORTAL_SSO_LABELS[system === 'neis' ? 'edufine' : 'neis'])}.map(normalize);
 const systemTokens=${JSON.stringify(system === 'neis'
@@ -2616,13 +2644,18 @@ const restored=[];
 for(const {document} of documents){
   const view=document.defaultView;
   if(!view||typeof view.open!=='function'||restored.some(entry=>entry.view===view))continue;
-  const original=view.open;
+  const stateKey='__streamPanelSsoWindowOpenState';
   try{
+    const state=view[stateKey]||{original:view.open,token:0};
+    state.token+=1;
+    view[stateKey]=state;
+    const original=state.original;
+    const token=state.token;
     view.open=function(url){return original.call(this,url,tabName);};
-    restored.push({view,original});
+    restored.push({view,stateKey,state,token});
   }catch{}
 }
-setTimeout(()=>{for(const {view,original} of restored){try{view.open=original;}catch{}}},3000);
+setTimeout(()=>{for(const {view,stateKey,state,token} of restored){try{if(state.token===token){view.open=state.original;delete view[stateKey];}}catch{}}},1500);
 const rect=winner.element.getBoundingClientRect();
 const owner=documents.find(({document})=>document===winner.element.ownerDocument);
 return returnElement?winner.element:{
@@ -2637,6 +2670,7 @@ return returnElement?winner.element:{
 
 interface PortalSystemPreparation {
   ready: boolean;
+  targetId?: string;
   message?: string;
 }
 
@@ -2850,6 +2884,7 @@ interface InspectedSystemTarget {
 interface InspectSystemTargetOptions {
   knownTargetIds?: ReadonlySet<string>;
   portalTargetId?: string;
+  allowedTargetIds?: ReadonlySet<string>;
 }
 
 async function inspectSystemTarget(
@@ -2861,7 +2896,10 @@ async function inspectSystemTarget(
   try {
     targets = readTargetInfos(
       await session.connection.protocol.send('Target.getTargets', {}),
-    ).filter((target) => systemTargetAllowed(target, session.officeCode, system));
+    ).filter((target) => (
+      (!options.allowedTargetIds || options.allowedTargetIds.has(target.targetId)) &&
+      systemTargetAllowed(target, session.officeCode, system)
+    ));
   } catch {
     return null;
   }
@@ -2900,6 +2938,86 @@ async function inspectSystemTarget(
   }
   delete systemTargetMap(session)[system];
   return loginTarget ? { target: loginTarget, loginRequired: true } : null;
+}
+
+async function findDedicatedConnectionTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<WindowsTargetInfo | null> {
+  let targets: WindowsTargetInfo[];
+  try {
+    targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    ).filter((target) => target.type === 'page');
+  } catch {
+    return null;
+  }
+  const rememberedTargetId = connectionTargetMap(session)[system];
+  const remembered = targets.find((target) => target.targetId === rememberedTargetId);
+  if (remembered) return remembered;
+  delete connectionTargetMap(session)[system];
+
+  const expectedName = connectionTabName(system);
+  const orderedTargets = [
+    ...targets.filter((target) => systemTargetAllowed(target, session.officeCode, system)),
+    ...targets.filter((target) => !systemTargetAllowed(target, session.officeCode, system)),
+  ];
+  for (const target of orderedTargets) {
+    let attached: AttachedWindowsTarget | undefined;
+    try {
+      attached = await attachWindowsTarget(session, target);
+      const name = await evaluateValue<unknown>(
+        session,
+        attached.sessionId,
+        'String(window.name||\'\')',
+      );
+      if (name === expectedName) {
+        connectionTargetMap(session)[system] = target.targetId;
+        return target;
+      }
+    } catch {
+      // A loading or protected tab cannot be adopted unless its exact name is readable.
+    } finally {
+      if (attached) await detachWindowsTarget(session, attached);
+    }
+  }
+  return null;
+}
+
+async function claimDedicatedConnectionTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  target: WindowsTargetInfo,
+): Promise<void> {
+  connectionTargetMap(session)[system] = target.targetId;
+  systemTargetMap(session)[system] = target.targetId;
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    await session.connection.protocol.send('Runtime.evaluate', {
+      expression: `(()=>{window.name=${JSON.stringify(connectionTabName(system))};return window.name;})()`,
+      returnByValue: true,
+      awaitPromise: false,
+    }, attached.sessionId);
+  } catch {
+    // The target id remains authoritative while an SSO navigation replaces the document.
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+}
+
+async function findAuthenticatedConnectionTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<WindowsTargetInfo | null> {
+  const dedicated = await findDedicatedConnectionTarget(session, system);
+  if (!dedicated) return null;
+  const inspected = await inspectSystemTarget(session, system, {
+    allowedTargetIds: new Set([dedicated.targetId]),
+  });
+  if (!inspected || inspected.loginRequired) return null;
+  await claimDedicatedConnectionTarget(session, system, inspected.target);
+  return inspected.target;
 }
 
 async function findAuthenticatedSystemTarget(
@@ -3043,16 +3161,49 @@ async function waitForSystemTarget(
   system: WebWorkflowSystem,
   signal?: AbortSignal,
   timeoutMs = 30_000,
-  options: InspectSystemTargetOptions = {},
+  options: InspectSystemTargetOptions & {
+    connectionTargetId?: string;
+    onTargetDetected?: (target: WindowsTargetInfo) => void | Promise<void>;
+  } = {},
 ): Promise<{
   state: 'connected' | 'login-required' | 'missing';
   target?: WindowsTargetInfo;
 }> {
   const deadline = Date.now() + timeoutMs;
   let loginTarget: WindowsTargetInfo | undefined;
+  let targetDetected = false;
   while (Date.now() < deadline) {
     throwIfApprovalCheckCancelled(signal);
-    const inspected = await inspectSystemTarget(session, system, options);
+    const targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    );
+    const candidateTargetIds = new Set<string>();
+    for (const target of targets) {
+      if (target.type !== 'page') continue;
+      if (
+        target.targetId === options.connectionTargetId ||
+        !options.knownTargetIds?.has(target.targetId) ||
+        target.openerId === options.portalTargetId
+      ) {
+        candidateTargetIds.add(target.targetId);
+      }
+    }
+    if (!targetDetected && candidateTargetIds.size > 0) {
+      const detected = targets.find((target) => (
+        candidateTargetIds.has(target.targetId) &&
+        systemTargetAllowed(target, session.officeCode, system)
+      )) ?? targets.find((target) => candidateTargetIds.has(target.targetId));
+      if (detected) {
+        targetDetected = true;
+        await options.onTargetDetected?.(detected);
+      }
+    }
+    const inspected = candidateTargetIds.size > 0
+      ? await inspectSystemTarget(session, system, {
+          ...options,
+          allowedTargetIds: candidateTargetIds,
+        })
+      : null;
     if (inspected && !inspected.loginRequired) {
       return { state: 'connected', target: inspected.target };
     }
@@ -3070,25 +3221,11 @@ async function prepareOfficeSystemsViaPortal(
   report: WindowsSystemConnectionReporter,
   signal?: AbortSignal,
   foreground = true,
+  diagnose?: WindowsConnectionDiagnosticReporter,
 ): Promise<Map<WebWorkflowSystem, PortalSystemPreparation>> {
   const results = new Map<WebWorkflowSystem, PortalSystemPreparation>();
-  const pending: WebWorkflowSystem[] = [];
-  for (const system of orderedConnectionSystems(systems)) {
-    throwIfApprovalCheckCancelled(signal);
-    const authenticatedTarget = await findAuthenticatedSystemTarget(session, system);
-    if (authenticatedTarget) {
-      try {
-        await normalizeConnectedSystemTarget(session, system, authenticatedTarget, signal);
-        results.set(system, { ready: true });
-        continue;
-      } catch {
-        delete systemTargetMap(session)[system];
-      }
-    }
-    pending.push(system);
-  }
-  if (pending.length === 0) return results;
-  for (const system of pending) {
+  const orderedSystems = orderedConnectionSystems(systems);
+  for (const system of orderedSystems) {
     const label = system === 'neis' ? '나이스' : 'K-에듀파인';
     report({
       system,
@@ -3096,121 +3233,237 @@ async function prepareOfficeSystemsViaPortal(
       message: `업무포털 로그인 후 ${label} 공식 연결을 확인하고 있습니다.`,
     });
   }
-  for (const system of pending) {
+  let portal: AttachedWindowsTarget | undefined;
+  const portalStartedAt = Date.now();
+  try {
+    portal = await acquireLoggedInPortalTarget(session, signal, foreground);
+    await recordConnectionDiagnostic(diagnose, {
+      stepId: 'connection-portal-target',
+      outcome: 'success',
+      durationMs: Math.max(0, Date.now() - portalStartedAt),
+      currentUrl: portal.target.url,
+    });
+  } catch (error) {
     throwIfApprovalCheckCancelled(signal);
-    let portal: AttachedWindowsTarget | undefined;
-    let knownTargetIds = new Set<string>();
-    try {
-      portal = await acquireLoggedInPortalTarget(session, signal, foreground);
-      knownTargetIds = new Set(readTargetInfos(
+    const message = error instanceof Error
+      ? error.message
+      : '업무포털 로그인 상태를 확인하지 못했습니다.';
+    await recordConnectionDiagnostic(diagnose, {
+      stepId: 'connection-portal-target',
+      outcome: 'failed',
+      durationMs: Math.max(0, Date.now() - portalStartedAt),
+    });
+    for (const system of orderedSystems) results.set(system, { ready: false, message });
+    return results;
+  }
+
+  try {
+    for (const system of orderedSystems) {
+      throwIfApprovalCheckCancelled(signal);
+      const label = system === 'neis' ? '나이스' : 'K-에듀파인';
+      const reuseStartedAt = Date.now();
+      const authenticatedTarget = await findAuthenticatedConnectionTarget(session, system);
+      if (authenticatedTarget) {
+        try {
+          const normalized = await normalizeConnectedSystemTarget(
+            session,
+            system,
+            authenticatedTarget,
+            signal,
+          );
+          await claimDedicatedConnectionTarget(session, system, normalized);
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-target-reused',
+            outcome: 'success',
+            durationMs: Math.max(0, Date.now() - reuseStartedAt),
+            currentUrl: normalized.url,
+          });
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-authenticated',
+            outcome: 'success',
+            durationMs: Math.max(0, Date.now() - reuseStartedAt),
+            currentUrl: normalized.url,
+          });
+          results.set(system, { ready: true, targetId: normalized.targetId });
+          continue;
+        } catch {
+          delete connectionTargetMap(session)[system];
+          delete systemTargetMap(session)[system];
+        }
+      }
+
+      const existingDedicated = await findDedicatedConnectionTarget(session, system);
+      const knownTargetIds = new Set(readTargetInfos(
         await session.connection.protocol.send('Target.getTargets', {}),
       ).map(({ targetId }) => targetId));
-      const clickDeadline = Date.now() + 30_000;
+      const clickStartedAt = Date.now();
       let clicked = false;
       let candidateCount = 0;
-      let consecutiveEvaluationFailures = 0;
-      while (Date.now() < clickDeadline) {
-        throwIfApprovalCheckCancelled(signal);
-        let result: {
-          clicked?: unknown;
-          count?: unknown;
-          x?: unknown;
-          y?: unknown;
-        } | null = null;
-        try {
-          result = await evaluateValue<{
+      try {
+        await restoreAndActivateTarget(session, portal.target.targetId, portal.sessionId);
+        const clickDeadline = Date.now() + 30_000;
+        let consecutiveEvaluationFailures = 0;
+        while (Date.now() < clickDeadline) {
+          throwIfApprovalCheckCancelled(signal);
+          let result: {
             clicked?: unknown;
             count?: unknown;
             x?: unknown;
             y?: unknown;
-          }>(
-            session,
-            portal.sessionId,
-            portalSsoClickExpression(system),
-            true,
-          );
-          if (result?.clicked !== true) {
-            result = await findPortalSsoCandidateAcrossFrames(
+          } | null = null;
+          try {
+            result = await evaluateValue<{
+              clicked?: unknown;
+              count?: unknown;
+              x?: unknown;
+              y?: unknown;
+            }>(
               session,
               portal.sessionId,
-              system,
-            ) ?? result;
+              portalSsoClickExpression(system),
+              true,
+            );
+            if (result?.clicked !== true) {
+              result = await findPortalSsoCandidateAcrossFrames(
+                session,
+                portal.sessionId,
+                system,
+              ) ?? result;
+            }
+            consecutiveEvaluationFailures = 0;
+          } catch (error) {
+            consecutiveEvaluationFailures += 1;
+            if (consecutiveEvaluationFailures >= 3) throw error;
           }
-          consecutiveEvaluationFailures = 0;
-        } catch (error) {
-          // Login redirects and late portal frames can invalidate an evaluation once.
-          consecutiveEvaluationFailures += 1;
-          if (consecutiveEvaluationFailures >= 3) throw error;
+          candidateCount = typeof result?.count === 'number' ? result.count : 0;
+          if (
+            result?.clicked === true &&
+            typeof result.x === 'number' &&
+            typeof result.y === 'number'
+          ) {
+            await dispatchCdpMouseClick(session, portal.sessionId, result.x, result.y);
+            clicked = true;
+            break;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 250));
         }
-        candidateCount = typeof result?.count === 'number' ? result.count : 0;
-        if (
-          result?.clicked === true &&
-          typeof result.x === 'number' &&
-          typeof result.y === 'number'
-        ) {
-          await dispatchCdpMouseClick(session, portal.sessionId, result.x, result.y);
-          clicked = true;
-          break;
-        }
-        await new Promise<void>((resolve) => setTimeout(resolve, 250));
-      }
-      if (!clicked) {
-        results.set(system, {
-          ready: false,
-          message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 공식 연결 메뉴를 업무포털 메인에서 찾지 못했습니다${candidateCount > 0 ? `(${candidateCount}개 후보)` : ''}. 포털 메인 화면을 새로 고친 뒤 다시 시도해 주세요.`,
+      } catch (error) {
+        throwIfApprovalCheckCancelled(signal);
+        const message = error instanceof Error ? error.message : `${label} 공식 연결 실행에 실패했습니다.`;
+        await recordConnectionDiagnostic(diagnose, {
+          system,
+          stepId: 'connection-sso-click',
+          outcome: 'failed',
+          durationMs: Math.max(0, Date.now() - clickStartedAt),
         });
+        results.set(system, { ready: false, message });
         continue;
       }
-    } catch (error) {
-      throwIfApprovalCheckCancelled(signal);
-      results.set(system, {
-        ready: false,
-        message: error instanceof Error
-          ? error.message
-          : '업무포털 로그인 상태를 확인하지 못했습니다.',
-      });
-    } finally {
-      if (portal) await detachWindowsTarget(session, portal);
-    }
-    if (results.has(system)) continue;
-    const targetResult = await waitForSystemTarget(
-      session,
-      system,
-      signal,
-      30_000,
-      {
-        knownTargetIds,
-        portalTargetId: portal?.target.targetId,
-      },
-    );
-    if (targetResult.state === 'connected' && targetResult.target) {
-      try {
-        await normalizeConnectedSystemTarget(
-          session,
+      if (!clicked) {
+        const message = `${label} 공식 연결 메뉴를 업무포털 메인에서 찾지 못했습니다${candidateCount > 0 ? `(${candidateCount}개 후보)` : ''}. 포털 메인 화면을 새로 고친 뒤 다시 시도해 주세요.`;
+        await recordConnectionDiagnostic(diagnose, {
           system,
-          targetResult.target,
-          signal,
-        );
-        results.set(system, { ready: true });
-      } catch (error) {
-        results.set(system, {
-          ready: false,
-          message: error instanceof Error
-            ? error.message
-            : `${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭을 준비하지 못했습니다.`,
+          stepId: 'connection-sso-click',
+          outcome: 'failed',
+          durationMs: Math.max(0, Date.now() - clickStartedAt),
+        });
+        results.set(system, { ready: false, message });
+        continue;
+      }
+      await recordConnectionDiagnostic(diagnose, {
+        system,
+        stepId: 'connection-sso-click',
+        outcome: 'success',
+        durationMs: Math.max(0, Date.now() - clickStartedAt),
+      });
+
+      const targetStartedAt = Date.now();
+      let targetWasDetected = false;
+      const targetResult = await waitForSystemTarget(
+        session,
+        system,
+        signal,
+        30_000,
+        {
+          knownTargetIds,
+          portalTargetId: portal.target.targetId,
+          connectionTargetId: existingDedicated?.targetId,
+          onTargetDetected: async (target) => {
+            targetWasDetected = true;
+            await recordConnectionDiagnostic(diagnose, {
+              system,
+              stepId: 'connection-target-detected',
+              outcome: 'success',
+              durationMs: Math.max(0, Date.now() - targetStartedAt),
+              currentUrl: target.url,
+            });
+          },
+        },
+      );
+      if (!targetWasDetected) {
+        await recordConnectionDiagnostic(diagnose, {
+          system,
+          stepId: 'connection-target-detected',
+          outcome: 'failed',
+          durationMs: Math.max(0, Date.now() - targetStartedAt),
         });
       }
-    } else if (targetResult.state === 'login-required') {
-      results.set(system, {
-        ready: false,
-        message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 창은 열렸지만 공식 SSO 로그인이 완료되지 않았습니다. 열린 시스템 창에서 추가 인증을 완료해 주세요.`,
-      });
-    } else {
-      results.set(system, {
-        ready: false,
-        message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 공식 연결을 실행했지만 시스템 탭이 열리지 않았습니다. 업무포털 팝업 허용 상태를 확인해 주세요.`,
-      });
+      const authStartedAt = Date.now();
+      if (targetResult.state === 'connected' && targetResult.target) {
+        try {
+          await claimDedicatedConnectionTarget(session, system, targetResult.target);
+          const normalized = await normalizeConnectedSystemTarget(
+            session,
+            system,
+            targetResult.target,
+            signal,
+          );
+          await claimDedicatedConnectionTarget(session, system, normalized);
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-authenticated',
+            outcome: 'success',
+            durationMs: Math.max(0, Date.now() - authStartedAt),
+            currentUrl: normalized.url,
+          });
+          results.set(system, { ready: true, targetId: normalized.targetId });
+        } catch (error) {
+          const message = error instanceof Error
+            ? error.message
+            : `${label} 연결 탭을 준비하지 못했습니다.`;
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-authenticated',
+            outcome: 'failed',
+            durationMs: Math.max(0, Date.now() - authStartedAt),
+            currentUrl: targetResult.target.url,
+          });
+          results.set(system, { ready: false, message });
+        }
+      } else if (targetResult.state === 'login-required') {
+        if (targetResult.target) {
+          connectionTargetMap(session)[system] = targetResult.target.targetId;
+        }
+        const message = `${label} 창은 열렸지만 공식 SSO 로그인이 완료되지 않았습니다. 열린 시스템 창에서 추가 인증을 완료해 주세요.`;
+        await recordConnectionDiagnostic(diagnose, {
+          system,
+          stepId: 'connection-authenticated',
+          outcome: 'failed',
+          durationMs: Math.max(0, Date.now() - authStartedAt),
+          currentUrl: targetResult.target?.url,
+        });
+        results.set(system, { ready: false, message });
+      } else {
+        results.set(system, {
+          ready: false,
+          message: `${label} 공식 연결을 실행했지만 시스템 탭이 열리지 않았습니다. 업무포털 팝업 허용 상태를 확인해 주세요.`,
+        });
+      }
     }
+  } finally {
+    await detachWindowsTarget(session, portal);
   }
   return results;
 }
@@ -3221,9 +3474,10 @@ export async function connectWindowsOfficeSystems(
   report: WindowsSystemConnectionReporter = () => undefined,
   signal?: AbortSignal,
   foreground = false,
+  diagnose?: WindowsConnectionDiagnosticReporter,
 ): Promise<void> {
   const portalPreparations = foreground
-    ? await prepareOfficeSystemsViaPortal(session, systems, report, signal, true)
+    ? await prepareOfficeSystemsViaPortal(session, systems, report, signal, true, diagnose)
     : null;
   try {
     for (const system of orderedConnectionSystems(systems)) {
@@ -3254,6 +3508,16 @@ export async function connectWindowsOfficeSystems(
           },
         );
         throwIfApprovalCheckCancelled(signal);
+        if (portalPreparations !== null) {
+          const verifiedTarget = await findAuthenticatedConnectionTarget(session, system);
+          if (
+            !verifiedTarget ||
+            !preparation?.targetId ||
+            verifiedTarget.targetId !== preparation.targetId
+          ) {
+            throw new Error(`${label} 전용 연결 탭의 로그인 상태를 확인하지 못했습니다. 업무포털에서 다시 연결해 주세요.`);
+          }
+        }
         report({ system, state: 'connected', checkedAt: Date.now() });
       } catch (error) {
         if (signal?.aborted) throw error;
@@ -3477,7 +3741,9 @@ export function createWindowsManagedSessionManager(
         windowsSession,
         workflowId,
         workflowSpec,
-        { navigateExistingTarget: RESTART_IN_SYSTEM_TARGET_WORKFLOW_IDS.has(workflowId) },
+        // Keep the connected system at its current screen. Global/left menu
+        // traversal can start there without discarding an already opened form.
+        { navigateExistingTarget: false },
       );
     },
     isWxsClientRegistered,
@@ -3517,6 +3783,7 @@ export function createWindowsManagedSessionManager(
           report,
           input.signal,
           input.foreground,
+          input.diagnose,
         )
       ));
     },

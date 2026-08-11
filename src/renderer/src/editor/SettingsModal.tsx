@@ -322,7 +322,7 @@ export function SettingsModal({
           setMessage('문제 해결 폴더를 열었습니다.');
         } else if (target === 'connect') {
           await refreshConnectorStatuses();
-          setMessage('업무포털 오른쪽 탭에 나이스와 K-에듀파인을 순서대로 열고 로그인 연결을 확인했습니다.');
+          setMessage('업무포털에서 Stream Panel 전용 나이스·K-에듀파인 탭을 확보하고 로그인 상태를 확인했습니다.');
         } else {
           setMessage('업무포털을 열었습니다. 로그인 완료 후 나이스·에듀파인 연결을 눌러 주세요.');
         }

@@ -929,7 +929,7 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
-  it('restarts a workflow inside the remembered authenticated tab without opening another tab', async () => {
+  it('continues a workflow inside the remembered authenticated tab without resetting its current screen', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     const protocol = {
       isClosed: false,
@@ -972,17 +972,13 @@ describe('Windows managed web automation', () => {
       session as never,
       'neis-leave',
       undefined,
-      { navigateExistingTarget: true },
     );
 
     expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
     expect(commands.some(({ method, params }) => (
       method === 'Runtime.evaluate' && String(params.expression).includes('window.open')
     ))).toBe(false);
-    expect(commands).toContainEqual({
-      method: 'Page.navigate',
-      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp' },
-    });
+    expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(commands).toContainEqual({
       method: 'Target.activateTarget',
       params: { targetId: 'neis-anchor' },
@@ -1497,26 +1493,36 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
-  it('reuses an authenticated system tab without creating or closing a portal tab', async () => {
+  it('reuses only the remembered Stream Panel connection tab after confirming the portal', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     let neisUrl = 'https://goe.neis.go.kr/main';
     const protocol = {
       isClosed: false,
-      async send(method: string, params: Record<string, unknown>) {
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
         commands.push({ method, params });
         if (method === 'Target.getTargets') {
-          return { targetInfos: [{
-            targetId: 'neis-ready',
-            type: 'page',
-            url: neisUrl,
-          }] };
+          return { targetInfos: [
+            {
+              targetId: 'neis-ready',
+              type: 'page',
+              url: neisUrl,
+            },
+            {
+              targetId: 'portal',
+              type: 'page',
+              url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do',
+            },
+          ] };
         }
-        if (method === 'Target.attachToTarget') return { sessionId: 'neis-session' };
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: params.targetId === 'portal' ? 'portal-session' : 'neis-session' };
+        }
         if (method === 'Browser.getWindowForTarget') return { windowId: 13 };
         if (method === 'Runtime.evaluate' && String(params.expression ?? '').includes('loginVisible')) {
+          const portal = sessionId === 'portal-session';
           return { result: { value: {
-            href: neisUrl,
-            origin: 'https://goe.neis.go.kr',
+            href: portal ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do' : neisUrl,
+            origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
             readyState: 'complete',
             loginVisible: false,
           } } };
@@ -1534,6 +1540,7 @@ describe('Windows managed web automation', () => {
         transportKind: 'pipe' as const,
         process: { exited: false },
       },
+      connectionTargetIds: { neis: 'neis-ready' },
       isAlive: () => true,
       close: async () => undefined,
     };
@@ -1556,6 +1563,91 @@ describe('Windows managed web automation', () => {
     });
   });
 
+  it('does not adopt an unrelated authenticated system tab as the Stream Panel connection tab', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    let connectionOpened = false;
+    let connectionUrl = 'https://goe.neis.go.kr/main';
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'personal-neis', type: 'page', url: 'https://goe.neis.go.kr/personal-work' },
+            { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
+            ...(connectionOpened
+              ? [{ targetId: 'stream-neis', type: 'page', url: connectionUrl, openerId: 'portal' }]
+              : []),
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Browser.getWindowForTarget') return { windowId: 23 };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes("String(window.name||''")) {
+            return { result: { value: '' } };
+          }
+          if (expression.includes('const ssoLabels=')) {
+            connectionOpened = true;
+            return { result: { value: { clicked: true, count: 1, x: 120, y: 80 } } };
+          }
+          if (expression.includes('loginVisible')) {
+            const portal = sessionId === 'portal-session';
+            const personal = sessionId === 'personal-neis-session';
+            const href = portal
+              ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
+              : personal
+                ? 'https://goe.neis.go.kr/personal-work'
+                : connectionUrl;
+            return { result: { value: {
+              href,
+              origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+        }
+        if (method === 'Page.navigate' && sessionId === 'stream-neis-session') {
+          connectionUrl = String(params.url);
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(session as never, ['neis'], undefined, undefined, true);
+
+    expect(connectionOpened).toBe(true);
+    expect((session as typeof session & {
+      connectionTargetIds?: { neis?: string };
+    }).connectionTargetIds?.neis).toBe('stream-neis');
+    expect(commands).toContainEqual({
+      method: 'Page.navigate',
+      params: { url: 'https://goe.neis.go.kr/jsp/main.jsp' },
+      sessionId: 'stream-neis-session',
+    });
+    expect(commands.some(({ method, sessionId }) => (
+      method === 'Page.navigate' && sessionId === 'personal-neis-session'
+    ))).toBe(false);
+  });
+
   it('opens the logged-in portal SSO tabs in NEIS then K-Edufine order', async () => {
     const commands: Array<{
       method: string;
@@ -1563,6 +1655,7 @@ describe('Windows managed web automation', () => {
       sessionId?: string;
     }> = [];
     const reports: Array<{ system: string; state: string }> = [];
+    const diagnostics: Array<{ system?: string; stepId: string; outcome: string }> = [];
     const ssoExpressions: string[] = [];
     let neisOpened = false;
     let edufineOpened = false;
@@ -1644,6 +1737,7 @@ describe('Windows managed web automation', () => {
       ({ system, state }) => reports.push({ system, state }),
       undefined,
       true,
+      (event) => { diagnostics.push(event); },
     );
 
     expect(ssoExpressions).toHaveLength(2);
@@ -1673,6 +1767,16 @@ describe('Windows managed web automation', () => {
       params: { targetId: 'edufine' },
       sessionId: undefined,
     });
+    expect(diagnostics.filter(({ stepId }) => stepId === 'connection-portal-target')).toEqual([
+      expect.objectContaining({ stepId: 'connection-portal-target', outcome: 'success' }),
+    ]);
+    for (const system of ['neis', 'edufine']) {
+      expect(diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ system, stepId: 'connection-sso-click', outcome: 'success' }),
+        expect.objectContaining({ system, stepId: 'connection-target-detected', outcome: 'success' }),
+        expect.objectContaining({ system, stepId: 'connection-authenticated', outcome: 'success' }),
+      ]));
+    }
   });
 
   it('selects the authenticated portal main tab instead of an older login tab', async () => {
@@ -1943,6 +2047,7 @@ describe('Windows managed web automation', () => {
         transportKind: 'pipe' as const,
         process: { exited: false },
       },
+      connectionTargetIds: { neis: 'neis' },
       workflowState: 'IDLE' as const,
       isAlive: () => true,
       close: async () => undefined,
@@ -2258,14 +2363,14 @@ describe('Windows managed web automation', () => {
     expect(reusedFocus).toEqual([22]);
   });
 
-  it('closes the previous Edufine draft editor before opening and focusing a new one', async () => {
+  it('keeps the previous Edufine draft editor while opening and focusing a new one', async () => {
     let windows = [{ id: 30, title: '기존 표준서식', handle: 300 }];
     const closed: number[] = [];
     const focused: number[] = [];
     const workflowPage = page('https://klef.goe.go.kr');
     workflowPage.pressCandidate = async (_candidate, step) => {
       if (step.id === 'open-standard-form') {
-        windows = [{ id: 31, title: '새 표준서식', handle: 310 }];
+        windows = [...windows, { id: 31, title: '새 표준서식', handle: 310 }];
       }
     };
 
@@ -2285,7 +2390,8 @@ describe('Windows managed web automation', () => {
       },
     )).resolves.toMatchObject({ finalState: 'standard-form-editor' });
 
-    expect(closed).toEqual([30]);
+    expect(closed).toEqual([]);
+    expect(windows.map(({ id }) => id)).toEqual([30, 31]);
     expect(focused).toEqual([31]);
   });
 });

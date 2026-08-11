@@ -34,6 +34,7 @@ import {
 import {
   createWindowsManagedSessionManager,
   openWindowsOfficePortal,
+  type WindowsConnectionDiagnosticEvent,
   type WindowsManagedBrowserSession,
 } from './windows';
 import type { WorkflowRunResult } from './workflows/engine';
@@ -79,6 +80,7 @@ export interface WebConnectorSessionController {
       systems: readonly WebWorkflowSystem[];
       foreground?: boolean;
       signal?: AbortSignal;
+      diagnose?: (event: WindowsConnectionDiagnosticEvent) => void | Promise<void>;
     },
     report?: (status: WebSystemConnectionStatus) => void,
   ): Promise<void>;
@@ -545,6 +547,23 @@ export function createWebConnectorService({
           browserId,
           systems,
           foreground: true,
+          diagnose: async (event) => {
+            try {
+              await diagnostics.record({
+                at: now(),
+                browserId,
+                officeCode,
+                ...(event.system ? { system: event.system } : {}),
+                stepId: event.stepId,
+                sequence: 0,
+                outcome: event.outcome,
+                durationMs: event.durationMs,
+                ...(event.currentUrl ? { currentUrl: event.currentUrl } : {}),
+              });
+            } catch {
+              // Connection diagnostics must not alter the official SSO result.
+            }
+          },
         }, (status) => {
           connectionResults.set(status.system, status);
           setSystemStatus(officeCode, browserId, status);

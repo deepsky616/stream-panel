@@ -250,6 +250,7 @@ describe('managed web connector service', () => {
   it('opens the portal first and connects both systems only after the explicit connection request', async () => {
     const inputs: unknown[] = [];
     const broadcasts: unknown[] = [];
+    const diagnosticInputs: unknown[] = [];
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
@@ -259,6 +260,15 @@ describe('managed web connector service', () => {
     controller.connectSystems = async (input, report) => {
       inputs.push(input);
       for (const system of input.systems) {
+        await input.diagnose?.({
+          system,
+          stepId: 'connection-authenticated',
+          outcome: 'success',
+          durationMs: 25,
+          currentUrl: system === 'neis'
+            ? 'https://goe.neis.go.kr/jsp/main.jsp'
+            : 'https://klef.goe.go.kr/',
+        });
         report?.({ system, state: 'connecting' });
         report?.({ system, state: 'connected', checkedAt: 1_800_000_000_001 });
       }
@@ -272,6 +282,10 @@ describe('managed web connector service', () => {
       stateIo: { read: async () => undefined, write: async () => undefined },
       openPortal: async (session) => { opened.push(`${session.officeCode}:${session.browserId}`); },
       broadcast: (statuses) => broadcasts.push(statuses),
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async (input) => { diagnosticInputs.push(input); },
+      },
     });
     await service.start();
 
@@ -292,6 +306,26 @@ describe('managed web connector service', () => {
       { system: 'edufine', state: 'connected', checkedAt: 1_800_000_000_001 },
     ]);
     expect(broadcasts.length).toBeGreaterThan(0);
+    expect(diagnosticInputs).toEqual([
+      expect.objectContaining({
+        browserId: 'edge',
+        officeCode: 'goe',
+        system: 'neis',
+        stepId: 'connection-authenticated',
+        outcome: 'success',
+        durationMs: 25,
+        currentUrl: 'https://goe.neis.go.kr/jsp/main.jsp',
+      }),
+      expect.objectContaining({
+        browserId: 'edge',
+        officeCode: 'goe',
+        system: 'edufine',
+        stepId: 'connection-authenticated',
+        outcome: 'success',
+        durationMs: 25,
+        currentUrl: 'https://klef.goe.go.kr/',
+      }),
+    ]);
   });
 
   it('returns a failure when either official system connection does not complete', async () => {
