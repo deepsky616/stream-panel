@@ -6,7 +6,10 @@ import {
   type WindowsApprovalPage,
 } from '../src/main/services/approvalMonitor/windows';
 import { createApprovalCheckCancelledError } from '../src/main/services/approvalMonitor/cancellation';
-import { APPROVAL_INBOX_WORKFLOWS } from '../src/main/services/approvalMonitor/definitions';
+import {
+  APPROVAL_INBOX_WORKFLOW_ROUTES,
+  APPROVAL_INBOX_WORKFLOWS,
+} from '../src/main/services/approvalMonitor/definitions';
 import * as approvalWindows from '../src/main/services/approvalMonitor/windows';
 
 function candidate(index: number, text: string, contextText = ''): CandidateSummary {
@@ -173,13 +176,13 @@ describe('Windows approval count reader', () => {
     ])).toBe(6);
   });
 
-  it('opens the exact 문서관리 결재 menu and never clicks 결재(긴급)', () => {
+  it('opens the exact top-frame 결재 menu and never clicks 결재(긴급)', () => {
     expect(APPROVAL_INBOX_WORKFLOWS.neis.steps.flatMap(
       (step) => step.candidateLabels,
     )).not.toContain('결재');
     const edufineApproval = APPROVAL_INBOX_WORKFLOWS.edufine.steps.at(-1);
     expect(edufineApproval).toMatchObject({
-      interaction: 'edufine-mega-menu',
+      interaction: 'edufine-popup-menu',
       skipWhenSatisfied: false,
     });
     const labels = APPROVAL_INBOX_WORKFLOWS.edufine.steps.flatMap(
@@ -187,9 +190,15 @@ describe('Windows approval count reader', () => {
     );
     expect(labels).toContain('결재');
     expect(labels).not.toEqual(expect.arrayContaining(['문서관리', '결재(긴급)']));
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine.map((route) => (
+      route.steps.map(({ interaction }) => interaction)
+    ))).toEqual([
+      ['edufine-job', 'edufine-top-menu', 'edufine-popup-menu'],
+      ['edufine-job', 'edufine-document-menu', 'edufine-popup-menu'],
+    ]);
   });
 
-  it('opens the 문서관리-scoped 결재대기 menu before reading the Edufine list count', async () => {
+  it('opens the top-frame 결재대기 menu before reading the Edufine list count', async () => {
     let presses = 0;
     const workflowPage = page('https://klef.goe.go.kr', 8);
     workflowPage.pressCandidate = async () => { presses += 1; };
@@ -200,6 +209,35 @@ describe('Windows approval count reader', () => {
       { openPage: async () => workflowPage },
     )).resolves.toBe(8);
     expect(presses).toBe(3);
+  });
+
+  it('falls back to the 문서관리-scoped route when the top-frame 결재 menu is absent', async () => {
+    const pressed: string[] = [];
+    let activations = 0;
+    const workflowPage = page('https://klef.goe.go.kr', 4);
+    workflowPage.inspectCandidates = async (step) => (
+      step.id === 'open-top-approval-menu'
+        ? []
+        : [candidate(0, step.candidateLabels[0])]
+    );
+    workflowPage.pressCandidate = async (_selected, step) => {
+      pressed.push(step.id);
+    };
+    workflowPage.activate = async () => { activations += 1; };
+
+    await expect(scanWindowsApprovalCount(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { system: 'edufine', officeCode: 'goe', browserId: 'edge', interactive: true },
+      { openPage: async () => workflowPage },
+    )).resolves.toBe(4);
+
+    expect(pressed).toEqual([
+      'select-business-management-job',
+      'select-business-management-job',
+      'open-document-approval-menu',
+      'open-waiting-approval-inbox',
+    ]);
+    expect(activations).toBe(1);
   });
 
   it('waits briefly for a dynamically rendered list count', async () => {

@@ -16,6 +16,101 @@ const PURCHASE_FORM_READY: WorkflowPostcondition = {
   ],
 };
 
+const STANDARD_FORM_LABELS = [
+  '표준서식(결재4인,협조4인)',
+  '표준서식(결재 4인, 협조 4인)',
+  '표준서식(결재4인, 협조4인)',
+  '표준서식(결재 4인,협조 4인)',
+] as const;
+
+const OPEN_STANDARD_FORM_STEP = {
+  id: 'open-standard-form',
+  candidateLabels: STANDARD_FORM_LABELS,
+  selection: 'first-available',
+  // 공용서식 opens a second-level Nexacro popup whose id is not always
+  // under pdvMegaMenu. Click only the visible popup/submenu entry.
+  interaction: 'edufine-popup-menu',
+  postcondition: {
+    kind: 'new-window',
+    processName: 'WXSClient',
+    titleIncludes: '표준서식',
+  },
+  ...COMMON_CHECKS,
+  skipWhenSatisfied: false,
+} as const;
+
+// The exact left-side 기안 control is a real navigation control in the
+// 업무관리 job. It is more stable than treating 문서관리 (often only a section
+// heading) as clickable, and it cannot match 연계기안 because matching is exact.
+const LEFT_DRAFT_WORKFLOW: ManagedWorkflowDefinition = {
+  id: 'edufine-draft',
+  label: '에듀파인 기안',
+  finalState: 'standard-form-editor',
+  steps: [
+    {
+      id: 'select-business-management-job',
+      candidateLabels: ['업무관리'],
+      selection: 'first-available',
+      interaction: 'edufine-job',
+      postcondition: { kind: 'visible-any', labels: ['기안'] },
+      ...COMMON_CHECKS,
+      skipWhenSatisfied: false,
+    },
+    {
+      id: 'open-left-draft-menu',
+      candidateLabels: ['기안'],
+      selection: 'first-available',
+      interaction: 'edufine-left-menu',
+      postcondition: {
+        kind: 'visible-any',
+        labels: ['공용서식', '공용 서식', '공통서식', '공통 서식'],
+      },
+      ...COMMON_CHECKS,
+      skipWhenSatisfied: false,
+    },
+    {
+      id: 'open-public-forms-from-draft',
+      candidateLabels: ['공용서식', '공용 서식', '공통서식', '공통 서식'],
+      selection: 'first-available',
+      interaction: 'edufine-popup-menu',
+      postcondition: { kind: 'visible-any', labels: STANDARD_FORM_LABELS },
+      ...COMMON_CHECKS,
+      skipWhenSatisfied: false,
+    },
+    OPEN_STANDARD_FORM_STEP,
+  ],
+};
+
+// Education-office skins without the left draft launcher still expose the
+// public-form item in the 문서관리 section. Keep this scoped route as a fallback;
+// 문서관리 itself remains a non-clickable heading.
+const DOCUMENT_DRAFT_WORKFLOW: ManagedWorkflowDefinition = {
+  id: 'edufine-draft',
+  label: '에듀파인 기안',
+  finalState: 'standard-form-editor',
+  steps: [
+    {
+      id: 'select-business-management-job',
+      candidateLabels: ['업무관리'],
+      selection: 'first-available',
+      interaction: 'edufine-job',
+      postcondition: { kind: 'visible-any', labels: ['문서관리', '문서 관리'] },
+      ...COMMON_CHECKS,
+      skipWhenSatisfied: false,
+    },
+    {
+      id: 'open-public-forms',
+      candidateLabels: ['공용서식', '공용 서식', '공통서식', '공통 서식'],
+      selection: 'first-available',
+      interaction: 'edufine-document-menu',
+      postcondition: { kind: 'visible-any', labels: STANDARD_FORM_LABELS },
+      ...COMMON_CHECKS,
+      skipWhenSatisfied: false,
+    },
+    OPEN_STANDARD_FORM_STEP,
+  ],
+};
+
 const BUSINESS_PURCHASE_WORKFLOW: ManagedWorkflowDefinition = {
   id: 'edufine-purchase',
   label: '에듀파인 품의',
@@ -69,63 +164,12 @@ export const EDUFINE_PURCHASE_WORKFLOW_ROUTES = [
   BUSINESS_PURCHASE_WORKFLOW,
 ] as const;
 
+export const EDUFINE_DRAFT_WORKFLOW_ROUTES = [
+  LEFT_DRAFT_WORKFLOW,
+  DOCUMENT_DRAFT_WORKFLOW,
+] as const;
+
 export const EDUFINE_WORKFLOWS = {
-  'edufine-draft': {
-    id: 'edufine-draft',
-    label: '에듀파인 기안',
-    finalState: 'standard-form-editor',
-    steps: [
-      {
-        id: 'select-business-management-job',
-        candidateLabels: ['업무관리'],
-        selection: 'first-available',
-        interaction: 'edufine-job',
-        postcondition: { kind: 'visible-any', labels: ['문서관리', '문서 관리'] },
-        ...COMMON_CHECKS,
-        skipWhenSatisfied: false,
-      },
-      {
-        id: 'open-public-forms',
-        candidateLabels: ['공용서식', '공용 서식', '공통서식', '공통 서식'],
-        selection: 'first-available',
-        // 문서관리는 구역 제목이며 클릭 대상이 아니다. 그 제목과 같은
-        // 상단 메뉴 그룹 안에 있는 공용서식만 선택한다.
-        interaction: 'edufine-document-menu',
-        postcondition: {
-          kind: 'visible-any',
-          labels: [
-            '표준서식(결재4인,협조4인)',
-            '표준서식(결재 4인, 협조 4인)',
-            '표준서식(결재4인, 협조4인)',
-            '표준서식(결재 4인,협조 4인)',
-          ],
-        },
-        ...COMMON_CHECKS,
-        // Re-open the real document menu every run; a stale hidden/previous
-        // menu must not satisfy this step before the standard form is usable.
-        skipWhenSatisfied: false,
-      },
-      {
-        id: 'open-standard-form',
-        candidateLabels: [
-          '표준서식(결재4인,협조4인)',
-          '표준서식(결재 4인, 협조 4인)',
-          '표준서식(결재4인, 협조4인)',
-          '표준서식(결재 4인,협조 4인)',
-        ],
-        selection: 'first-available',
-        // 공용서식 opens a second-level Nexacro popup whose id is not always
-        // under pdvMegaMenu. Click only the visible popup/submenu entry.
-        interaction: 'edufine-popup-menu',
-        postcondition: {
-          kind: 'new-window',
-          processName: 'WXSClient',
-          titleIncludes: '표준서식',
-        },
-        ...COMMON_CHECKS,
-        skipWhenSatisfied: false,
-      },
-    ],
-  },
+  'edufine-draft': LEFT_DRAFT_WORKFLOW,
   'edufine-purchase': BUSINESS_PURCHASE_WORKFLOW,
 } as const satisfies Record<'edufine-draft' | 'edufine-purchase', ManagedWorkflowDefinition>;

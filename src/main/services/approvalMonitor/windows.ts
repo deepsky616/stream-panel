@@ -316,7 +316,9 @@ export async function scanWindowsApprovalCount(
       } catch (error) {
         routeError = error;
         const recoverable = error instanceof Error &&
-          /메뉴를 찾지 못했습니다|기대한 화면을 확인하지 못했습니다/.test(error.message);
+          /메뉴를 찾지 못했습니다|기대한 화면을 확인하지 못했습니다|같은 이름의 메뉴가 둘 이상/.test(
+            error.message,
+          );
         if (index === routes.length - 1 || !recoverable) throw error;
       }
     }
@@ -328,6 +330,13 @@ export async function scanWindowsApprovalCount(
       try {
         const count = parseApprovalCounterValue(await page.readApprovalCount(input.system));
         await assertOrigin();
+        if (input.interactive) {
+          try {
+            await page.activate?.();
+          } catch {
+            // The verified count remains valid even if Windows refuses focus.
+          }
+        }
         return count;
       } catch (error) {
         const message = error instanceof Error ? error.message : '';

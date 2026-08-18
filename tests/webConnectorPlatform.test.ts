@@ -1135,7 +1135,7 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
-  it('recovers and closes an unremembered NEIS request child before the next workflow', async () => {
+  it('recovers and closes an unremembered NEIS request page without opener metadata', async () => {
     const closedTargetIds: string[] = [];
     const detachedSessionIds: string[] = [];
     let requestOpen = true;
@@ -1148,7 +1148,6 @@ describe('Windows managed web automation', () => {
               targetId: 'leave-request',
               type: 'page',
               url: 'https://goe.neis.go.kr/leave/request',
-              openerId: 'neis-main',
             }] : []),
             {
               targetId: 'neis-main',
@@ -1196,6 +1195,135 @@ describe('Windows managed web automation', () => {
     expect(closedTargetIds).toEqual(['leave-request']);
     expect(detachedSessionIds).toEqual(['leave-request-session']);
     expect(session.systemTargetIds.neis).toBe('neis-main');
+  });
+
+  it('does not close a NEIS request page opened by another NEIS tab', async () => {
+    const closedTargetIds: string[] = [];
+    const attachedTargetIds: string[] = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            {
+              targetId: 'other-request',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/leave/request',
+              openerId: 'other-neis',
+            },
+            {
+              targetId: 'other-neis',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/other',
+            },
+            {
+              targetId: 'neis-main',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/main',
+            },
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          attachedTargetIds.push(String(params.targetId));
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Runtime.evaluate') {
+          return { result: { value: sessionId === 'other-request-session' } };
+        }
+        if (method === 'Target.closeTarget') {
+          closedTargetIds.push(String(params.targetId));
+          return { success: true };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+
+    await resetWindowsWorkflowTargets({
+      officeCode: 'goe',
+      browserId: 'edge',
+      systemTargetIds: { neis: 'neis-main' },
+      connectionTargetIds: { neis: 'neis-main' },
+      workflowResultTargetIds: {},
+      connection: {
+        protocol,
+        transportKind: 'pipe',
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    } as never, 'neis-trip');
+
+    expect(attachedTargetIds).not.toContain('other-request');
+    expect(closedTargetIds).toEqual([]);
+  });
+
+  it('falls back to window.close when Edge does not accept closing a NEIS request target', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    let requestOpen = true;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            ...(requestOpen ? [{
+              targetId: 'trip-request',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/trip/request',
+            }] : []),
+            {
+              targetId: 'neis-main',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/main',
+            },
+          ] };
+        }
+        if (method === 'Target.closeTarget') return { success: false };
+        if (method === 'Target.attachToTarget') return { sessionId: 'trip-request-session' };
+        if (
+          method === 'Runtime.evaluate' &&
+          String(params.expression ?? '').includes('window.close()')
+        ) {
+          requestOpen = false;
+          return { result: { value: true } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      systemTargetIds: { neis: 'neis-main' },
+      connectionTargetIds: { neis: 'neis-main' },
+      workflowResultTargetIds: { neis: 'trip-request' },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await resetWindowsWorkflowTargets(session as never, 'neis-leave');
+
+    expect(requestOpen).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'trip-request' },
+      sessionId: undefined,
+    });
+    expect(commands.some(({ method, params }) => (
+      method === 'Runtime.evaluate' && String(params.expression ?? '').includes('window.close()')
+    ))).toBe(true);
+    expect(session.systemTargetIds.neis).toBe('neis-main');
+    expect(session.workflowResultTargetIds.neis).toBeUndefined();
   });
 
   it('scans nested frames and safely extends an exact session timeout prompt', async () => {
@@ -2933,6 +3061,45 @@ describe('Windows managed web automation', () => {
     })).resolves.toMatchObject({ finalState: 'standard-form-editor' });
     expect(reusedChecks).toBeGreaterThanOrEqual(9);
     expect(reusedFocus).toEqual([22]);
+  });
+
+  it('falls back from the left draft launcher to the scoped document menu route', async () => {
+    const pressed: string[] = [];
+    const focused: number[] = [];
+    let windowChecks = 0;
+    const workflowPage = page('https://klef.goe.go.kr');
+    workflowPage.inspectCandidates = async (step) => (
+      step.id === 'open-left-draft-menu'
+        ? []
+        : [safeCandidate(0, step.candidateLabels[0])]
+    );
+    workflowPage.pressCandidate = async (_candidate, step) => {
+      pressed.push(step.id);
+    };
+
+    await expect(executeWindowsWorkflow(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { officeCode: 'goe', browserId: 'edge', workflowId: 'edufine-draft' },
+      {
+        openWorkflowPage: async () => workflowPage,
+        isWxsClientRegistered: async () => true,
+        listWxsClientWindows: async () => {
+          windowChecks += 1;
+          return windowChecks === 1
+            ? []
+            : [{ id: 41, title: '표준서식(결재4인,협조4인)', handle: 410 }];
+        },
+        focusWindow: async (id) => { focused.push(id); return true; },
+      },
+    )).resolves.toMatchObject({ finalState: 'standard-form-editor' });
+
+    expect(pressed).toEqual([
+      'select-business-management-job',
+      'select-business-management-job',
+      'open-public-forms',
+      'open-standard-form',
+    ]);
+    expect(focused).toEqual([41]);
   });
 
   it('keeps the previous Edufine draft editor while opening and focusing a new one', async () => {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { BuiltInWebWorkflowId } from '../src/shared/types';
-import { EDUFINE_WORKFLOWS } from '../src/main/services/webConnector/workflows/edufine';
+import {
+  EDUFINE_DRAFT_WORKFLOW_ROUTES,
+  EDUFINE_WORKFLOWS,
+} from '../src/main/services/webConnector/workflows/edufine';
 import { NEIS_WORKFLOWS } from '../src/main/services/webConnector/workflows/neis';
 import { isForbiddenActionText } from '../src/main/services/webConnector/workflows/common';
 import * as workflowCommon from '../src/main/services/webConnector/workflows/common';
@@ -187,6 +190,7 @@ describe('managed web workflow definitions', () => {
     ]);
     expect(definitions['edufine-draft'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['업무관리'],
+      ['기안'],
       ['공용서식', '공용 서식', '공통서식', '공통 서식'],
       [
         '표준서식(결재4인,협조4인)',
@@ -197,10 +201,15 @@ describe('managed web workflow definitions', () => {
     ]);
     expect(definitions['edufine-draft'].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-document-menu', 'edufine-popup-menu']);
+    )).toEqual([
+      'edufine-job',
+      'edufine-left-menu',
+      'edufine-popup-menu',
+      'edufine-popup-menu',
+    ]);
     expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
       kind: 'visible-any',
-      labels: ['문서관리', '문서 관리'],
+      labels: ['기안'],
     });
     expect(definitions['edufine-draft'].steps.at(-1)?.postcondition).toEqual({
       kind: 'new-window',
@@ -254,7 +263,11 @@ describe('managed web workflow definitions', () => {
     expect(definitions['neis-trip'].steps[1].skipWhenSatisfied).toBe(false);
     expect(definitions['edufine-draft'].steps.slice(1).map(
       ({ skipWhenSatisfied }) => skipWhenSatisfied,
-    )).toEqual([false, false]);
+    )).toEqual([false, false, false]);
+    expect(EDUFINE_DRAFT_WORKFLOW_ROUTES).toHaveLength(2);
+    expect(EDUFINE_DRAFT_WORKFLOW_ROUTES[1].steps.map(
+      ({ interaction }) => interaction,
+    )).toEqual(['edufine-job', 'edufine-document-menu', 'edufine-popup-menu']);
     expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
       ({ id }) => ![
         'open-leave-management',
@@ -264,6 +277,8 @@ describe('managed web workflow definitions', () => {
         'open-purchase-registration',
         'select-school-accounting-job',
         'select-business-management-job',
+        'open-left-draft-menu',
+        'open-public-forms-from-draft',
         'open-public-forms',
         'open-standard-form',
         'open-business-menu',
@@ -276,8 +291,10 @@ describe('managed web workflow definitions', () => {
       for (const step of definition.steps) {
         expect(step.candidateLabels.length).toBeGreaterThan(0);
         const isNeisNavigation = definition.id === 'neis-leave' || definition.id === 'neis-trip';
-        expect(step.maxChecks).toBe(isNeisNavigation ? 40 : 134);
-        expect(step.checkDelayMs).toBe(isNeisNavigation ? 250 : 150);
+        const isFastEdufineApprovalMenu = definition.id === 'edufine-approval-inbox' &&
+          step.id === 'open-top-approval-menu';
+        expect(step.maxChecks).toBe(isNeisNavigation ? 40 : isFastEdufineApprovalMenu ? 50 : 134);
+        expect(step.checkDelayMs).toBe(isNeisNavigation ? 250 : isFastEdufineApprovalMenu ? 100 : 150);
         for (const label of step.candidateLabels) {
           expect(
             isForbiddenActionText(label) && !(
@@ -324,7 +341,7 @@ describe('managed web workflow definitions', () => {
       skipWhenSatisfied: false,
     }));
 
-    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine).toHaveLength(1);
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine).toHaveLength(2);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map((step) => (
       step.candidateLabels
     ))).toEqual([
@@ -339,7 +356,10 @@ describe('managed web workflow definitions', () => {
     expect(clickedLabels).not.toContain('결재(긴급)');
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-document-menu', 'edufine-mega-menu']);
+    )).toEqual(['edufine-job', 'edufine-top-menu', 'edufine-popup-menu']);
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[1].steps.map(
+      ({ interaction }) => interaction,
+    )).toEqual(['edufine-job', 'edufine-document-menu', 'edufine-popup-menu']);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps[0].postcondition).toEqual({
       kind: 'visible-any',
       labels: ['문서관리', '문서 관리'],

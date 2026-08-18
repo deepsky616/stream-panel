@@ -35,6 +35,7 @@ import {
 } from './workflows/common';
 import { runWorkflow, type WorkflowPageAdapter, type WorkflowRunResult } from './workflows/engine';
 import {
+  EDUFINE_DRAFT_WORKFLOW_ROUTES,
   EDUFINE_PURCHASE_WORKFLOW_ROUTES,
   EDUFINE_WORKFLOWS,
 } from './workflows/edufine';
@@ -210,7 +211,7 @@ export type WindowsConnectionDiagnosticReporter = (
 ) => void | Promise<void>;
 
 function isRecoverableRouteError(error: unknown): boolean {
-  return error instanceof Error && /메뉴를 찾지 못했습니다|기대한 화면을 확인하지 못했습니다/.test(
+  return error instanceof Error && /메뉴를 찾지 못했습니다|기대한 화면을 확인하지 못했습니다|같은 이름의 메뉴가 둘 이상/.test(
     error.message,
   );
 }
@@ -439,23 +440,85 @@ async function isNeisRequestResultTarget(
   let attached: AttachedWindowsTarget | undefined;
   try {
     attached = await attachWindowsTarget(session, target);
-    return await evaluateValue<boolean>(
+    const expression = postconditionExpression({
+      id: 'detect-neis-request-result',
+      candidateLabels: [],
+      interaction: 'mouse',
+      postcondition: { kind: 'dialog-title-any', labels: NEIS_REQUEST_RESULT_LABELS },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    });
+    if (await evaluateValue<boolean>(
       session,
       attached.sessionId,
-      postconditionExpression({
-        id: 'detect-neis-request-result',
-        candidateLabels: [],
-        interaction: 'mouse',
-        postcondition: { kind: 'dialog-title-any', labels: NEIS_REQUEST_RESULT_LABELS },
-        maxChecks: 1,
-        checkDelayMs: 1,
-      }),
-    ) === true;
+      expression,
+    ) === true) return true;
+    const childValues = await evaluateValuesInChildFrames<boolean>(
+      session,
+      attached.sessionId,
+      expression,
+      'neis-request-result',
+    );
+    return childValues.some((value) => value === true);
   } catch {
     return false;
   } finally {
     if (attached) await detachWindowsTarget(session, attached);
   }
+}
+
+async function waitForTargetToClose(
+  session: WindowsManagedBrowserSession,
+  targetId: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    );
+    if (!targets.some((target) => target.targetId === targetId)) return true;
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+async function closeNeisRequestTarget(
+  session: WindowsManagedBrowserSession,
+  target: WindowsTargetInfo,
+): Promise<boolean> {
+  let closeAccepted = false;
+  try {
+    const result = await session.connection.protocol.send<{ success?: unknown }>(
+      'Target.closeTarget',
+      { targetId: target.targetId },
+    );
+    closeAccepted = result.success !== false;
+  } catch {
+    // The target may have closed while Edge was acknowledging the command.
+  }
+  if (await waitForTargetToClose(session, target.targetId, closeAccepted ? 1_000 : 1)) {
+    return true;
+  }
+
+  // Named NEIS request windows can occasionally ignore Target.closeTarget
+  // while their opener is switching work tabs. Because these windows were
+  // opened by script, window.close() is the browser-supported fallback.
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    await session.connection.protocol.send('Runtime.evaluate', {
+      expression: '(()=>{try{window.close();return true}catch{return false}})()',
+      returnByValue: true,
+      awaitPromise: false,
+      userGesture: true,
+    }, attached.sessionId);
+  } catch {
+    // The final target-presence check below distinguishes a closed target from failure.
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+  return waitForTargetToClose(session, target.targetId, 2_000);
 }
 
 export function getWindowsConnectionPresence(
@@ -490,16 +553,16 @@ async function closeRememberedWorkflowResultTarget(
     closeTargetIds.add(resultTargetId);
   }
 
-  // A NEIS request popup can be published before CDP reports its final title.
-  // If that race prevented workflowResultTargetIds from being recorded, recover
-  // it from the connected parent/opener relationship and an exact request-form
-  // marker. This never closes unrelated NEIS tabs opened outside that parent.
+  // A NEIS request popup can be published before CDP reports its final title or
+  // without preserving openerId. Recover exact request-form pages opened by the
+  // connected parent, plus exact request forms whose opener metadata is absent,
+  // while leaving the connected parent and every non-request NEIS page untouched.
   if (system === 'neis') {
     for (const target of targets) {
       if (
         closeTargetIds.has(target.targetId) ||
         target.targetId === anchorTargetId ||
-        target.openerId !== anchorTargetId ||
+        (target.openerId !== undefined && target.openerId !== anchorTargetId) ||
         target.type !== 'page' ||
         !workflowTargetAllowed(target.url, session.officeCode, workflowId)
       ) continue;
@@ -512,30 +575,25 @@ async function closeRememberedWorkflowResultTarget(
   delete resultTargets[system];
   if (closeTargetIds.size === 0) return;
   for (const targetId of closeTargetIds) {
-    try {
-      await session.connection.protocol.send('Target.closeTarget', { targetId });
-    } catch {
-      const currentTargets = readTargetInfos(
-        await session.connection.protocol.send('Target.getTargets', {}),
-      );
-      if (currentTargets.some((target) => target.targetId === targetId)) {
-        throw new Error(
-          `기존 ${system === 'neis' ? '나이스 신청' : 'K-에듀파인 업무'} 창을 닫지 못했습니다. 해당 창을 닫고 다시 시도해 주세요.`,
-        );
+    const target = targets.find((candidate) => candidate.targetId === targetId);
+    if (!target) continue;
+    let closed = false;
+    if (system === 'neis') {
+      closed = await closeNeisRequestTarget(session, target);
+    } else {
+      try {
+        await session.connection.protocol.send('Target.closeTarget', { targetId });
+      } catch {
+        // A target can disappear before Edge acknowledges the close request.
       }
+      closed = await waitForTargetToClose(session, targetId, 2_000);
+    }
+    if (!closed) {
+      throw new Error(
+        `기존 ${system === 'neis' ? '나이스 신청' : 'K-에듀파인 업무'} 창을 닫지 못했습니다. 해당 창을 닫고 다시 시도해 주세요.`,
+      );
     }
   }
-  const deadline = Date.now() + 2_000;
-  while (Date.now() < deadline) {
-    const currentTargets = readTargetInfos(
-      await session.connection.protocol.send('Target.getTargets', {}),
-    );
-    if (!currentTargets.some((target) => closeTargetIds.has(target.targetId))) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(
-    `기존 ${system === 'neis' ? '나이스 신청' : 'K-에듀파인 업무'} 창이 닫히지 않았습니다. 해당 창을 닫고 다시 시도해 주세요.`,
-  );
 }
 
 export async function resetWindowsWorkflowTargets(
@@ -711,9 +769,14 @@ export async function executeWindowsWorkflow(
       wait: (delayMs) => page.wait(delayMs),
     };
     let result: WorkflowRunResult | undefined;
-    if (request.workflowId === 'edufine-purchase') {
+    const edufineRoutes = request.workflowId === 'edufine-draft'
+      ? EDUFINE_DRAFT_WORKFLOW_ROUTES
+      : request.workflowId === 'edufine-purchase'
+        ? EDUFINE_PURCHASE_WORKFLOW_ROUTES
+        : null;
+    if (edufineRoutes) {
       let routeError: unknown;
-      for (const [index, route] of EDUFINE_PURCHASE_WORKFLOW_ROUTES.entries()) {
+      for (const [index, route] of edufineRoutes.entries()) {
         try {
           result = await runWorkflow(route, guardedPage, { signal });
           routeError = undefined;
@@ -721,7 +784,7 @@ export async function executeWindowsWorkflow(
         } catch (error) {
           routeError = error;
           if (
-            index === EDUFINE_PURCHASE_WORKFLOW_ROUTES.length - 1 ||
+            index === edufineRoutes.length - 1 ||
             !isRecoverableRouteError(error)
           ) {
             throw error;
@@ -732,7 +795,7 @@ export async function executeWindowsWorkflow(
     } else {
       result = await runWorkflow(definition, guardedPage, { signal });
     }
-    if (!result) throw new Error('에듀파인 품의 이동 경로를 완료하지 못했습니다. 업무용 브라우저에서 메뉴 권한을 확인해 주세요.');
+    if (!result) throw new Error('에듀파인 업무 이동 경로를 완료하지 못했습니다. 업무용 브라우저에서 메뉴 권한을 확인해 주세요.');
     if (request.workflowId === 'edufine-draft') {
       if (!newEditorWindow || !await dependencies.focusWindow(newEditorWindow.id)) {
         throw new Error('새 기안 편집기 창을 앞으로 가져오지 못했습니다. 작업 표시줄에서 WXSClient 창을 직접 선택해 주세요.');
@@ -970,6 +1033,8 @@ const displayedLabelMatches=(value,label)=>{
 const selector=${JSON.stringify(
     condition.kind === 'active-view-any'
       ? 'h1,h2,h3,[role="heading"],[role="tab"][aria-selected="true"],[aria-current="page"],[data-selected="true"],.cl-selected,.cl-sidenavigation-item-selected,.tab.active,a.active,a.on,a.selected,li.active>a,li.on>a,li.selected>a'
+      : condition.kind === 'dialog-title-any'
+        ? 'h1,h2,h3,[role="heading"],[role="dialog"],[aria-modal="true"],[class*="dialog"] [class*="title"],[id*="dialog"] [id*="title"]'
       : condition.kind === 'tab-selected-any'
       ? '[role="tab"][aria-selected="true"],[aria-current="page"],[role="tab"].active,.tab.active,a.active,a.on,a.selected,li.active>a,li.on>a,li.selected>a'
       : condition.kind === 'edufine-mega-menu-any'
