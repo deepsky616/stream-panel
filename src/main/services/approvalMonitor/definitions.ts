@@ -58,32 +58,19 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       candidateLabels: ['업무관리'],
       selection: 'first-available',
       interaction: 'edufine-job',
-      postcondition: { kind: 'visible-any', labels: ['결재', '결재(긴급)', '결재 (긴급)'] },
+      postcondition: { kind: 'visible-any', labels: ['문서관리', '문서 관리'] },
       ...COMMON_CHECKS,
-      // Always switch cboJobList to 업무관리. A stale 결재 label can remain in
-      // another frame even while 학교회계 is the active job.
-      skipWhenSatisfied: false,
-    },
-    {
-      id: 'open-document-approval-menu',
-      candidateLabels: ['결재', '결재(긴급)', '결재 (긴급)'],
-      selection: 'first-available',
-      // In current K-Edufine layouts this launcher is in the right quick-menu,
-      // not TopFrame. The matcher still accepts an explicitly named right frame.
-      interaction: 'edufine-right-menu',
-      allowActionText: true,
-      postcondition: { kind: 'edufine-mega-menu-any', labels: EDUFINE_WAITING_LABELS },
-      ...COMMON_CHECKS,
-      // `결재대기` can remain visible as a breadcrumb or an already opened tab.
-      // Always open the real Nexacro top menu so the next step can only select
-      // an item from the newly displayed mega menu.
+      // Always switch cboJobList to 업무관리. A stale 문서관리 heading can
+      // remain in another frame even while 학교회계 is the active job.
       skipWhenSatisfied: false,
     },
     {
       id: 'open-waiting-approval-inbox',
       candidateLabels: EDUFINE_WAITING_LABELS,
       selection: 'first-available',
-      interaction: 'edufine-mega-menu',
+      // 문서관리는 버튼이 아니라 상단 메뉴의 범위 표식이다. 우측의
+      // 결재(긴급)를 누르지 않고 그 범위 안의 결재대기만 연다.
+      interaction: 'edufine-document-menu',
       postcondition: {
         kind: 'visible-groups',
         groups: [
@@ -92,6 +79,7 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
         ],
       },
       ...COMMON_CHECKS,
+      skipWhenSatisfied: false,
     },
   ],
 };

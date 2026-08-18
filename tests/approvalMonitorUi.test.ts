@@ -82,7 +82,7 @@ describe('approval monitor settings UI', () => {
     expect(html).toContain('업무 알림');
     expect(html).not.toContain('결재함 키 추가');
     expect(html).toContain('확인 위치: 미결/협조함 목록의 전체 건수');
-    expect(html).toContain('확인 위치: 결재 → 결재대기 목록의 전체 건수');
+    expect(html).toContain('확인 위치: 문서관리 영역 → 결재대기 목록의 전체 건수');
   });
 
   it('shows read-only NEIS and Edufine monitor controls without approval actions', () => {

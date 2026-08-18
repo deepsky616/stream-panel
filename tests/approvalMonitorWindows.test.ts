@@ -173,21 +173,21 @@ describe('Windows approval count reader', () => {
     ])).toBe(6);
   });
 
-  it('allows 결재 only as the fixed Edufine right-menu route, never as a form action', () => {
+  it('uses 문서관리 only as a scope and never clicks 결재 or 결재(긴급)', () => {
     expect(APPROVAL_INBOX_WORKFLOWS.neis.steps.flatMap(
       (step) => step.candidateLabels,
     )).not.toContain('결재');
-    const edufineApproval = APPROVAL_INBOX_WORKFLOWS.edufine.steps.find(
-      (step) => step.candidateLabels.includes('결재'),
-    );
+    const edufineApproval = APPROVAL_INBOX_WORKFLOWS.edufine.steps.at(-1);
     expect(edufineApproval).toMatchObject({
-      interaction: 'edufine-right-menu',
-      allowActionText: true,
+      interaction: 'edufine-document-menu',
       skipWhenSatisfied: false,
     });
+    expect(APPROVAL_INBOX_WORKFLOWS.edufine.steps.flatMap(
+      (step) => step.candidateLabels,
+    )).not.toEqual(expect.arrayContaining(['문서관리', '결재', '결재(긴급)']));
   });
 
-  it('opens 결재 then 결재대기 before reading the Edufine list count', async () => {
+  it('opens the 문서관리-scoped 결재대기 menu before reading the Edufine list count', async () => {
     let presses = 0;
     const workflowPage = page('https://klef.goe.go.kr', 8);
     workflowPage.pressCandidate = async () => { presses += 1; };
@@ -197,7 +197,7 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(8);
-    expect(presses).toBe(3);
+    expect(presses).toBe(2);
   });
 
   it('waits briefly for a dynamically rendered list count', async () => {
@@ -216,7 +216,7 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(6);
-    expect({ reads, waits }).toEqual({ reads: 3, waits: 5 });
+    expect({ reads, waits }).toEqual({ reads: 3, waits: 4 });
   });
 
   it('accepts only a bounded non-negative integer returned by the page', () => {

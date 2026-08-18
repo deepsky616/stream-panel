@@ -1141,6 +1141,79 @@ const popupMenuMatch=(label)=>{
   }
   return unique.length===1?unique[0]:null;
 };
+const neisManagementTabMatch=(label)=>{
+  const tabMarker=/tab|tabbar|tab_bar|worktab|work_tab|mdi|bottom|footer|taskbar|task_bar/;
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element,offsetX,offsetY}=entry;
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){
+        ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
+      }
+      const signal=ancestry.join(' ');
+      const clickable=element.closest?.('a,button,[role="button"],[role="tab"],[role="menuitem"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      const rect=clickable.getBoundingClientRect();
+      const height=Math.max(1,Number(element.ownerDocument?.defaultView?.innerHeight)||1080);
+      const explicit=tabMarker.test(signal)||normalize(clickable.getAttribute?.('role')).toLowerCase()==='tab';
+      const lower=offsetY+rect.top>=height*0.45;
+      return {...entry,element:clickable,explicit,score:(explicit?300:0)+(lower?120:0)+(clickable.getAttribute?.('aria-selected')==='true'?40:0)+(String(element.id||'').endsWith(':text')?20:0)-Math.min(20,element.children.length)};
+    }).filter(Boolean);
+  const unique=[];
+  for(const entry of matches.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)){
+    if(!unique.some(candidate=>candidate.element===entry.element))unique.push(entry);
+  }
+  const scoped=unique.filter(entry=>entry.explicit||entry.score>=120);
+  return scoped[0]||(unique.length===1?unique[0]:null);
+};
+const documentMenuMatch=(label)=>{
+  const sectionLabels=['문서관리','문서 관리'].map(normalize);
+  const excluded=/rightframe|rightmenu|right_menu|quickmenu|quick_menu|shortcut|leftframe|leftmenu|left_menu|lnb/;
+  const all=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})));
+  const headings=all.filter(({element})=>surfaceTextsOf(element).some(text=>sectionLabels.includes(normalize(text)))&&visible(element));
+  const matches=all
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element,offsetX,offsetY}=entry;
+      const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[role="tab"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      const ancestry=[];
+      for(let current=clickable,depth=0;current&&depth<9;current=current.parentElement,depth+=1){
+        ancestry.push(current);
+      }
+      const signal=ancestry.map(current=>(String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase()).join(' ');
+      if(excluded.test(signal))return null;
+      let scopeScore=0;
+      for(const heading of headings){
+        if(heading.element.ownerDocument!==element.ownerDocument)continue;
+        const headingAncestors=[];
+        for(let current=heading.element,depth=0;current&&depth<9;current=current.parentElement,depth+=1){headingAncestors.push(current);}
+        const commonIndex=ancestry.findIndex(current=>current!==element.ownerDocument.body&&current!==element.ownerDocument.documentElement&&headingAncestors.includes(current));
+        if(commonIndex>=0){
+          const headingIndex=headingAncestors.indexOf(ancestry[commonIndex]);
+          scopeScore=Math.max(scopeScore,420-(commonIndex+headingIndex)*35);
+        }
+        const targetRect=clickable.getBoundingClientRect();
+        const headingRect=heading.element.getBoundingClientRect();
+        const vertical=targetRect.top>=headingRect.top-12&&targetRect.top-headingRect.bottom<=720;
+        const horizontal=Math.abs((targetRect.left+targetRect.width/2)-(headingRect.left+headingRect.width/2))<=760;
+        if(vertical&&horizontal)scopeScore=Math.max(scopeScore,180-Math.min(120,Math.max(0,targetRect.top-headingRect.bottom)/6));
+      }
+      if(scopeScore<=0)return null;
+      return {...entry,element:clickable,score:scopeScore+(String(element.id||'').endsWith(':text')?40:0)+(normalize(clickable.getAttribute?.('role')).toLowerCase()==='menuitem'?30:0)-Math.min(25,element.children.length)};
+    }).filter(Boolean)
+    .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
+  return matches[0]||null;
+};
+if(interaction==='neis-management-tab'){
+  return labels.flatMap((label,index)=>{
+    const match=neisManagementTabMatch(label);
+    return match?[summary(match.element,index,label,'NEIS-MANAGEMENT-TAB',match.offsetX,match.offsetY)]:[];
+  });
+}
 if(interaction==='edufine-left-toggle'){
   return labels.flatMap((label,index)=>{
     const match=leftToggleMatch(label);
@@ -1157,6 +1230,12 @@ if(interaction==='edufine-top-menu'){
   return labels.flatMap((label,index)=>{
     const match=choose('[id*="TopFrame"][id*="btnMenu_"],[id*="topframe"][id*="btnmenu_"]',label,':icontext');
     return match?[summary(match.element,index,label,'NEXACRO-TOP-MENU',match.offsetX,match.offsetY)]:[];
+  });
+}
+if(interaction==='edufine-document-menu'){
+  return labels.flatMap((label,index)=>{
+    const match=documentMenuMatch(label);
+    return match?[summary(match.element,index,label,'NEXACRO-DOCUMENT-MENU',match.offsetX,match.offsetY)]:[];
   });
 }
 if(interaction==='edufine-right-menu'){
@@ -1196,7 +1275,9 @@ return [];
 }
 
 function candidateScanExpression(step: WorkflowStep): string {
-  return step.interaction?.startsWith('edufine-') || step.interaction === 'frame-exact-text'
+  return step.interaction?.startsWith('edufine-') ||
+    step.interaction === 'frame-exact-text' ||
+    step.interaction === 'neis-management-tab'
     ? edufineCandidateScanExpression(step)
     : CANDIDATE_SCAN_EXPRESSION;
 }
@@ -1414,13 +1495,82 @@ const popupMenuMatch=()=>{
   }
   return unique.length===1?unique[0]:null;
 };
-if(interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'){
-  const match=interaction==='edufine-left-toggle'
+const neisManagementTabMatch=()=>{
+  const tabMarker=/tab|tabbar|tab_bar|worktab|work_tab|mdi|bottom|footer|taskbar|task_bar/;
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element,offsetX,offsetY}=entry;
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){
+        ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
+      }
+      const signal=ancestry.join(' ');
+      const clickable=element.closest?.('a,button,[role="button"],[role="tab"],[role="menuitem"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      const rect=clickable.getBoundingClientRect();
+      const height=Math.max(1,Number(element.ownerDocument?.defaultView?.innerHeight)||1080);
+      const explicit=tabMarker.test(signal)||normalize(clickable.getAttribute?.('role')).toLowerCase()==='tab';
+      const lower=offsetY+rect.top>=height*0.45;
+      return {...entry,element:clickable,explicit,score:(explicit?300:0)+(lower?120:0)+(clickable.getAttribute?.('aria-selected')==='true'?40:0)+(String(element.id||'').endsWith(':text')?20:0)-Math.min(20,element.children.length)};
+    }).filter(Boolean);
+  const unique=[];
+  for(const entry of matches.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)){
+    if(!unique.some(candidate=>candidate.element===entry.element))unique.push(entry);
+  }
+  const scoped=unique.filter(entry=>entry.explicit||entry.score>=120);
+  return scoped[0]||(unique.length===1?unique[0]:null);
+};
+const documentMenuMatch=()=>{
+  const sectionLabels=['문서관리','문서 관리'].map(normalize);
+  const excluded=/rightframe|rightmenu|right_menu|quickmenu|quick_menu|shortcut|leftframe|leftmenu|left_menu|lnb/;
+  const all=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})));
+  const headings=all.filter(({element})=>surfaceTextsOf(element).some(text=>sectionLabels.includes(normalize(text)))&&visible(element));
+  const matches=all
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element}=entry;
+      const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[role="tab"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      const ancestry=[];
+      for(let current=clickable,depth=0;current&&depth<9;current=current.parentElement,depth+=1){ancestry.push(current);}
+      const signal=ancestry.map(current=>(String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase()).join(' ');
+      if(excluded.test(signal))return null;
+      let scopeScore=0;
+      for(const heading of headings){
+        if(heading.element.ownerDocument!==element.ownerDocument)continue;
+        const headingAncestors=[];
+        for(let current=heading.element,depth=0;current&&depth<9;current=current.parentElement,depth+=1){headingAncestors.push(current);}
+        const commonIndex=ancestry.findIndex(current=>current!==element.ownerDocument.body&&current!==element.ownerDocument.documentElement&&headingAncestors.includes(current));
+        if(commonIndex>=0){
+          const headingIndex=headingAncestors.indexOf(ancestry[commonIndex]);
+          scopeScore=Math.max(scopeScore,420-(commonIndex+headingIndex)*35);
+        }
+        const targetRect=clickable.getBoundingClientRect();
+        const headingRect=heading.element.getBoundingClientRect();
+        const vertical=targetRect.top>=headingRect.top-12&&targetRect.top-headingRect.bottom<=720;
+        const horizontal=Math.abs((targetRect.left+targetRect.width/2)-(headingRect.left+headingRect.width/2))<=760;
+        if(vertical&&horizontal)scopeScore=Math.max(scopeScore,180-Math.min(120,Math.max(0,targetRect.top-headingRect.bottom)/6));
+      }
+      if(scopeScore<=0)return null;
+      return {...entry,element:clickable,score:scopeScore+(String(element.id||'').endsWith(':text')?40:0)+(normalize(clickable.getAttribute?.('role')).toLowerCase()==='menuitem'?30:0)-Math.min(25,element.children.length)};
+    }).filter(Boolean)
+    .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
+  return matches[0]||null;
+};
+if(interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'){
+  const match=interaction==='neis-management-tab'
+    ? neisManagementTabMatch()
+    : interaction==='edufine-left-toggle'
     ? leftToggleMatch()
     : interaction==='edufine-left-menu'
       ? leftMenuMatch()
     : interaction==='edufine-top-menu'
       ? choose('[id*="TopFrame"][id*="btnMenu_"],[id*="topframe"][id*="btnmenu_"]',':icontext')
+    : interaction==='edufine-document-menu'
+      ? documentMenuMatch()
     : interaction==='edufine-right-menu'
       ? rightMenuMatch()
     : interaction==='edufine-popup-menu'
@@ -2210,7 +2360,8 @@ async function pressCandidateWithCdp(
   const protocol = session.connection.protocol;
   const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
   const isSpecializedInteraction = interaction.startsWith('edufine-') ||
-    interaction === 'frame-exact-text';
+    interaction === 'frame-exact-text' ||
+    interaction === 'neis-management-tab';
   const action = await evaluateValue<{
     ok?: unknown;
     direct?: unknown;
@@ -2623,7 +2774,10 @@ function createWindowsWorkflowPage(
       const candidates = readCandidateSummaries(
         await evaluateValue(session, active.sessionId, candidateScanExpression(step)),
       );
-      if (candidates.length > 0 || workflowSystem !== 'edufine') return candidates;
+      if (
+        candidates.length > 0 ||
+        (workflowSystem !== 'edufine' && step.interaction !== 'neis-management-tab')
+      ) return candidates;
       return inspectEdufineCandidatesAcrossFrames(session, active.sessionId, step);
     },
     async pressCandidate(candidate, step) {

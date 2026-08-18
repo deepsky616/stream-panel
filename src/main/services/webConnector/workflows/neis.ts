@@ -26,7 +26,10 @@ export const NEIS_WORKFLOWS = {
       {
         id: 'open-leave-management',
         candidateLabels: ['개인근무상황관리', '개인근무상황'],
-        interaction: 'mouse',
+        selection: 'first-available',
+        // Prefer the already opened lower work tab. The adapter falls back to
+        // the unique management entry on the first visit before a tab exists.
+        interaction: 'neis-management-tab',
         postcondition: {
           kind: 'active-view-any',
           labels: ['개인근무상황관리', '개인근무상황'],
@@ -69,7 +72,8 @@ export const NEIS_WORKFLOWS = {
       {
         id: 'open-trip-management',
         candidateLabels: ['개인출장관리', '출장관리'],
-        interaction: 'mouse',
+        selection: 'first-available',
+        interaction: 'neis-management-tab',
         postcondition: {
           kind: 'active-view-any',
           labels: ['개인출장관리', '출장관리'],

@@ -80,16 +80,7 @@ export const EDUFINE_WORKFLOWS = {
         candidateLabels: ['업무관리'],
         selection: 'first-available',
         interaction: 'edufine-job',
-        postcondition: { kind: 'visible-any', labels: ['기안'] },
-        ...COMMON_CHECKS,
-        skipWhenSatisfied: false,
-      },
-      {
-        id: 'open-draft',
-        candidateLabels: ['기안'],
-        selection: 'first-available',
-        interaction: 'edufine-left-menu',
-        postcondition: { kind: 'visible-any', labels: ['공용서식', '공용 서식', '공통서식', '공통 서식'] },
+        postcondition: { kind: 'visible-any', labels: ['문서관리', '문서 관리'] },
         ...COMMON_CHECKS,
         skipWhenSatisfied: false,
       },
@@ -97,7 +88,9 @@ export const EDUFINE_WORKFLOWS = {
         id: 'open-public-forms',
         candidateLabels: ['공용서식', '공용 서식', '공통서식', '공통 서식'],
         selection: 'first-available',
-        interaction: 'edufine-mega-menu',
+        // 문서관리는 구역 제목이며 클릭 대상이 아니다. 그 제목과 같은
+        // 상단 메뉴 그룹 안에 있는 공용서식만 선택한다.
+        interaction: 'edufine-document-menu',
         postcondition: {
           kind: 'visible-any',
           labels: [
@@ -108,8 +101,8 @@ export const EDUFINE_WORKFLOWS = {
           ],
         },
         ...COMMON_CHECKS,
-        // Re-open the real MegaMenu every run; a stale hidden/previous menu
-        // must not satisfy this step before the standard-form item is usable.
+        // Re-open the real document menu every run; a stale hidden/previous
+        // menu must not satisfy this step before the standard form is usable.
         skipWhenSatisfied: false,
       },
       {
