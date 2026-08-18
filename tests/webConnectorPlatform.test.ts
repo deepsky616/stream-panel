@@ -520,10 +520,7 @@ describe('Windows managed web automation', () => {
       method: 'Target.attachToTarget',
       params: { targetId: 'user-work-target', flatten: true },
     });
-    expect(commands).toContainEqual({
-      method: 'Page.navigate',
-      params: { url: 'https://sen.neis.go.kr/' },
-    });
+    expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(commands).toContainEqual({
       method: 'Target.detachFromTarget',
       params: { sessionId: 'approval-session' },
@@ -1415,6 +1412,7 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => expression.includes("[id*='cboJobList'][id*='dropbutton']"))).toBe(true);
     expect(expressions.some((expression) => expression.includes("[id*='combolist']"))).toBe(true);
     expect(expressions.some((expression) => expression.includes('_on_value_change'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('unchanged:true'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="TopFrame"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="pdvMegaMenu"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('leftframe|leftmenu|left_menu|lnb'))).toBe(true);
@@ -1719,6 +1717,85 @@ describe('Windows managed web automation', () => {
       method: 'Target.activateTarget',
       params: { targetId: 'neis-ready' },
     });
+  });
+
+  it('recovers a first-pass connection miss in the same Connect click', async () => {
+    const reports: Array<{ system: string; state: string }> = [];
+    let systemOpened = false;
+    let aliveChecks = 0;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
+            ...(systemOpened
+              ? [{ targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/jsp/main.jsp' }]
+              : []),
+          ] };
+        }
+        if (method === 'Target.createTarget') {
+          systemOpened = true;
+          return { targetId: 'neis' };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: params.targetId === 'portal' ? 'portal-session' : 'neis-session' };
+        }
+        if (method === 'Browser.getWindowForTarget') {
+          return { windowId: 17, bounds: { windowState: 'normal' } };
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('const ssoLabels=')) {
+            return { result: { value: { clicked: true, count: 1, x: 120, y: 80 } } };
+          }
+          if (expression.includes('loginVisible')) {
+            const portal = sessionId === 'portal-session';
+            return { result: { value: {
+              href: portal
+                ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
+                : 'https://goe.neis.go.kr/jsp/main.jsp',
+              origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+              neisReady: !portal,
+              marker: portal ? 'unready' : 'neis-application-menu',
+            } } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      // The third readiness check simulates the short document replacement
+      // that used to make the first portal pass miss an otherwise valid tab.
+      isAlive: () => {
+        aliveChecks += 1;
+        return aliveChecks !== 3;
+      },
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(
+      session as never,
+      ['neis'],
+      ({ system, state }) => reports.push({ system, state }),
+      undefined,
+      true,
+    );
+
+    expect(reports.at(-1)).toEqual({ system: 'neis', state: 'connected' });
+    expect(reports.filter(({ system, state }) => (
+      system === 'neis' && state === 'connected'
+    ))).toHaveLength(1);
   });
 
   it('does not adopt an unrelated authenticated system tab as the Stream Panel connection tab', async () => {

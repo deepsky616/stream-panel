@@ -29,6 +29,9 @@ export const NEIS_WORKFLOWS = {
         interaction: 'mouse',
         postcondition: { kind: 'visible-any', labels: ['신청'] },
         ...COMMON_CHECKS,
+        // Both leave and trip screens expose a generic 신청 label. Always
+        // click the requested management menu when switching workflows.
+        skipWhenSatisfied: false,
       },
       {
         id: 'open-leave-form',
@@ -66,6 +69,9 @@ export const NEIS_WORKFLOWS = {
         interaction: 'mouse',
         postcondition: { kind: 'visible-any', labels: ['신청'] },
         ...COMMON_CHECKS,
+        // A leave screen also satisfies the generic 신청 postcondition.
+        // Re-enter the trip manager instead of reusing the leave screen.
+        skipWhenSatisfied: false,
       },
       {
         id: 'open-trip-form',

@@ -108,6 +108,9 @@ export const EDUFINE_WORKFLOWS = {
           ],
         },
         ...COMMON_CHECKS,
+        // Re-open the real MegaMenu every run; a stale hidden/previous menu
+        // must not satisfy this step before the standard-form item is usable.
+        skipWhenSatisfied: false,
       },
       {
         id: 'open-standard-form',
@@ -118,13 +121,16 @@ export const EDUFINE_WORKFLOWS = {
           '표준서식(결재 4인,협조 4인)',
         ],
         selection: 'first-available',
-        interaction: 'frame-exact-text',
+        // The same text can remain in breadcrumbs or hidden frames. Limit the
+        // click to the currently opened Edufine MegaMenu item.
+        interaction: 'edufine-mega-menu',
         postcondition: {
           kind: 'new-window',
           processName: 'WXSClient',
           titleIncludes: '표준서식',
         },
         ...COMMON_CHECKS,
+        skipWhenSatisfied: false,
       },
     ],
   },

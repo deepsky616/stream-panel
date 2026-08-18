@@ -1174,6 +1174,13 @@ if(interaction==='edufine-job'){
   if(targetIndex<0)return {ok:false};
   const postText=normalize(dataset.getColumn(targetIndex,dataColumn));
   const postValue=dataset.getColumn(targetIndex,codeColumn);
+  const currentText=normalize(combo.text||combo.getDisplayText?.()||'');
+  if(combo.index===targetIndex||currentText===postText||(
+    postValue!==undefined&&postValue!==null&&combo.value===postValue
+  )){
+    combo.redraw?.();
+    return {ok:true,direct:true,unchanged:true};
+  }
   const changed=combo._on_value_change(combo.index,combo.text,combo.value,targetIndex,postText,postValue);
   combo.redraw?.();
   return {ok:changed!==false,direct:true};
@@ -2652,7 +2659,10 @@ export async function openCdpWindowsApprovalPage(
     {
       background: input.interactive !== true,
       failFastOnLoginRequired: true,
-      navigateExistingTarget: true,
+      // Approval checks must continue from the connected application tab.
+      // Navigating the tab back to the root rebuilds Edufine's Nexacro frames
+      // and makes the following 결재 -> 결재대기 route intermittently vanish.
+      navigateExistingTarget: false,
       keepCreatedTargetOnFailure: input.interactive === true,
       // The explicit Connect button owns SSO preparation. Approval scans reuse
       // that verified tab and fail quickly instead of creating another login flow.
@@ -3912,10 +3922,10 @@ export async function connectWindowsOfficeSystems(
       throwIfApprovalCheckCancelled(signal);
       const label = system === 'neis' ? '나이스' : 'K-에듀파인';
       const preparation = portalPreparations?.get(system);
-      // Foreground portal preparation already verified the real application
-      // marker, claimed the exact tab and reported this system immediately.
-      // Do not probe or report it a second time while the other system runs.
-      if (preparation) {
+      // Skip the normal probe only after the portal path verified the real
+      // application marker. A failed first pass can still leave a freshly
+      // authenticated tab behind, so recover and verify it in this same click.
+      if (preparation?.ready) {
         continue;
       }
       report({ system, state: 'connecting', message: `${label}에 연결하고 있습니다.` });

@@ -198,7 +198,7 @@ describe('managed web workflow definitions', () => {
     ]);
     expect(definitions['edufine-draft'].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-left-menu', 'edufine-mega-menu', 'frame-exact-text']);
+    )).toEqual(['edufine-job', 'edufine-left-menu', 'edufine-mega-menu', 'edufine-mega-menu']);
     expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
       kind: 'visible-any',
       labels: ['기안'],
@@ -241,14 +241,23 @@ describe('managed web workflow definitions', () => {
     });
     expect(definitions['neis-leave'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
     expect(definitions['neis-trip'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
+    expect(definitions['neis-leave'].steps[1].skipWhenSatisfied).toBe(false);
+    expect(definitions['neis-trip'].steps[1].skipWhenSatisfied).toBe(false);
+    expect(definitions['edufine-draft'].steps.slice(1).map(
+      ({ skipWhenSatisfied }) => skipWhenSatisfied,
+    )).toEqual([false, false, false]);
     expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
       ({ id }) => ![
+        'open-leave-management',
+        'open-trip-management',
         'open-leave-form',
         'open-trip-form',
         'open-purchase-registration',
         'select-school-accounting-job',
         'select-business-management-job',
         'open-draft',
+        'open-public-forms',
+        'open-standard-form',
         'open-business-menu',
       ].includes(id),
     ).every(({ skipWhenSatisfied }) => skipWhenSatisfied === true)).toBe(true);
