@@ -59,11 +59,13 @@ describe('managed web workflow engine', () => {
     );
   });
 
-  it('never selects save, submit, approval, payment, or confirmation actions', () => {
-    for (const text of ['저장', '제출', '결재', '결재 요청', '상신', '승인', '최종 확정']) {
+  it('allows the exact global 결재 menu but blocks consequential variants and other actions', () => {
+    for (const text of ['저장', '제출', '결재 요청', '상신', '승인', '최종 확정']) {
       expect(isForbiddenActionText(text)).toBe(true);
       expect(() => selectSafeCandidate([candidate(0, text)], [text])).toThrow(/중요 동작/);
     }
+    expect(isForbiddenActionText('결재')).toBe(false);
+    expect(selectSafeCandidate([candidate(0, '결재')], ['결재'])).toEqual(candidate(0, '결재'));
     expect(isForbiddenActionText('품의등록')).toBe(false);
   });
 

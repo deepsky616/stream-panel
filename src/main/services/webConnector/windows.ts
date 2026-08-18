@@ -424,6 +424,40 @@ function workflowResultTargetMap(
   return session.workflowResultTargetIds;
 }
 
+const NEIS_REQUEST_RESULT_LABELS = [
+  '근무상황신청',
+  '개인근무상황신청',
+  '출장신청',
+] as const;
+
+async function isNeisRequestResultTarget(
+  session: WindowsManagedBrowserSession,
+  target: WindowsTargetInfo,
+): Promise<boolean> {
+  const compactTitle = (target.title ?? '').replace(/\s+/g, '');
+  if (NEIS_REQUEST_RESULT_LABELS.some((label) => compactTitle.includes(label))) return true;
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    return await evaluateValue<boolean>(
+      session,
+      attached.sessionId,
+      postconditionExpression({
+        id: 'detect-neis-request-result',
+        candidateLabels: [],
+        interaction: 'mouse',
+        postcondition: { kind: 'dialog-title-any', labels: NEIS_REQUEST_RESULT_LABELS },
+        maxChecks: 1,
+        checkDelayMs: 1,
+      }),
+    ) === true;
+  } catch {
+    return false;
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+}
+
 export function getWindowsConnectionPresence(
   session: WindowsManagedBrowserSession,
 ): WindowsConnectionPresence {
@@ -441,35 +475,62 @@ export function getWindowsConnectionPresence(
 async function closeRememberedWorkflowResultTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
+  workflowId: WebWorkflowId,
   anchorTargetId: string,
   targets: readonly WindowsTargetInfo[],
 ): Promise<void> {
   const resultTargets = workflowResultTargetMap(session);
   const resultTargetId = resultTargets[system];
-  if (!resultTargetId || resultTargetId === anchorTargetId) {
-    delete resultTargets[system];
-    return;
+  const closeTargetIds = new Set<string>();
+  if (
+    resultTargetId &&
+    resultTargetId !== anchorTargetId &&
+    targets.some((target) => target.targetId === resultTargetId)
+  ) {
+    closeTargetIds.add(resultTargetId);
   }
-  if (!targets.some((target) => target.targetId === resultTargetId)) {
-    delete resultTargets[system];
-    return;
+
+  // A NEIS request popup can be published before CDP reports its final title.
+  // If that race prevented workflowResultTargetIds from being recorded, recover
+  // it from the connected parent/opener relationship and an exact request-form
+  // marker. This never closes unrelated NEIS tabs opened outside that parent.
+  if (system === 'neis') {
+    for (const target of targets) {
+      if (
+        closeTargetIds.has(target.targetId) ||
+        target.targetId === anchorTargetId ||
+        target.openerId !== anchorTargetId ||
+        target.type !== 'page' ||
+        !workflowTargetAllowed(target.url, session.officeCode, workflowId)
+      ) continue;
+      if (await isNeisRequestResultTarget(session, target)) {
+        closeTargetIds.add(target.targetId);
+      }
+    }
   }
-  try {
-    await session.connection.protocol.send('Target.closeTarget', { targetId: resultTargetId });
-  } catch {
-    throw new Error(
-      `기존 ${system === 'neis' ? '나이스 신청' : 'K-에듀파인 업무'} 창을 닫지 못했습니다. 해당 창을 닫고 다시 시도해 주세요.`,
-    );
+
+  delete resultTargets[system];
+  if (closeTargetIds.size === 0) return;
+  for (const targetId of closeTargetIds) {
+    try {
+      await session.connection.protocol.send('Target.closeTarget', { targetId });
+    } catch {
+      const currentTargets = readTargetInfos(
+        await session.connection.protocol.send('Target.getTargets', {}),
+      );
+      if (currentTargets.some((target) => target.targetId === targetId)) {
+        throw new Error(
+          `기존 ${system === 'neis' ? '나이스 신청' : 'K-에듀파인 업무'} 창을 닫지 못했습니다. 해당 창을 닫고 다시 시도해 주세요.`,
+        );
+      }
+    }
   }
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     const currentTargets = readTargetInfos(
       await session.connection.protocol.send('Target.getTargets', {}),
     );
-    if (!currentTargets.some((target) => target.targetId === resultTargetId)) {
-      delete resultTargets[system];
-      return;
-    }
+    if (!currentTargets.some((target) => closeTargetIds.has(target.targetId))) return;
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
@@ -501,6 +562,7 @@ export async function resetWindowsWorkflowTargets(
     await closeRememberedWorkflowResultTarget(
       session,
       system,
+      workflowId,
       anchorTarget.targetId,
       targets,
     );
@@ -1125,8 +1187,11 @@ const popupMenuMatch=(label)=>{
         ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
       }
       const signal=ancestry.join(' ');
-      if(excluded.test(signal))return null;
       const explicit=marker.test(signal)||normalize(element.getAttribute?.('role')).toLowerCase()==='menuitem';
+      // Edufine renders the second-level 공용서식 popup below TopFrame in
+      // some skins. Exclude a bare top-menu duplicate, but keep a real popup
+      // or submenu even when one of its ancestors is TopFrame.
+      if(excluded.test(signal)&&!explicit)return null;
       const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick]')||element.parentElement||element;
       if(!visible(clickable)||!enabled(clickable))return null;
       return {...entry,element:clickable,explicit,score:(explicit?200:0)+(String(element.id||'').endsWith(':text')?60:0)+(clickable!==element?20:0)-Math.min(30,element.children.length)};
@@ -1481,8 +1546,8 @@ const popupMenuMatch=()=>{
         ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
       }
       const signal=ancestry.join(' ');
-      if(excluded.test(signal))return null;
       const explicit=marker.test(signal)||normalize(element.getAttribute?.('role')).toLowerCase()==='menuitem';
+      if(excluded.test(signal)&&!explicit)return null;
       const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick]')||element.parentElement||element;
       if(!visible(clickable)||!enabled(clickable))return null;
       return {...entry,element:clickable,explicit,score:(explicit?200:0)+(String(element.id||'').endsWith(':text')?60:0)+(clickable!==element?20:0)-Math.min(30,element.children.length)};

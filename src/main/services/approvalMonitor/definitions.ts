@@ -65,17 +65,39 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       skipWhenSatisfied: false,
     },
     {
+      id: 'open-document-approval-menu',
+      candidateLabels: ['결재'],
+      selection: 'first-available',
+      // Open the exact 결재 menu in the 문서관리 section first. Exact-label
+      // matching plus the scoped adapter excludes the right-side 결재(긴급).
+      interaction: 'edufine-document-menu',
+      postcondition: {
+        kind: 'edufine-mega-menu-any',
+        labels: EDUFINE_WAITING_LABELS,
+      },
+      ...COMMON_CHECKS,
+      skipWhenSatisfied: false,
+    },
+    {
       id: 'open-waiting-approval-inbox',
       candidateLabels: EDUFINE_WAITING_LABELS,
       selection: 'first-available',
-      // 문서관리는 버튼이 아니라 상단 메뉴의 범위 표식이다. 우측의
-      // 결재(긴급)를 누르지 않고 그 범위 안의 결재대기만 연다.
-      interaction: 'edufine-document-menu',
+      interaction: 'edufine-mega-menu',
       postcondition: {
         kind: 'visible-groups',
         groups: [
           EDUFINE_WAITING_LABELS,
-          ['결재할 문서', '문서번호', '제목', '기안자', '총', '전체'],
+          [
+            '결재할 문서',
+            '문서번호',
+            '문서제목',
+            '제목',
+            '기안자',
+            '기안일자',
+            '처리기한',
+            '조회 결과가 없습니다',
+            '조회된 자료가 없습니다',
+          ],
         ],
       },
       ...COMMON_CHECKS,

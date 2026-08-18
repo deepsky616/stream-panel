@@ -1135,6 +1135,69 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
+  it('recovers and closes an unremembered NEIS request child before the next workflow', async () => {
+    const closedTargetIds: string[] = [];
+    const detachedSessionIds: string[] = [];
+    let requestOpen = true;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            ...(requestOpen ? [{
+              targetId: 'leave-request',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/leave/request',
+              openerId: 'neis-main',
+            }] : []),
+            {
+              targetId: 'neis-main',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/main',
+            },
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Runtime.evaluate' && sessionId === 'leave-request-session') {
+          return { result: { value: true } };
+        }
+        if (method === 'Target.detachFromTarget') {
+          detachedSessionIds.push(String(params.sessionId));
+          return {};
+        }
+        if (method === 'Target.closeTarget') {
+          closedTargetIds.push(String(params.targetId));
+          if (params.targetId === 'leave-request') requestOpen = false;
+          return { success: true };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      systemTargetIds: { neis: 'leave-request' },
+      connectionTargetIds: { neis: 'neis-main' },
+      workflowResultTargetIds: {},
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await resetWindowsWorkflowTargets(session as never, 'neis-trip');
+
+    expect(closedTargetIds).toEqual(['leave-request']);
+    expect(detachedSessionIds).toEqual(['leave-request-session']);
+    expect(session.systemTargetIds.neis).toBe('neis-main');
+  });
+
   it('scans nested frames and safely extends an exact session timeout prompt', async () => {
     const evaluationParams: Record<string, unknown>[] = [];
     const inputCommands: Array<{ params: Record<string, unknown>; sessionId?: string }> = [];
@@ -1471,6 +1534,10 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => expression.includes('leftframe|leftmenu|left_menu|lnb'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('rightframe|rightmenu|right_menu|quickmenu'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('popupmenu|popup_menu|popupdiv'))).toBe(true);
+    expect(expressions.some((expression) => (
+      expression.includes('const interaction="edufine-popup-menu"') &&
+      expression.includes('if(excluded.test(signal)&&!explicit)return null')
+    ))).toBe(true);
     expect(expressions.some((expression) => expression.includes("sectionLabels=['문서관리','문서 관리']"))).toBe(true);
     expect(expressions.some((expression) => expression.includes('rightframe|rightmenu|right_menu|quickmenu'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('const interaction="edufine-document-menu"'))).toBe(true);

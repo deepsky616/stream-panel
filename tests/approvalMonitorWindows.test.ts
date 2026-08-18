@@ -173,18 +173,20 @@ describe('Windows approval count reader', () => {
     ])).toBe(6);
   });
 
-  it('uses 문서관리 only as a scope and never clicks 결재 or 결재(긴급)', () => {
+  it('opens the exact 문서관리 결재 menu and never clicks 결재(긴급)', () => {
     expect(APPROVAL_INBOX_WORKFLOWS.neis.steps.flatMap(
       (step) => step.candidateLabels,
     )).not.toContain('결재');
     const edufineApproval = APPROVAL_INBOX_WORKFLOWS.edufine.steps.at(-1);
     expect(edufineApproval).toMatchObject({
-      interaction: 'edufine-document-menu',
+      interaction: 'edufine-mega-menu',
       skipWhenSatisfied: false,
     });
-    expect(APPROVAL_INBOX_WORKFLOWS.edufine.steps.flatMap(
+    const labels = APPROVAL_INBOX_WORKFLOWS.edufine.steps.flatMap(
       (step) => step.candidateLabels,
-    )).not.toEqual(expect.arrayContaining(['문서관리', '결재', '결재(긴급)']));
+    );
+    expect(labels).toContain('결재');
+    expect(labels).not.toEqual(expect.arrayContaining(['문서관리', '결재(긴급)']));
   });
 
   it('opens the 문서관리-scoped 결재대기 menu before reading the Edufine list count', async () => {
@@ -197,7 +199,7 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(8);
-    expect(presses).toBe(2);
+    expect(presses).toBe(3);
   });
 
   it('waits briefly for a dynamically rendered list count', async () => {
@@ -216,7 +218,7 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(6);
-    expect({ reads, waits }).toEqual({ reads: 3, waits: 4 });
+    expect({ reads, waits }).toEqual({ reads: 3, waits: 5 });
   });
 
   it('accepts only a bounded non-negative integer returned by the page', () => {

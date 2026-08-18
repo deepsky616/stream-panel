@@ -329,6 +329,7 @@ describe('managed web workflow definitions', () => {
       step.candidateLabels
     ))).toEqual([
       ['업무관리'],
+      ['결재'],
       ['결재대기', '결재 대기', '결재대기함', '결재 대기함'],
     ]);
     const clickedLabels = APPROVAL_INBOX_WORKFLOW_ROUTES.edufine.flatMap((route) => (
@@ -338,14 +339,14 @@ describe('managed web workflow definitions', () => {
     expect(clickedLabels).not.toContain('결재(긴급)');
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-document-menu']);
+    )).toEqual(['edufine-job', 'edufine-document-menu', 'edufine-mega-menu']);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps[0].postcondition).toEqual({
       kind: 'visible-any',
       labels: ['문서관리', '문서 관리'],
     });
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ skipWhenSatisfied }) => skipWhenSatisfied,
-    )).toEqual([false, false]);
+    )).toEqual([false, false, false]);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis.flatMap((route) => (
       route.steps.flatMap((step) => step.candidateLabels)
     ))).not.toContain('승인사항');
