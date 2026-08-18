@@ -1596,7 +1596,9 @@ describe('Windows managed web automation', () => {
             return { result: { value: { ok: true } } };
           }
           if (expression.includes('근무상황신청')) {
-            return { result: { value: sessionId === 'leave-session' } };
+            // The parent can retain the same title as a hidden/breadcrumb label.
+            // The workflow must still adopt and remember the actual new page.
+            return { result: { value: sessionId === 'leave-session' || sessionId === 'main-session' } };
           }
           if (expression === 'location.origin') {
             return { result: { value: 'https://goe.neis.go.kr' } };
@@ -1920,7 +1922,12 @@ describe('Windows managed web automation', () => {
     for (const expression of ssoExpressions) {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
-    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.filter(({ method }) => method === 'Target.createTarget').map(({ params }) => (
+      params.url
+    ))).toEqual([
+      'https://goe.neis.go.kr/jsp/main.jsp',
+      'https://klef.goe.go.kr/',
+    ]);
     expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(reports.filter(({ state }) => state === 'connected')).toEqual([
       { system: 'neis', state: 'connected' },

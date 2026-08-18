@@ -187,7 +187,7 @@ describe('managed web workflow definitions', () => {
     ]);
     expect(definitions['edufine-draft'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
       ['업무관리'],
-      ['문서관리', '문서 관리'],
+      ['기안'],
       ['공용서식', '공용 서식', '공통서식', '공통 서식'],
       [
         '표준서식(결재4인,협조4인)',
@@ -198,10 +198,10 @@ describe('managed web workflow definitions', () => {
     ]);
     expect(definitions['edufine-draft'].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-top-menu', 'edufine-mega-menu', 'frame-exact-text']);
+    )).toEqual(['edufine-job', 'edufine-left-menu', 'edufine-mega-menu', 'frame-exact-text']);
     expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
       kind: 'visible-any',
-      labels: ['문서관리', '문서 관리'],
+      labels: ['기안'],
     });
     expect(definitions['edufine-draft'].steps.at(-1)?.postcondition).toEqual({
       kind: 'new-window',
@@ -246,7 +246,9 @@ describe('managed web workflow definitions', () => {
         'open-leave-form',
         'open-trip-form',
         'open-purchase-registration',
-        'open-document-management',
+        'select-school-accounting-job',
+        'select-business-management-job',
+        'open-draft',
         'open-business-menu',
       ].includes(id),
     ).every(({ skipWhenSatisfied }) => skipWhenSatisfied === true)).toBe(true);
@@ -327,7 +329,7 @@ describe('managed web workflow definitions', () => {
     });
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ skipWhenSatisfied }) => skipWhenSatisfied,
-    )).toEqual([true, false, true]);
+    )).toEqual([false, false, true]);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis.flatMap((route) => (
       route.steps.flatMap((step) => step.candidateLabels)
     ))).not.toContain('승인사항');

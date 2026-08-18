@@ -2530,6 +2530,49 @@ function createWindowsWorkflowPage(
       await extendSystemSessionIfPrompted(session, active.sessionId);
       const approvalSystem = approvalListSystem(step);
       if (approvalSystem) return approvalListReady(approvalSystem);
+      // A NEIS request button opens a real child page. Do not accept a matching
+      // title that remains visible in the parent page: doing so loses the child
+      // target id, so the next leave/trip command reuses the old request window.
+      // Resolve and remember the actual new page before checking the active page.
+      if (step.postcondition.kind === 'new-page-any' && targetIdsBeforeNewPage) {
+        const targets = readTargetInfos(
+          await session.connection.protocol.send('Target.getTargets', {}),
+        ).filter((target) => (
+          target.type === 'page' &&
+          !targetIdsBeforeNewPage?.has(target.targetId) &&
+          workflowTargetAllowed(
+            target.url,
+            session.officeCode,
+            workflowId,
+            workflowSpec,
+          )
+        ));
+        for (const target of targets) {
+          let next = newPageAttachments.get(target.targetId);
+          if (!next) {
+            next = await attachWindowsTarget(session, target, lifecycle);
+            newPageAttachments.set(target.targetId, next);
+          } else {
+            next.target = target;
+          }
+          try {
+            if (!await evaluateValue(
+              session,
+              next.sessionId,
+              postconditionExpression(step),
+            )) continue;
+            active = next;
+            if (workflowSystem) {
+              workflowResultTargetMap(session)[workflowSystem] = target.targetId;
+            }
+            targetIdsBeforeNewPage = null;
+            return true;
+          } catch {
+            // The new page may still be loading. The workflow engine will poll again.
+          }
+        }
+        return false;
+      }
       if (await evaluateValue(
         session,
         active.sessionId,
@@ -2539,45 +2582,6 @@ function createWindowsWorkflowPage(
         workflowSystem === 'edufine' &&
         await checkEdufinePostconditionAcrossFrames(session, active.sessionId, step)
       ) return true;
-      if (step.postcondition.kind !== 'new-page-any' || !targetIdsBeforeNewPage) {
-        return false;
-      }
-      const targets = readTargetInfos(
-        await session.connection.protocol.send('Target.getTargets', {}),
-      ).filter((target) => (
-        target.type === 'page' &&
-        !targetIdsBeforeNewPage?.has(target.targetId) &&
-        workflowTargetAllowed(
-          target.url,
-          session.officeCode,
-          workflowId,
-          workflowSpec,
-        )
-      ));
-      for (const target of targets) {
-        let next = newPageAttachments.get(target.targetId);
-        if (!next) {
-          next = await attachWindowsTarget(session, target, lifecycle);
-          newPageAttachments.set(target.targetId, next);
-        } else {
-          next.target = target;
-        }
-        try {
-          if (!await evaluateValue(
-            session,
-            next.sessionId,
-            postconditionExpression(step),
-          )) continue;
-          active = next;
-          if (workflowSystem) {
-            workflowResultTargetMap(session)[workflowSystem] = target.targetId;
-          }
-          targetIdsBeforeNewPage = null;
-          return true;
-        } catch {
-          // The new page may still be loading. The workflow engine will poll again.
-        }
-      }
       return false;
     },
     async wait(delayMs) {
@@ -3559,12 +3563,32 @@ async function prepareOfficeSystemsViaPortal(
     return results;
   }
 
+  const preopenedTargetIds = new Map<WebWorkflowSystem, string>();
+  if (foreground) {
+    // Put the two dedicated tabs immediately to the right of the portal, in a
+    // deterministic NEIS -> Edufine order. The official portal buttons below
+    // reuse these named tabs, so SSO readiness no longer delays tab creation.
+    for (const system of orderedSystems) {
+      try {
+        if (await findDedicatedConnectionTarget(session, system)) continue;
+        const target = await openDirectConnectionTarget(session, system);
+        await claimDedicatedConnectionTarget(session, system, target);
+        preopenedTargetIds.set(system, target.targetId);
+      } catch {
+        // The normal portal click can still create the target. Pre-opening is a
+        // latency optimization and must not make connection less reliable.
+      }
+    }
+  }
+
   try {
     for (const system of orderedSystems) {
       throwIfApprovalCheckCancelled(signal);
       const label = system === 'neis' ? '나이스' : 'K-에듀파인';
       const reuseStartedAt = Date.now();
-      const authenticatedTarget = await findAuthenticatedConnectionTarget(session, system);
+      const authenticatedTarget = preopenedTargetIds.has(system)
+        ? null
+        : await findAuthenticatedConnectionTarget(session, system);
       if (authenticatedTarget) {
         try {
           const normalized = await normalizeConnectedSystemTarget(
@@ -4242,15 +4266,23 @@ export function createWindowsManagedSessionManager(
     },
     checkApproval(input: ApprovalScanInput) {
       const key = approvalKey(input.officeCode, input.browserId);
-      if ((interactiveWork.get(key) ?? 0) > 0) {
+      const interactive = input.interactive === true;
+      if (!interactive && (interactiveWork.get(key) ?? 0) > 0) {
         return Promise.reject(createApprovalCheckCancelledError());
+      }
+      if (interactive) {
+        // The latest explicit user action wins over a stale workflow or connect
+        // operation. The serialized CDP queue lets their finally blocks restore
+        // the maintenance counters before this manual scan starts.
+        workflowRuns.get(key)?.abort();
+        connectionRuns.get(key)?.abort();
       }
       approvalChecks.get(key)?.abort();
       const abortController = new AbortController();
       approvalChecks.set(key, abortController);
       const check = manager.use(input.officeCode, input.browserId, async (session) => {
         throwIfApprovalCheckCancelled(abortController.signal);
-        if ((interactiveWork.get(key) ?? 0) > 0) {
+        if (!interactive && (interactiveWork.get(key) ?? 0) > 0) {
           throw createApprovalCheckCancelledError();
         }
         session.maintenancePauseDepth += 1;

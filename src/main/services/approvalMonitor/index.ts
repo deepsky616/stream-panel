@@ -224,6 +224,9 @@ export function createApprovalMonitorService({
   let tail: Promise<void> = Promise.resolve();
   const inFlightBySystem = new Map<WebWorkflowSystem, Promise<void>>();
   const interactiveChecks = new Set<WebWorkflowSystem>();
+  const checkRevisions = new Map<WebWorkflowSystem, number>(
+    SYSTEMS.map((system) => [system, 0]),
+  );
   const establishedBaselines = new Set<WebWorkflowSystem>();
   let sourceSignatures = new Map<WebWorkflowSystem, string>();
   const sourceRevisions = new Map<WebWorkflowSystem, number>(
@@ -323,6 +326,8 @@ export function createApprovalMonitorService({
       const runs = selected.map((system) => {
         const inFlight = inFlightBySystem.get(system);
         if (inFlight && (!interactive || interactiveChecks.has(system))) return inFlight;
+        const checkRevision = (checkRevisions.get(system) ?? 0) + 1;
+        checkRevisions.set(system, checkRevision);
         const operation = async () => {
           const config = getConfig();
           const source = config.approvalMonitor.sources[system];
@@ -347,6 +352,7 @@ export function createApprovalMonitorService({
               ...(interactive ? { interactive: true } : {}),
             });
             if (!started) return;
+            if ((checkRevisions.get(system) ?? 0) !== checkRevision) return;
             if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
               statuses = createStatuses();
               publish();
@@ -415,6 +421,7 @@ export function createApprovalMonitorService({
             }
           } catch (error) {
             if (!started) return;
+            if ((checkRevisions.get(system) ?? 0) !== checkRevision) return;
             if ((sourceRevisions.get(system) ?? 0) !== sourceRevision) {
               statuses = createStatuses();
               publish();
@@ -445,8 +452,11 @@ export function createApprovalMonitorService({
           }
           publish();
         };
-        const run = tail.then(operation, operation);
-        tail = run.then(() => undefined, () => undefined);
+        // A user click must not sit behind a scheduled scan that can spend tens
+        // of seconds inside portal frames. Start it immediately; the connector
+        // aborts the older scan and the revision guard ignores its stale result.
+        const run = interactive ? operation() : tail.then(operation, operation);
+        if (!interactive) tail = run.then(() => undefined, () => undefined);
         const tracked = run.finally(() => {
           if (inFlightBySystem.get(system) === tracked) {
             inFlightBySystem.delete(system);

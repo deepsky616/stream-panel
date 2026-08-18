@@ -722,6 +722,50 @@ describe('approval monitor service', () => {
     await service.stop();
   });
 
+  it('starts a manual check immediately and ignores the older scheduled result', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    config.approvalMonitor.sources.edufine.enabled = false;
+    let releaseScheduled!: (count: number) => void;
+    const calls: Array<{ interactive?: true }> = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: {
+        scan: async (input) => {
+          calls.push(input.interactive ? { interactive: true } : {});
+          if (input.interactive) return 5;
+          return new Promise<number>((resolve) => { releaseScheduled = resolve; });
+        },
+      },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      setTimer: (handler) => handler,
+      clearTimer: () => undefined,
+    });
+
+    await service.start();
+    const scheduled = service.check({ system: 'neis' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const manual = service.check({ system: 'neis' }, { interactive: true });
+
+    await manual;
+    expect(calls).toEqual([{}, { interactive: true }]);
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'neis',
+      state: 'ready',
+      pendingCount: 5,
+    }));
+
+    releaseScheduled(1);
+    await scheduled;
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'neis',
+      state: 'ready',
+      pendingCount: 5,
+    }));
+    await service.stop();
+  });
+
   it('never scans or schedules browser work on macOS', async () => {
     const config = windowsConfig();
     config.approvalMonitor.sources.neis.enabled = true;

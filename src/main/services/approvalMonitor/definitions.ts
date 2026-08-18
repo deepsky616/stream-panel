@@ -60,6 +60,9 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       interaction: 'edufine-job',
       postcondition: { kind: 'visible-any', labels: ['결재', '결재(긴급)', '결재 (긴급)'] },
       ...COMMON_CHECKS,
+      // Always switch cboJobList to 업무관리. A stale 결재 label can remain in
+      // another frame even while 학교회계 is the active job.
+      skipWhenSatisfied: false,
     },
     {
       id: 'open-document-approval-menu',
