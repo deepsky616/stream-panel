@@ -1129,7 +1129,8 @@ describe('Windows managed web automation', () => {
 
     expect(closedTargetIds).toEqual([resultId]);
     expect(attachedTargetIds).toContain(anchorId);
-    expect(attachedTargetIds).not.toContain(resultId);
+    if (system === 'neis') expect(attachedTargetIds).toContain(resultId);
+    else expect(attachedTargetIds).not.toContain(resultId);
     expect((session.systemTargetIds as Record<string, string>)[system]).toBe(anchorId);
     expect((session.workflowResultTargetIds as Record<string, string>)[system]).toBeUndefined();
     await workflowPage.release?.();
@@ -1193,8 +1194,79 @@ describe('Windows managed web automation', () => {
     await resetWindowsWorkflowTargets(session as never, 'neis-trip');
 
     expect(closedTargetIds).toEqual(['leave-request']);
-    expect(detachedSessionIds).toEqual(['leave-request-session']);
+    expect(detachedSessionIds).toEqual([
+      'leave-request-session',
+      'leave-request-session',
+      'leave-request-session',
+    ]);
     expect(session.systemTargetIds.neis).toBe('neis-main');
+  });
+
+  it('closes a NEIS request window reached through an intermediate owned opener', async () => {
+    const closedTargetIds: string[] = [];
+    let requestOpen = true;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            ...(requestOpen ? [{
+              targetId: 'leave-request',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/leave/request',
+              openerId: 'neis-work-frame',
+            }] : []),
+            {
+              targetId: 'neis-work-frame',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/work',
+              openerId: 'neis-main',
+            },
+            {
+              targetId: 'neis-main',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/main',
+            },
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Runtime.evaluate' && sessionId === 'leave-request-session') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('window.close()')) {
+            requestOpen = false;
+            return { result: { value: true } };
+          }
+          return { result: { value: true } };
+        }
+        if (method === 'Runtime.evaluate') return { result: { value: false } };
+        if (method === 'Target.closeTarget') {
+          closedTargetIds.push(String(params.targetId));
+          return { success: true };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+
+    await resetWindowsWorkflowTargets({
+      officeCode: 'goe',
+      browserId: 'edge',
+      systemTargetIds: { neis: 'neis-main' },
+      connectionTargetIds: { neis: 'neis-main' },
+      workflowResultTargetIds: {},
+      connection: {
+        protocol,
+        transportKind: 'pipe',
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    } as never, 'neis-trip');
+
+    expect(requestOpen).toBe(false);
+    expect(closedTargetIds).toEqual([]);
   });
 
   it('does not close a NEIS request page opened by another NEIS tab', async () => {
@@ -1258,7 +1330,7 @@ describe('Windows managed web automation', () => {
     expect(closedTargetIds).toEqual([]);
   });
 
-  it('falls back to window.close when Edge does not accept closing a NEIS request target', async () => {
+  it('prefers window.close for an existing NEIS request window', async () => {
     const commands: Array<{
       method: string;
       params: Record<string, unknown>;
@@ -1314,14 +1386,10 @@ describe('Windows managed web automation', () => {
     await resetWindowsWorkflowTargets(session as never, 'neis-leave');
 
     expect(requestOpen).toBe(false);
-    expect(commands).toContainEqual({
-      method: 'Target.closeTarget',
-      params: { targetId: 'trip-request' },
-      sessionId: undefined,
-    });
     expect(commands.some(({ method, params }) => (
       method === 'Runtime.evaluate' && String(params.expression ?? '').includes('window.close()')
     ))).toBe(true);
+    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
     expect(session.systemTargetIds.neis).toBe('neis-main');
     expect(session.workflowResultTargetIds.neis).toBeUndefined();
   });
@@ -1482,7 +1550,8 @@ describe('Windows managed web automation', () => {
             expression.includes('const interaction="edufine-document-menu"') ||
             expression.includes('const interaction="edufine-right-menu"') ||
             expression.includes('const interaction="edufine-mega-menu"') ||
-            expression.includes('const interaction="edufine-popup-menu"')) {
+            expression.includes('const interaction="edufine-popup-menu"') ||
+            expression.includes('const interaction="edufine-submenu"')) {
             return { result: { value: { ok: true, x: 100, y: 50 } } };
           }
           if (expression.includes('const interaction="edufine-left-menu"')) {
@@ -1601,6 +1670,14 @@ describe('Windows managed web automation', () => {
       maxChecks: 1,
       checkDelayMs: 1,
     };
+    const submenuStep = {
+      id: 'open-public-form-submenu',
+      candidateLabels: ['공용서식'],
+      interaction: 'edufine-submenu' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['표준서식'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
     const frameExactStep = {
       id: 'open-custom-menu',
       candidateLabels: ['내 문서함'],
@@ -1648,6 +1725,10 @@ describe('Windows managed web automation', () => {
       popupStep,
     );
     await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(submenuStep))[0],
+      submenuStep,
+    );
+    await workflowPage.pressCandidate(
       (await workflowPage.inspectCandidates(frameExactStep))[0],
       frameExactStep,
     );
@@ -1666,6 +1747,14 @@ describe('Windows managed web automation', () => {
       expression.includes('const interaction="edufine-popup-menu"') &&
       expression.includes('if(excluded.test(signal)&&!explicit)return null')
     ))).toBe(true);
+    expect(expressions.some((expression) => (
+      expression.includes('const interaction="edufine-submenu"') &&
+      expression.includes('leftMenuMatch(label)||popupMenuMatch(label)')
+    ))).toBe(true);
+    expect(expressions.some((expression) => (
+      expression.includes('const interaction="edufine-submenu"') &&
+      expression.includes('leftMenuMatch()||popupMenuMatch()')
+    ))).toBe(true);
     expect(expressions.some((expression) => expression.includes("sectionLabels=['문서관리','문서 관리']"))).toBe(true);
     expect(expressions.some((expression) => expression.includes('rightframe|rightmenu|right_menu|quickmenu'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('const interaction="edufine-document-menu"'))).toBe(true);
@@ -1678,6 +1767,7 @@ describe('Windows managed web automation', () => {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
     expect(inputCommands).toEqual([
+      'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',

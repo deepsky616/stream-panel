@@ -176,13 +176,13 @@ describe('Windows approval count reader', () => {
     ])).toBe(6);
   });
 
-  it('opens the exact top-frame 결재 menu and never clicks 결재(긴급)', () => {
+  it('tries the exact left, top-frame, and document-scoped 결재 menus without 결재(긴급)', () => {
     expect(APPROVAL_INBOX_WORKFLOWS.neis.steps.flatMap(
       (step) => step.candidateLabels,
     )).not.toContain('결재');
     const edufineApproval = APPROVAL_INBOX_WORKFLOWS.edufine.steps.at(-1);
     expect(edufineApproval).toMatchObject({
-      interaction: 'edufine-popup-menu',
+      interaction: 'edufine-submenu',
       skipWhenSatisfied: false,
     });
     const labels = APPROVAL_INBOX_WORKFLOWS.edufine.steps.flatMap(
@@ -193,12 +193,13 @@ describe('Windows approval count reader', () => {
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine.map((route) => (
       route.steps.map(({ interaction }) => interaction)
     ))).toEqual([
-      ['edufine-job', 'edufine-top-menu', 'edufine-popup-menu'],
-      ['edufine-job', 'edufine-document-menu', 'edufine-popup-menu'],
+      ['edufine-job', 'edufine-left-menu', 'edufine-submenu'],
+      ['edufine-job', 'edufine-top-menu', 'edufine-submenu'],
+      ['edufine-job', 'edufine-document-menu', 'edufine-submenu'],
     ]);
   });
 
-  it('opens the top-frame 결재대기 menu before reading the Edufine list count', async () => {
+  it('opens the left 결재 and 결재대기 menus before reading the Edufine list count', async () => {
     let presses = 0;
     const workflowPage = page('https://klef.goe.go.kr', 8);
     workflowPage.pressCandidate = async () => { presses += 1; };
@@ -211,12 +212,12 @@ describe('Windows approval count reader', () => {
     expect(presses).toBe(3);
   });
 
-  it('falls back to the 문서관리-scoped route when the top-frame 결재 menu is absent', async () => {
+  it('falls back to the 문서관리-scoped route when left and top-frame 결재 are absent', async () => {
     const pressed: string[] = [];
     let activations = 0;
     const workflowPage = page('https://klef.goe.go.kr', 4);
     workflowPage.inspectCandidates = async (step) => (
-      step.id === 'open-top-approval-menu'
+      step.id === 'open-left-approval-menu' || step.id === 'open-top-approval-menu'
         ? []
         : [candidate(0, step.candidateLabels[0])]
     );
@@ -232,6 +233,7 @@ describe('Windows approval count reader', () => {
     )).resolves.toBe(4);
 
     expect(pressed).toEqual([
+      'select-business-management-job',
       'select-business-management-job',
       'select-business-management-job',
       'open-document-approval-menu',

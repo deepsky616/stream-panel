@@ -27,9 +27,9 @@ const OPEN_STANDARD_FORM_STEP = {
   id: 'open-standard-form',
   candidateLabels: STANDARD_FORM_LABELS,
   selection: 'first-available',
-  // 공용서식 opens a second-level Nexacro popup whose id is not always
-  // under pdvMegaMenu. Click only the visible popup/submenu entry.
-  interaction: 'edufine-popup-menu',
+  // Education-office skins render this either in the left navigation tree or
+  // in a Nexacro popup. Prefer the exact left entry, then accept one popup item.
+  interaction: 'edufine-submenu',
   postcondition: {
     kind: 'new-window',
     processName: 'WXSClient',
@@ -72,7 +72,7 @@ const LEFT_DRAFT_WORKFLOW: ManagedWorkflowDefinition = {
       id: 'open-public-forms-from-draft',
       candidateLabels: ['공용서식', '공용 서식', '공통서식', '공통 서식'],
       selection: 'first-available',
-      interaction: 'edufine-popup-menu',
+      interaction: 'edufine-submenu',
       postcondition: { kind: 'visible-any', labels: STANDARD_FORM_LABELS },
       ...COMMON_CHECKS,
       skipWhenSatisfied: false,

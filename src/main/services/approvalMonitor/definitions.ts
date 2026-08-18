@@ -18,7 +18,7 @@ const COMMON_CHECKS = {
   checkDelayMs: 150,
   skipWhenSatisfied: true,
 };
-const FAST_TOP_MENU_CHECKS = {
+const FAST_MENU_CHECKS = {
   maxChecks: 50 as const,
   checkDelayMs: 100,
   skipWhenSatisfied: false,
@@ -69,10 +69,9 @@ const EDUFINE_WAITING_INBOX_STEP = {
   id: 'open-waiting-approval-inbox',
   candidateLabels: EDUFINE_WAITING_LABELS,
   selection: 'first-available',
-  // A few skins place 결재대기 under pdvMegaMenu while others use a generic
-  // popup. The popup adapter accepts either surface but still requires one
-  // exact, visible menu item.
-  interaction: 'edufine-popup-menu',
+  // A few skins keep 결재대기 in the left tree while others render a Nexacro
+  // popup. Prefer the exact left entry, then accept one popup item.
+  interaction: 'edufine-submenu',
   postcondition: {
     kind: 'visible-groups',
     groups: [
@@ -94,6 +93,26 @@ const EDUFINE_WAITING_INBOX_STEP = {
   skipWhenSatisfied: false,
 } as const;
 
+const EDUFINE_LEFT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
+  id: 'edufine-approval-inbox',
+  label: '에듀파인 결재함',
+  finalState: 'approval-inbox-ready',
+  steps: [
+    EDUFINE_JOB_STEP,
+    {
+      id: 'open-left-approval-menu',
+      candidateLabels: ['결재'],
+      selection: 'first-available',
+      // Exact matching prevents the right-side 결재(긴급) shortcut from being
+      // selected when the education-office skin exposes 결재 in its left tree.
+      interaction: 'edufine-left-menu',
+      postcondition: { kind: 'visible-any', labels: EDUFINE_WAITING_LABELS },
+      ...FAST_MENU_CHECKS,
+    },
+    EDUFINE_WAITING_INBOX_STEP,
+  ],
+};
+
 const EDUFINE_TOP_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   id: 'edufine-approval-inbox',
   label: '에듀파인 결재함',
@@ -108,7 +127,7 @@ const EDUFINE_TOP_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       // guarantees that the right-side 결재(긴급) shortcut is never selected.
       interaction: 'edufine-top-menu',
       postcondition: { kind: 'visible-any', labels: EDUFINE_WAITING_LABELS },
-      ...FAST_TOP_MENU_CHECKS,
+      ...FAST_MENU_CHECKS,
     },
     EDUFINE_WAITING_INBOX_STEP,
   ],
@@ -143,10 +162,14 @@ export const APPROVAL_INBOX_WORKFLOW_ROUTES: Record<
   readonly ManagedWorkflowDefinition[]
 > = {
   neis: [NEIS_APPROVAL_WORKFLOW],
-  edufine: [EDUFINE_TOP_APPROVAL_WORKFLOW, EDUFINE_DOCUMENT_APPROVAL_WORKFLOW],
+  edufine: [
+    EDUFINE_LEFT_APPROVAL_WORKFLOW,
+    EDUFINE_TOP_APPROVAL_WORKFLOW,
+    EDUFINE_DOCUMENT_APPROVAL_WORKFLOW,
+  ],
 };
 
 export const APPROVAL_INBOX_WORKFLOWS: Record<WebWorkflowSystem, ManagedWorkflowDefinition> = {
   neis: NEIS_APPROVAL_WORKFLOW,
-  edufine: EDUFINE_TOP_APPROVAL_WORKFLOW,
+  edufine: EDUFINE_LEFT_APPROVAL_WORKFLOW,
 };

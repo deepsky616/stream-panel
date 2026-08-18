@@ -18,6 +18,8 @@ export type AllowedCdpMethod =
   | 'Page.createIsolatedWorld'
   | 'Page.navigate'
   | 'Page.bringToFront'
+  | 'Page.close'
+  | 'Page.handleJavaScriptDialog'
   | 'Runtime.evaluate'
   | 'Runtime.releaseObject'
   | 'DOM.getContentQuads'
@@ -40,6 +42,8 @@ const ALLOWED_METHODS = new Set<AllowedCdpMethod>([
   'Page.createIsolatedWorld',
   'Page.navigate',
   'Page.bringToFront',
+  'Page.close',
+  'Page.handleJavaScriptDialog',
   'Runtime.evaluate',
   'Runtime.releaseObject',
   'DOM.getContentQuads',

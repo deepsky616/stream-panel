@@ -440,14 +440,22 @@ async function isNeisRequestResultTarget(
   let attached: AttachedWindowsTarget | undefined;
   try {
     attached = await attachWindowsTarget(session, target);
-    const expression = postconditionExpression({
-      id: 'detect-neis-request-result',
-      candidateLabels: [],
-      interaction: 'mouse',
-      postcondition: { kind: 'dialog-title-any', labels: NEIS_REQUEST_RESULT_LABELS },
-      maxChecks: 1,
-      checkDelayMs: 1,
-    });
+    const expression = `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const labels=${JSON.stringify(NEIS_REQUEST_RESULT_LABELS)}.map(value=>normalize(value).replace(/\\s+/g,''));
+const matches=(value)=>{
+  const compact=normalize(value).replace(/\\s+/g,'');
+  return labels.some(label=>compact.includes(label));
+};
+for(const {document} of documents){
+  if(matches(document.title))return true;
+  const markers=Array.from(document.querySelectorAll(
+    'h1,h2,h3,[role="heading"],[role="dialog"],[aria-modal="true"],[id*="title"],[class*="title"],[aria-label],[title]'
+  ));
+  if(markers.some(element=>visible(element)&&surfaceTextsOf(element).some(matches)))return true;
+}
+return false;
+})()`;
     if (await evaluateValue<boolean>(
       session,
       attached.sessionId,
@@ -465,6 +473,21 @@ async function isNeisRequestResultTarget(
   } finally {
     if (attached) await detachWindowsTarget(session, attached);
   }
+}
+
+function targetOpenedFromAnchor(
+  target: WindowsTargetInfo,
+  anchorTargetId: string,
+  targets: readonly WindowsTargetInfo[],
+): boolean {
+  let openerId = target.openerId;
+  const visited = new Set<string>();
+  while (openerId && !visited.has(openerId)) {
+    if (openerId === anchorTargetId) return true;
+    visited.add(openerId);
+    openerId = targets.find((candidate) => candidate.targetId === openerId)?.openerId;
+  }
+  return target.openerId === undefined;
 }
 
 async function waitForTargetToClose(
@@ -487,38 +510,71 @@ async function closeNeisRequestTarget(
   session: WindowsManagedBrowserSession,
   target: WindowsTargetInfo,
 ): Promise<boolean> {
-  let closeAccepted = false;
-  try {
-    const result = await session.connection.protocol.send<{ success?: unknown }>(
-      'Target.closeTarget',
-      { targetId: target.targetId },
-    );
-    closeAccepted = result.success !== false;
-  } catch {
-    // The target may have closed while Edge was acknowledging the command.
-  }
-  if (await waitForTargetToClose(session, target.targetId, closeAccepted ? 1_000 : 1)) {
-    return true;
-  }
-
-  // Named NEIS request windows can occasionally ignore Target.closeTarget
-  // while their opener is switching work tabs. Because these windows were
-  // opened by script, window.close() is the browser-supported fallback.
+  // NEIS opens named request windows with window.open. Ask that child window to
+  // close itself first; this preserves the connected parent tab and works even
+  // when Edge reports the popup as a separate browser window.
   let attached: AttachedWindowsTarget | undefined;
+  let scriptCloseAccepted = false;
   try {
     attached = await attachWindowsTarget(session, target);
-    await session.connection.protocol.send('Runtime.evaluate', {
-      expression: '(()=>{try{window.close();return true}catch{return false}})()',
+    const result = await session.connection.protocol.send<{
+      result?: { value?: unknown };
+    }>('Runtime.evaluate', {
+      expression: '(()=>{try{window.close();return window.closed===true}catch{return false}})()',
       returnByValue: true,
       awaitPromise: false,
       userGesture: true,
     }, attached.sessionId);
+    scriptCloseAccepted = result.result?.value === true;
   } catch {
-    // The final target-presence check below distinguishes a closed target from failure.
+    // A child can disappear while Edge is acknowledging window.close().
   } finally {
     if (attached) await detachWindowsTarget(session, attached);
   }
-  return waitForTargetToClose(session, target.targetId, 2_000);
+  if (await waitForTargetToClose(session, target.targetId, scriptCloseAccepted ? 1_500 : 1)) {
+    return true;
+  }
+
+  // If the page blocks its script close, use the page-level close command and
+  // accept a pending beforeunload prompt before the final target-level close.
+  attached = undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    const pageClose = session.connection.protocol.send(
+      'Page.close',
+      {},
+      attached.sessionId,
+    ).then(() => undefined, () => undefined);
+    await Promise.race([
+      pageClose,
+      new Promise<void>((resolve) => setTimeout(resolve, 100)),
+    ]);
+    try {
+      await session.connection.protocol.send('Page.handleJavaScriptDialog', {
+        accept: true,
+      }, attached.sessionId);
+    } catch {
+      // No beforeunload dialog was open.
+    }
+    await Promise.race([
+      pageClose,
+      new Promise<void>((resolve) => setTimeout(resolve, 400)),
+    ]);
+  } catch {
+    // The target-level close below remains available.
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+  if (await waitForTargetToClose(session, target.targetId, 500)) return true;
+
+  try {
+    await session.connection.protocol.send('Target.closeTarget', {
+      targetId: target.targetId,
+    });
+  } catch {
+    // The final presence check distinguishes a closed target from failure.
+  }
+  return waitForTargetToClose(session, target.targetId, 5_000);
 }
 
 export function getWindowsConnectionPresence(
@@ -558,13 +614,20 @@ async function closeRememberedWorkflowResultTarget(
   // connected parent, plus exact request forms whose opener metadata is absent,
   // while leaving the connected parent and every non-request NEIS page untouched.
   if (system === 'neis') {
+    const ownedTargetIds = new Set([
+      resultTargetId,
+      systemTargetMap(session).neis,
+    ].filter((targetId): targetId is string => typeof targetId === 'string'));
     for (const target of targets) {
       if (
         closeTargetIds.has(target.targetId) ||
         target.targetId === anchorTargetId ||
-        (target.openerId !== undefined && target.openerId !== anchorTargetId) ||
         target.type !== 'page' ||
         !workflowTargetAllowed(target.url, session.officeCode, workflowId)
+      ) continue;
+      if (
+        !ownedTargetIds.has(target.targetId) &&
+        !targetOpenedFromAnchor(target, anchorTargetId, targets)
       ) continue;
       if (await isNeisRequestResultTarget(session, target)) {
         closeTargetIds.add(target.targetId);
@@ -1317,20 +1380,25 @@ const documentMenuMatch=(label)=>{
       const signal=ancestry.map(current=>(String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase()).join(' ');
       if(excluded.test(signal))return null;
       let scopeScore=0;
+      const targetRect=clickable.getBoundingClientRect();
       for(const heading of headings){
-        if(heading.element.ownerDocument!==element.ownerDocument)continue;
-        const headingAncestors=[];
-        for(let current=heading.element,depth=0;current&&depth<9;current=current.parentElement,depth+=1){headingAncestors.push(current);}
-        const commonIndex=ancestry.findIndex(current=>current!==element.ownerDocument.body&&current!==element.ownerDocument.documentElement&&headingAncestors.includes(current));
-        if(commonIndex>=0){
-          const headingIndex=headingAncestors.indexOf(ancestry[commonIndex]);
-          scopeScore=Math.max(scopeScore,420-(commonIndex+headingIndex)*35);
+        if(heading.element.ownerDocument===element.ownerDocument){
+          const headingAncestors=[];
+          for(let current=heading.element,depth=0;current&&depth<9;current=current.parentElement,depth+=1){headingAncestors.push(current);}
+          const commonIndex=ancestry.findIndex(current=>current!==element.ownerDocument.body&&current!==element.ownerDocument.documentElement&&headingAncestors.includes(current));
+          if(commonIndex>=0){
+            const headingIndex=headingAncestors.indexOf(ancestry[commonIndex]);
+            scopeScore=Math.max(scopeScore,420-(commonIndex+headingIndex)*35);
+          }
         }
-        const targetRect=clickable.getBoundingClientRect();
         const headingRect=heading.element.getBoundingClientRect();
-        const vertical=targetRect.top>=headingRect.top-12&&targetRect.top-headingRect.bottom<=720;
-        const horizontal=Math.abs((targetRect.left+targetRect.width/2)-(headingRect.left+headingRect.width/2))<=760;
-        if(vertical&&horizontal)scopeScore=Math.max(scopeScore,180-Math.min(120,Math.max(0,targetRect.top-headingRect.bottom)/6));
+        const targetTop=offsetY+targetRect.top;
+        const headingBottom=heading.offsetY+headingRect.bottom;
+        const targetCenter=offsetX+targetRect.left+targetRect.width/2;
+        const headingCenter=heading.offsetX+headingRect.left+headingRect.width/2;
+        const vertical=targetTop>=heading.offsetY+headingRect.top-12&&targetTop-headingBottom<=720;
+        const horizontal=Math.abs(targetCenter-headingCenter)<=760;
+        if(vertical&&horizontal)scopeScore=Math.max(scopeScore,180-Math.min(120,Math.max(0,targetTop-headingBottom)/6));
       }
       if(scopeScore<=0)return null;
       return {...entry,element:clickable,score:scopeScore+(String(element.id||'').endsWith(':text')?40:0)+(normalize(clickable.getAttribute?.('role')).toLowerCase()==='menuitem'?30:0)-Math.min(25,element.children.length)};
@@ -1384,6 +1452,12 @@ if(interaction==='edufine-popup-menu'){
   return labels.flatMap((label,index)=>{
     const match=popupMenuMatch(label);
     return match?[summary(match.element,index,label,'NEXACRO-POPUP-MENU',match.offsetX,match.offsetY)]:[];
+  });
+}
+if(interaction==='edufine-submenu'){
+  return labels.flatMap((label,index)=>{
+    const match=leftMenuMatch(label)||popupMenuMatch(label);
+    return match?[summary(match.element,index,label,'NEXACRO-SUBMENU',match.offsetX,match.offsetY)]:[];
   });
 }
 if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
@@ -1579,7 +1653,7 @@ const rightMenuMatch=()=>{
     .map(element=>({element,offsetX,offsetY})))
     .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
     .map((entry)=>{
-      const {element}=entry;
+      const {element,offsetX,offsetY}=entry;
       const rect=element.getBoundingClientRect();
       const ancestry=[];
       for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){
@@ -1669,20 +1743,25 @@ const documentMenuMatch=()=>{
       const signal=ancestry.map(current=>(String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase()).join(' ');
       if(excluded.test(signal))return null;
       let scopeScore=0;
+      const targetRect=clickable.getBoundingClientRect();
       for(const heading of headings){
-        if(heading.element.ownerDocument!==element.ownerDocument)continue;
-        const headingAncestors=[];
-        for(let current=heading.element,depth=0;current&&depth<9;current=current.parentElement,depth+=1){headingAncestors.push(current);}
-        const commonIndex=ancestry.findIndex(current=>current!==element.ownerDocument.body&&current!==element.ownerDocument.documentElement&&headingAncestors.includes(current));
-        if(commonIndex>=0){
-          const headingIndex=headingAncestors.indexOf(ancestry[commonIndex]);
-          scopeScore=Math.max(scopeScore,420-(commonIndex+headingIndex)*35);
+        if(heading.element.ownerDocument===element.ownerDocument){
+          const headingAncestors=[];
+          for(let current=heading.element,depth=0;current&&depth<9;current=current.parentElement,depth+=1){headingAncestors.push(current);}
+          const commonIndex=ancestry.findIndex(current=>current!==element.ownerDocument.body&&current!==element.ownerDocument.documentElement&&headingAncestors.includes(current));
+          if(commonIndex>=0){
+            const headingIndex=headingAncestors.indexOf(ancestry[commonIndex]);
+            scopeScore=Math.max(scopeScore,420-(commonIndex+headingIndex)*35);
+          }
         }
-        const targetRect=clickable.getBoundingClientRect();
         const headingRect=heading.element.getBoundingClientRect();
-        const vertical=targetRect.top>=headingRect.top-12&&targetRect.top-headingRect.bottom<=720;
-        const horizontal=Math.abs((targetRect.left+targetRect.width/2)-(headingRect.left+headingRect.width/2))<=760;
-        if(vertical&&horizontal)scopeScore=Math.max(scopeScore,180-Math.min(120,Math.max(0,targetRect.top-headingRect.bottom)/6));
+        const targetTop=offsetY+targetRect.top;
+        const headingBottom=heading.offsetY+headingRect.bottom;
+        const targetCenter=offsetX+targetRect.left+targetRect.width/2;
+        const headingCenter=heading.offsetX+headingRect.left+headingRect.width/2;
+        const vertical=targetTop>=heading.offsetY+headingRect.top-12&&targetTop-headingBottom<=720;
+        const horizontal=Math.abs(targetCenter-headingCenter)<=760;
+        if(vertical&&horizontal)scopeScore=Math.max(scopeScore,180-Math.min(120,Math.max(0,targetTop-headingBottom)/6));
       }
       if(scopeScore<=0)return null;
       return {...entry,element:clickable,score:scopeScore+(String(element.id||'').endsWith(':text')?40:0)+(normalize(clickable.getAttribute?.('role')).toLowerCase()==='menuitem'?30:0)-Math.min(25,element.children.length)};
@@ -1690,7 +1769,7 @@ const documentMenuMatch=()=>{
     .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
   return matches[0]||null;
 };
-if(interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'){
+if(interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'||interaction==='edufine-submenu'){
   const match=interaction==='neis-management-tab'
     ? neisManagementTabMatch()
     : interaction==='edufine-left-toggle'
@@ -1705,6 +1784,8 @@ if(interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||int
       ? rightMenuMatch()
     : interaction==='edufine-popup-menu'
       ? popupMenuMatch()
+    : interaction==='edufine-submenu'
+      ? leftMenuMatch()||popupMenuMatch()
       : choose('[id*="pdvMegaMenu"],[id*="pdvmegamenu"],[id*="megaMenu"],[id*="megamenu"]',':text');
   if(!match)return returnElement?null:{ok:false};
   if(returnElement)return match.element;
