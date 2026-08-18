@@ -1221,7 +1221,7 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
-  it('uses Nexacro job, left-menu, top-menu, and mega-menu controls for Edufine navigation', async () => {
+  it('uses each scoped Nexacro menu surface for Edufine navigation', async () => {
     const expressions: string[] = [];
     const inputCommands: string[] = [];
     const protocol = {
@@ -1269,8 +1269,14 @@ describe('Windows managed web automation', () => {
           if (expression.includes("'NEXACRO-TOP-MENU'")) {
             return { result: { value: [safeCandidate(0, '사업관리')] } };
           }
+          if (expression.includes("'NEXACRO-RIGHT-MENU'")) {
+            return { result: { value: [safeCandidate(0, '결재(긴급)')] } };
+          }
           if (expression.includes("'NEXACRO-MEGA-MENU'")) {
             return { result: { value: [safeCandidate(0, '품의등록')] } };
+          }
+          if (expression.includes("'NEXACRO-POPUP-MENU'")) {
+            return { result: { value: [safeCandidate(0, '표준서식(결재4인,협조4인)')] } };
           }
           if (expression.includes("'NEXACRO-LEFT-MENU'")) {
             return { result: { value: [safeCandidate(0, '사업담당')] } };
@@ -1279,7 +1285,9 @@ describe('Windows managed web automation', () => {
             return { result: { value: [safeCandidate(0, '업무관리')] } };
           }
           if (expression.includes('const interaction="edufine-top-menu"') ||
-            expression.includes('const interaction="edufine-mega-menu"')) {
+            expression.includes('const interaction="edufine-right-menu"') ||
+            expression.includes('const interaction="edufine-mega-menu"') ||
+            expression.includes('const interaction="edufine-popup-menu"')) {
             return { result: { value: { ok: true, x: 100, y: 50 } } };
           }
           if (expression.includes('const interaction="edufine-left-menu"')) {
@@ -1361,11 +1369,32 @@ describe('Windows managed web automation', () => {
       maxChecks: 1,
       checkDelayMs: 1,
     };
+    const rightStep = {
+      id: 'open-document-approval',
+      candidateLabels: ['결재(긴급)'],
+      interaction: 'edufine-right-menu' as const,
+      allowActionText: true,
+      postcondition: { kind: 'edufine-mega-menu-any' as const, labels: ['결재대기'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
     const megaStep = {
       id: 'open-purchase-registration',
       candidateLabels: ['품의등록'],
       interaction: 'edufine-mega-menu' as const,
       postcondition: { kind: 'visible-any' as const, labels: ['예산내역'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+    const popupStep = {
+      id: 'open-standard-form',
+      candidateLabels: ['표준서식(결재4인,협조4인)'],
+      interaction: 'edufine-popup-menu' as const,
+      postcondition: {
+        kind: 'new-window' as const,
+        processName: 'WXSClient' as const,
+        titleIncludes: '표준서식',
+      },
       maxChecks: 1,
       checkDelayMs: 1,
     };
@@ -1400,8 +1429,16 @@ describe('Windows managed web automation', () => {
       topStep,
     );
     await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(rightStep))[0],
+      rightStep,
+    );
+    await workflowPage.pressCandidate(
       (await workflowPage.inspectCandidates(megaStep))[0],
       megaStep,
+    );
+    await workflowPage.pressCandidate(
+      (await workflowPage.inspectCandidates(popupStep))[0],
+      popupStep,
     );
     await workflowPage.pressCandidate(
       (await workflowPage.inspectCandidates(frameExactStep))[0],
@@ -1416,6 +1453,8 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => expression.includes('[id*="TopFrame"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('[id*="pdvMegaMenu"]'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('leftframe|leftmenu|left_menu|lnb'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('rightframe|rightmenu|right_menu|quickmenu'))).toBe(true);
+    expect(expressions.some((expression) => expression.includes('popupmenu|popup_menu|popupdiv'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('NEXACRO-LEFT-TOGGLE'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('const interaction="frame-exact-text"'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('surfaceTextsOf(element).some'))).toBe(true);
@@ -1425,6 +1464,8 @@ describe('Windows managed web automation', () => {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
     expect(inputCommands).toEqual([
+      'mouseMoved', 'mousePressed', 'mouseReleased',
+      'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
@@ -1719,6 +1760,85 @@ describe('Windows managed web automation', () => {
     });
   });
 
+  it('keeps one Stream Panel system tab and closes only an owned duplicate', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const closedTargets = new Set<string>();
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do' },
+            { targetId: 'neis-primary', type: 'page', url: 'https://goe.neis.go.kr/jsp/main.jsp' },
+            { targetId: 'neis-duplicate', type: 'page', url: 'https://goe.neis.go.kr/jsp/main.jsp' },
+            { targetId: 'personal-neis', type: 'page', url: 'https://goe.neis.go.kr/personal-work' },
+          ].filter(({ targetId }) => !closedTargets.has(targetId)) };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Browser.getWindowForTarget') {
+          return { windowId: 17, bounds: { windowState: 'normal' } };
+        }
+        if (method === 'Target.closeTarget') {
+          closedTargets.add(String(params.targetId));
+          return { success: true };
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes("String(window.name||''")) {
+            return { result: { value: sessionId === 'neis-duplicate-session'
+              ? 'stream-panel-neis'
+              : '' } };
+          }
+          if (expression.includes('loginVisible')) {
+            const portal = sessionId === 'portal-session';
+            return { result: { value: {
+              href: portal
+                ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
+                : 'https://goe.neis.go.kr/jsp/main.jsp',
+              origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+              neisReady: !portal,
+              marker: portal ? 'unready' : 'neis-application-menu',
+            } } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connectionTargetIds: { neis: 'neis-primary' },
+      systemTargetIds: { neis: 'neis-primary' },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(session as never, ['neis'], undefined, undefined, true);
+
+    expect([...closedTargets]).toEqual(['neis-duplicate']);
+    expect(commands.some(({ method, params }) => (
+      method === 'Target.closeTarget' && params.targetId === 'personal-neis'
+    ))).toBe(false);
+    expect((session as typeof session & {
+      connectionTargetIds: { neis: string };
+    }).connectionTargetIds.neis).toBe('neis-primary');
+  });
+
   it('recovers a first-pass connection miss in the same Connect click', async () => {
     const reports: Array<{ system: string; state: string }> = [];
     let systemOpened = false;
@@ -1763,6 +1883,11 @@ describe('Windows managed web automation', () => {
             } } };
           }
         }
+        if (
+          method === 'Input.dispatchMouseEvent' &&
+          sessionId === 'portal-session' &&
+          params.type === 'mouseReleased'
+        ) systemOpened = true;
         return {};
       },
       close() { this.isClosed = true; },
@@ -1999,12 +2124,7 @@ describe('Windows managed web automation', () => {
     for (const expression of ssoExpressions) {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
-    expect(commands.filter(({ method }) => method === 'Target.createTarget').map(({ params }) => (
-      params.url
-    ))).toEqual([
-      'https://goe.neis.go.kr/jsp/main.jsp',
-      'https://klef.goe.go.kr/',
-    ]);
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
     expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(reports.filter(({ state }) => state === 'connected')).toEqual([
       { system: 'neis', state: 'connected' },

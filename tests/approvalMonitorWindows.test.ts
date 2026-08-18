@@ -173,7 +173,7 @@ describe('Windows approval count reader', () => {
     ])).toBe(6);
   });
 
-  it('allows 결재 only as the fixed Edufine top-menu route, never as a form action', () => {
+  it('allows 결재 only as the fixed Edufine right-menu route, never as a form action', () => {
     expect(APPROVAL_INBOX_WORKFLOWS.neis.steps.flatMap(
       (step) => step.candidateLabels,
     )).not.toContain('결재');
@@ -181,7 +181,7 @@ describe('Windows approval count reader', () => {
       (step) => step.candidateLabels.includes('결재'),
     );
     expect(edufineApproval).toMatchObject({
-      interaction: 'edufine-top-menu',
+      interaction: 'edufine-right-menu',
       allowActionText: true,
       skipWhenSatisfied: false,
     });

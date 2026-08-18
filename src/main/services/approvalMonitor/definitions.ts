@@ -68,7 +68,9 @@ const EDUFINE_DOCUMENT_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
       id: 'open-document-approval-menu',
       candidateLabels: ['결재', '결재(긴급)', '결재 (긴급)'],
       selection: 'first-available',
-      interaction: 'edufine-top-menu',
+      // In current K-Edufine layouts this launcher is in the right quick-menu,
+      // not TopFrame. The matcher still accepts an explicitly named right frame.
+      interaction: 'edufine-right-menu',
       allowActionText: true,
       postcondition: { kind: 'edufine-mega-menu-any', labels: EDUFINE_WAITING_LABELS },
       ...COMMON_CHECKS,

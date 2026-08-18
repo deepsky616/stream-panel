@@ -198,7 +198,7 @@ describe('managed web workflow definitions', () => {
     ]);
     expect(definitions['edufine-draft'].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-left-menu', 'edufine-mega-menu', 'edufine-mega-menu']);
+    )).toEqual(['edufine-job', 'edufine-left-menu', 'edufine-mega-menu', 'edufine-popup-menu']);
     expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
       kind: 'visible-any',
       labels: ['기안'],
@@ -238,6 +238,14 @@ describe('managed web workflow definitions', () => {
     expect(definitions['neis-trip'].steps.at(-1)?.postcondition).toEqual({
       kind: 'new-page-any',
       labels: ['출장신청'],
+    });
+    expect(definitions['neis-leave'].steps[1].postcondition).toEqual({
+      kind: 'active-view-any',
+      labels: ['개인근무상황관리', '개인근무상황'],
+    });
+    expect(definitions['neis-trip'].steps[1].postcondition).toEqual({
+      kind: 'active-view-any',
+      labels: ['개인출장관리', '출장관리'],
     });
     expect(definitions['neis-leave'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
     expect(definitions['neis-trip'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
@@ -331,7 +339,7 @@ describe('managed web workflow definitions', () => {
     expect(clickedLabels).toContain('결재(긴급)');
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-top-menu', 'edufine-mega-menu']);
+    )).toEqual(['edufine-job', 'edufine-right-menu', 'edufine-mega-menu']);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.edufine[0].steps[1].postcondition).toEqual({
       kind: 'edufine-mega-menu-any',
       labels: ['결재대기', '결재 대기', '결재대기함', '결재 대기함'],

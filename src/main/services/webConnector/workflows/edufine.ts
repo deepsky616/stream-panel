@@ -121,9 +121,9 @@ export const EDUFINE_WORKFLOWS = {
           '표준서식(결재 4인,협조 4인)',
         ],
         selection: 'first-available',
-        // The same text can remain in breadcrumbs or hidden frames. Limit the
-        // click to the currently opened Edufine MegaMenu item.
-        interaction: 'edufine-mega-menu',
+        // 공용서식 opens a second-level Nexacro popup whose id is not always
+        // under pdvMegaMenu. Click only the visible popup/submenu entry.
+        interaction: 'edufine-popup-menu',
         postcondition: {
           kind: 'new-window',
           processName: 'WXSClient',

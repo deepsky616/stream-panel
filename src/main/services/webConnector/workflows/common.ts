@@ -32,6 +32,7 @@ export type WorkflowPostcondition =
   | { kind: 'visible-groups'; groups: readonly (readonly string[])[] }
   | { kind: 'dialog-title-any'; labels: readonly string[] }
   | { kind: 'tab-selected-any'; labels: readonly string[] }
+  | { kind: 'active-view-any'; labels: readonly string[] }
   | { kind: 'new-page-any'; labels: readonly string[] }
   | { kind: 'new-window'; processName: 'WXSClient'; titleIncludes: string };
 
@@ -48,7 +49,9 @@ export interface WorkflowStep {
     | 'edufine-left-menu'
     | 'edufine-left-toggle'
     | 'edufine-top-menu'
+    | 'edufine-right-menu'
     | 'edufine-mega-menu'
+    | 'edufine-popup-menu'
     | 'edufine-exact-text';
   selection?: 'unique-any' | 'first-available';
   navigationOnly?: boolean;

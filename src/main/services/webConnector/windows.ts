@@ -906,7 +906,9 @@ const displayedLabelMatches=(value,label)=>{
   return /^(?:[:：]\\s*)?(?:[([{]\\s*)?\\d{1,4}\\s*(?:건)?\\s*(?:[)\\]}])?$/.test(suffix);
 };
 const selector=${JSON.stringify(
-    condition.kind === 'tab-selected-any'
+    condition.kind === 'active-view-any'
+      ? 'h1,h2,h3,[role="heading"],[role="tab"][aria-selected="true"],[aria-current="page"],[data-selected="true"],.cl-selected,.cl-sidenavigation-item-selected,.tab.active,a.active,a.on,a.selected,li.active>a,li.on>a,li.selected>a'
+      : condition.kind === 'tab-selected-any'
       ? '[role="tab"][aria-selected="true"],[aria-current="page"],[role="tab"].active,.tab.active,a.active,a.on,a.selected,li.active>a,li.on>a,li.selected>a'
       : condition.kind === 'edufine-mega-menu-any'
         ? '[id*="pdvMegaMenu"],[id*="pdvMegaMenu"] *,[id*="pdvmegamenu"],[id*="pdvmegamenu"] *,[id*="megaMenu"],[id*="megaMenu"] *,[id*="megamenu"],[id*="megamenu"] *'
@@ -1084,6 +1086,61 @@ const leftToggleMatch=(label)=>{
   }).sort((left,right)=>right.score-left.score);
   return ranked[0]?.score>10?{...menu,element:ranked[0].element}:menu;
 };
+const rightMenuMatch=(label)=>{
+  const marker=/rightframe|rightmenu|right_menu|quickmenu|quick_menu|shortcut|taskmenu|task_menu|worklist/;
+  const excluded=/leftframe|leftmenu|left_menu|lnb|pdvmegamenu|megamenu|mega_menu/;
+  return documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element,offsetX,offsetY}=entry;
+      const rect=element.getBoundingClientRect();
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){
+        ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
+      }
+      const signal=ancestry.join(' ');
+      if(excluded.test(signal))return null;
+      const width=Math.max(1,Number(element.ownerDocument?.defaultView?.innerWidth)||1920);
+      const explicit=marker.test(signal);
+      const rightPosition=rect.right>=width*0.62||rect.left>=width*0.56;
+      if(!explicit&&!rightPosition)return null;
+      const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      return {...entry,element:clickable,score:(explicit?240:0)+(rightPosition?100:0)+(String(element.id||'').endsWith(':text')?30:0)+(clickable!==element?10:0)-Math.min(20,element.children.length)};
+    })
+    .filter(Boolean)
+    .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)[0]||null;
+};
+const popupMenuMatch=(label)=>{
+  const marker=/popupmenu|popup_menu|popupdiv|popup_div|submenu|sub_menu|pdiv|pdv|megamenu|mega_menu|listbox|menupopup|menu_popup/;
+  const excluded=/topframe|topmenu|top_menu|leftframe|leftmenu|left_menu|lnb/;
+  const exact=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element}=entry;
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){
+        ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
+      }
+      const signal=ancestry.join(' ');
+      if(excluded.test(signal))return null;
+      const explicit=marker.test(signal)||normalize(element.getAttribute?.('role')).toLowerCase()==='menuitem';
+      const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      return {...entry,element:clickable,explicit,score:(explicit?200:0)+(String(element.id||'').endsWith(':text')?60:0)+(clickable!==element?20:0)-Math.min(30,element.children.length)};
+    }).filter(Boolean);
+  const scoped=exact.filter(entry=>entry.explicit).sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
+  if(scoped[0])return scoped[0];
+  // Some education-office skins render the submenu without a semantic id.
+  // An exact visible label is safe only when it resolves to one clickable control.
+  const unique=[];
+  for(const entry of exact.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)){
+    if(!unique.some(candidate=>candidate.element===entry.element))unique.push(entry);
+  }
+  return unique.length===1?unique[0]:null;
+};
 if(interaction==='edufine-left-toggle'){
   return labels.flatMap((label,index)=>{
     const match=leftToggleMatch(label);
@@ -1102,10 +1159,22 @@ if(interaction==='edufine-top-menu'){
     return match?[summary(match.element,index,label,'NEXACRO-TOP-MENU',match.offsetX,match.offsetY)]:[];
   });
 }
+if(interaction==='edufine-right-menu'){
+  return labels.flatMap((label,index)=>{
+    const match=rightMenuMatch(label);
+    return match?[summary(match.element,index,label,'NEXACRO-RIGHT-MENU',match.offsetX,match.offsetY)]:[];
+  });
+}
 if(interaction==='edufine-mega-menu'){
   return labels.flatMap((label,index)=>{
     const match=choose('[id*="pdvMegaMenu"],[id*="pdvmegamenu"],[id*="megaMenu"],[id*="megamenu"]',label,':text');
     return match?[summary(match.element,index,label,'NEXACRO-MEGA-MENU',match.offsetX,match.offsetY)]:[];
+  });
+}
+if(interaction==='edufine-popup-menu'){
+  return labels.flatMap((label,index)=>{
+    const match=popupMenuMatch(label);
+    return match?[summary(match.element,index,label,'NEXACRO-POPUP-MENU',match.offsetX,match.offsetY)]:[];
   });
 }
 if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
@@ -1292,13 +1361,70 @@ const leftToggleMatch=()=>{
   }).sort((left,right)=>right.score-left.score);
   return ranked[0]?.score>10?{...menu,element:ranked[0].element}:menu;
 };
-if(interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-mega-menu'){
+const rightMenuMatch=()=>{
+  const marker=/rightframe|rightmenu|right_menu|quickmenu|quick_menu|shortcut|taskmenu|task_menu|worklist/;
+  const excluded=/leftframe|leftmenu|left_menu|lnb|pdvmegamenu|megamenu|mega_menu/;
+  return documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element}=entry;
+      const rect=element.getBoundingClientRect();
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){
+        ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
+      }
+      const signal=ancestry.join(' ');
+      if(excluded.test(signal))return null;
+      const width=Math.max(1,Number(element.ownerDocument?.defaultView?.innerWidth)||1920);
+      const explicit=marker.test(signal);
+      const rightPosition=rect.right>=width*0.62||rect.left>=width*0.56;
+      if(!explicit&&!rightPosition)return null;
+      const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      return {...entry,element:clickable,score:(explicit?240:0)+(rightPosition?100:0)+(String(element.id||'').endsWith(':text')?30:0)+(clickable!==element?10:0)-Math.min(20,element.children.length)};
+    })
+    .filter(Boolean)
+    .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)[0]||null;
+};
+const popupMenuMatch=()=>{
+  const marker=/popupmenu|popup_menu|popupdiv|popup_div|submenu|sub_menu|pdiv|pdv|megamenu|mega_menu|listbox|menupopup|menu_popup/;
+  const excluded=/topframe|topmenu|top_menu|leftframe|leftmenu|left_menu|lnb/;
+  const exact=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element}=entry;
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){
+        ancestry.push((String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase());
+      }
+      const signal=ancestry.join(' ');
+      if(excluded.test(signal))return null;
+      const explicit=marker.test(signal)||normalize(element.getAttribute?.('role')).toLowerCase()==='menuitem';
+      const clickable=element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick]')||element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      return {...entry,element:clickable,explicit,score:(explicit?200:0)+(String(element.id||'').endsWith(':text')?60:0)+(clickable!==element?20:0)-Math.min(30,element.children.length)};
+    }).filter(Boolean);
+  const scoped=exact.filter(entry=>entry.explicit).sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
+  if(scoped[0])return scoped[0];
+  const unique=[];
+  for(const entry of exact.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)){
+    if(!unique.some(candidate=>candidate.element===entry.element))unique.push(entry);
+  }
+  return unique.length===1?unique[0]:null;
+};
+if(interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'){
   const match=interaction==='edufine-left-toggle'
     ? leftToggleMatch()
     : interaction==='edufine-left-menu'
       ? leftMenuMatch()
     : interaction==='edufine-top-menu'
       ? choose('[id*="TopFrame"][id*="btnMenu_"],[id*="topframe"][id*="btnmenu_"]',':icontext')
+    : interaction==='edufine-right-menu'
+      ? rightMenuMatch()
+    : interaction==='edufine-popup-menu'
+      ? popupMenuMatch()
       : choose('[id*="pdvMegaMenu"],[id*="pdvmegamenu"],[id*="megaMenu"],[id*="megamenu"]',':text');
   if(!match)return returnElement?null:{ok:false};
   if(returnElement)return match.element;
@@ -3258,6 +3384,49 @@ async function findDedicatedConnectionTarget(
   return null;
 }
 
+async function closeDuplicateDedicatedConnectionTargets(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  keepTargetId: string,
+): Promise<void> {
+  const protocol = session.connection.protocol;
+  const expectedName = connectionTabName(system);
+  let targets: WindowsTargetInfo[];
+  try {
+    targets = readTargetInfos(
+      await protocol.send('Target.getTargets', {}),
+    ).filter((target) => (
+      target.type === 'page' &&
+      target.targetId !== keepTargetId &&
+      systemTargetAllowed(target, session.officeCode, system)
+    ));
+  } catch {
+    return;
+  }
+  for (const target of targets) {
+    let attached: AttachedWindowsTarget | undefined;
+    let ownedDuplicate = false;
+    try {
+      attached = await attachWindowsTarget(session, target);
+      ownedDuplicate = await evaluateValue<unknown>(
+        session,
+        attached.sessionId,
+        'String(window.name||\'\')',
+      ) === expectedName;
+    } catch {
+      // Never close a tab whose Stream Panel ownership cannot be verified.
+    } finally {
+      if (attached) await detachWindowsTarget(session, attached);
+    }
+    if (!ownedDuplicate) continue;
+    try {
+      await protocol.send('Target.closeTarget', { targetId: target.targetId });
+    } catch {
+      // A duplicate can disappear while the official SSO tab finishes opening.
+    }
+  }
+}
+
 async function claimDedicatedConnectionTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
@@ -3278,6 +3447,7 @@ async function claimDedicatedConnectionTarget(
   } finally {
     if (attached) await detachWindowsTarget(session, attached);
   }
+  await closeDuplicateDedicatedConnectionTargets(session, system, target.targetId);
 }
 
 async function openDirectConnectionTarget(
@@ -3573,32 +3743,12 @@ async function prepareOfficeSystemsViaPortal(
     return results;
   }
 
-  const preopenedTargetIds = new Map<WebWorkflowSystem, string>();
-  if (foreground) {
-    // Put the two dedicated tabs immediately to the right of the portal, in a
-    // deterministic NEIS -> Edufine order. The official portal buttons below
-    // reuse these named tabs, so SSO readiness no longer delays tab creation.
-    for (const system of orderedSystems) {
-      try {
-        if (await findDedicatedConnectionTarget(session, system)) continue;
-        const target = await openDirectConnectionTarget(session, system);
-        await claimDedicatedConnectionTarget(session, system, target);
-        preopenedTargetIds.set(system, target.targetId);
-      } catch {
-        // The normal portal click can still create the target. Pre-opening is a
-        // latency optimization and must not make connection less reliable.
-      }
-    }
-  }
-
   try {
     for (const system of orderedSystems) {
       throwIfApprovalCheckCancelled(signal);
       const label = system === 'neis' ? '나이스' : 'K-에듀파인';
       const reuseStartedAt = Date.now();
-      const authenticatedTarget = preopenedTargetIds.has(system)
-        ? null
-        : await findAuthenticatedConnectionTarget(session, system);
+      const authenticatedTarget = await findAuthenticatedConnectionTarget(session, system);
       if (authenticatedTarget) {
         try {
           const normalized = await normalizeConnectedSystemTarget(

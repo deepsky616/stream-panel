@@ -27,10 +27,13 @@ export const NEIS_WORKFLOWS = {
         id: 'open-leave-management',
         candidateLabels: ['개인근무상황관리', '개인근무상황'],
         interaction: 'mouse',
-        postcondition: { kind: 'visible-any', labels: ['신청'] },
+        postcondition: {
+          kind: 'active-view-any',
+          labels: ['개인근무상황관리', '개인근무상황'],
+        },
         ...COMMON_CHECKS,
-        // Both leave and trip screens expose a generic 신청 label. Always
-        // click the requested management menu when switching workflows.
+        // Both leave and trip screens expose a generic 신청 label. Wait for
+        // the requested manager to become the selected view before clicking it.
         skipWhenSatisfied: false,
       },
       {
@@ -67,10 +70,13 @@ export const NEIS_WORKFLOWS = {
         id: 'open-trip-management',
         candidateLabels: ['개인출장관리', '출장관리'],
         interaction: 'mouse',
-        postcondition: { kind: 'visible-any', labels: ['신청'] },
+        postcondition: {
+          kind: 'active-view-any',
+          labels: ['개인출장관리', '출장관리'],
+        },
         ...COMMON_CHECKS,
-        // A leave screen also satisfies the generic 신청 postcondition.
-        // Re-enter the trip manager instead of reusing the leave screen.
+        // A leave screen also exposes 신청. Do not advance until the trip
+        // manager itself is selected or rendered as the active page heading.
         skipWhenSatisfied: false,
       },
       {
