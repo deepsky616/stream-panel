@@ -36,14 +36,14 @@ function workflowAction(): ActionItem {
 }
 
 describe('web work settings view model', () => {
-  it('omits the redundant folder creation template from the action library', () => {
+  it('offers both a panel folder and a Windows folder launcher without mixing them up', () => {
     const html = renderToStaticMarkup(createElement(ActionLibrary, {
       platform: 'win32',
       educationOfficeCode: 'goe',
       onAdd: () => undefined,
     }));
 
-    expect(html).not.toContain('폴더 만들기');
+    expect(html).toContain('폴더 만들기');
     expect(html).toContain('폴더 열기');
   });
 
