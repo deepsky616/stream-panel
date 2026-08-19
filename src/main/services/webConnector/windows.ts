@@ -628,6 +628,7 @@ async function closeRememberedWorkflowResultTarget(
   // connected parent, plus exact request forms whose opener metadata is absent,
   // while leaving the connected parent and every non-request NEIS page untouched.
   if (system === 'neis') {
+    await closeNeisRequestDialogInTarget(session, anchorTargetId);
     const anchorWindowId = await targetBrowserWindowId(session, anchorTargetId);
     const ownedTargetIds = new Set([
       resultTargetId,
@@ -650,11 +651,12 @@ async function closeRememberedWorkflowResultTarget(
         !openedFromAnchor &&
         target.openerId !== undefined
       ) continue;
-      const targetWindowId = openedFromAnchor
+      const targetWindowId = openedFromAnchor ||
+        target.openerId === undefined ||
+        ownedTargetIds.has(target.targetId)
         ? await targetBrowserWindowId(session, target.targetId)
         : undefined;
-      const separateChildWindow = openedFromAnchor &&
-        anchorWindowId !== undefined &&
+      const separateChildWindow = anchorWindowId !== undefined &&
         targetWindowId !== undefined &&
         targetWindowId !== anchorWindowId;
       // A request window is sometimes a Nexacro surface whose document title
@@ -1008,6 +1010,158 @@ const clickable=()=>documents.flatMap(({document,offsetX,offsetY})=>
     .map(element=>({element,offsetX,offsetY}))
 );
 `;
+
+function neisRequestDialogCloseExpression(returnElement = false): string {
+  return `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const returnElement=${JSON.stringify(returnElement)};
+const requestLabels=${JSON.stringify(NEIS_REQUEST_RESULT_LABELS)}.map(normalize);
+const closeLabels=new Set(['닫기','창닫기','창 닫기','close','x','×'].map(value=>normalize(value).toLowerCase()));
+const displayedLabelMatches=(value,label)=>{
+  const compact=(input)=>normalize(input).replace(/\\s+/g,'');
+  return compact(value)===compact(label)||compact(value).includes(compact(label));
+};
+const explicitContainer=(element)=>{
+  for(let current=element,depth=0;current&&depth<12;current=current.parentElement,depth+=1){
+    const role=normalize(current.getAttribute?.('role')).toLowerCase();
+    const signal=(String(current.id||'')+' '+String(current.className||'')).toLowerCase();
+    if(role==='dialog'||current.tagName==='DIALOG'||current.getAttribute?.('aria-modal')==='true'||
+      /popup|dialog|modal|childframe|window/.test(signal))return current;
+  }
+  return null;
+};
+const closeCandidates=(document,container)=>Array.from((container||document).querySelectorAll(
+  'button,a,[role="button"],input[type="button"],[onclick],[title],[aria-label],'+
+  '[id*="close"],[id*="Close"],[id*="CLOSE"],[class*="close"],[class*="Close"],[class*="CLOSE"]'
+)).filter(element=>{
+  if(!visible(element)||!enabled(element))return false;
+  const texts=surfaceTextsOf(element).map(value=>normalize(value).toLowerCase());
+  const signal=(String(element.id||'')+' '+String(element.className||'')+' '+
+    String(element.getAttribute?.('title')||'')+' '+String(element.getAttribute?.('aria-label')||'')).toLowerCase();
+  return texts.some(text=>closeLabels.has(text))||
+    /(?:^|[_:-])(btn)?close(?:button)?(?:$|[_:-])|창\\s*닫기|닫기/.test(signal);
+});
+const matches=[];
+for(const {document,offsetX,offsetY} of documents){
+  const titleMatches=requestLabels.some(label=>displayedLabelMatches(document.title,label));
+  const markers=Array.from(document.querySelectorAll(
+    'h1,h2,h3,[role="heading"],[role="dialog"],[aria-modal="true"],[id*="title"],[class*="title"],[aria-label],[title]'
+  )).filter(element=>visible(element)&&surfaceTextsOf(element).some(text=>
+    requestLabels.some(label=>displayedLabelMatches(text,label))
+  ));
+  const containers=Array.from(new Set(markers.map(explicitContainer).filter(Boolean)));
+  if(titleMatches&&containers.length===0)containers.push(document.body);
+  if(markers.length>0&&containers.length===0){
+    const globalCandidates=closeCandidates(document,null);
+    if(globalCandidates.length===1)containers.push(document.body);
+  }
+  for(const container of containers){
+    for(const element of closeCandidates(document,container)){
+      const rect=element.getBoundingClientRect();
+      const signal=(String(element.id||'')+' '+String(element.className||'')+' '+
+        surfaceTextsOf(element).join(' ')).toLowerCase();
+      const score=(container===document.body?0:200)+
+        (/btnclose|closebutton|popupclose|windowclose/.test(signal)?120:0)+
+        (surfaceTextsOf(element).some(text=>closeLabels.has(normalize(text).toLowerCase()))?80:0)-
+        Math.min(30,element.children.length);
+      matches.push({element,offsetX,offsetY,score});
+    }
+  }
+}
+matches.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
+const match=matches[0];
+if(!match)return returnElement?null:{found:false};
+if(returnElement)return match.element;
+const rect=match.element.getBoundingClientRect();
+return {found:true,x:match.offsetX+rect.left+rect.width/2,y:match.offsetY+rect.top+rect.height/2};
+})()`;
+}
+
+async function closeNeisRequestDialogInTarget(
+  session: WindowsManagedBrowserSession,
+  targetId: string,
+): Promise<boolean> {
+  const target: WindowsTargetInfo = { targetId, type: 'page', url: '' };
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    const result = await evaluateValue<{
+      found?: unknown;
+      x?: unknown;
+      y?: unknown;
+    }>(session, attached.sessionId, neisRequestDialogCloseExpression());
+    if (
+      result?.found === true &&
+      typeof result.x === 'number' &&
+      typeof result.y === 'number'
+    ) {
+      await dispatchCdpMouseClick(session, attached.sessionId, result.x, result.y);
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      return true;
+    }
+    const expression = neisRequestDialogCloseExpression(true);
+    for (const contextId of await childFrameExecutionContexts(
+      session,
+      attached.sessionId,
+      'neis-request-dialog-close',
+    )) {
+      let objectId: string | undefined;
+      try {
+        const response = await session.connection.protocol.send<CdpEvaluationResponse>(
+          'Runtime.evaluate',
+          {
+            expression,
+            contextId,
+            returnByValue: false,
+            awaitPromise: false,
+            userGesture: true,
+            objectGroup: 'stream-panel-neis-dialog-close',
+          },
+          attached.sessionId,
+        );
+        if (
+          response.exceptionDetails ||
+          response.result?.subtype !== 'node' ||
+          typeof response.result.objectId !== 'string'
+        ) continue;
+        objectId = response.result.objectId;
+        const center = portalQuadCenter(await session.connection.protocol.send(
+          'DOM.getContentQuads',
+          { objectId },
+          attached.sessionId,
+        ));
+        if (!center) continue;
+        await dispatchCdpMouseClick(
+          session,
+          attached.sessionId,
+          center.x,
+          center.y,
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, 200));
+        return true;
+      } catch {
+        // A request dialog can close or rebuild its frame during the click.
+      } finally {
+        if (objectId) {
+          try {
+            await session.connection.protocol.send(
+              'Runtime.releaseObject',
+              { objectId },
+              attached.sessionId,
+            );
+          } catch {
+            // The frame can disappear after its close control is clicked.
+          }
+        }
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+}
 
 const CANDIDATE_SCAN_EXPRESSION = `(()=>{
 ${PAGE_ELEMENT_HELPERS}
@@ -2156,12 +2310,17 @@ async function dispatchCdpMouseClick(
   await protocol.send('Input.dispatchMouseEvent', {
     type: 'mouseMoved', x, y,
   }, sessionId);
-  await protocol.send('Input.dispatchMouseEvent', {
-    type: 'mousePressed', x, y, button: 'left', clickCount,
-  }, sessionId);
-  await protocol.send('Input.dispatchMouseEvent', {
-    type: 'mouseReleased', x, y, button: 'left', clickCount,
-  }, sessionId);
+  for (let count = 1; count <= clickCount; count += 1) {
+    await protocol.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x, y, button: 'left', clickCount: count,
+    }, sessionId);
+    await protocol.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x, y, button: 'left', clickCount: count,
+    }, sessionId);
+    if (count < clickCount) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    }
+  }
 }
 
 async function extendManagedSystemSessions(

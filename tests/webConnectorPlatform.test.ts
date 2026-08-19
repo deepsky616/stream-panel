@@ -1195,6 +1195,7 @@ describe('Windows managed web automation', () => {
 
     expect(closedTargetIds).toEqual(['leave-request']);
     expect(detachedSessionIds).toEqual([
+      'neis-main-session',
       'leave-request-session',
       'leave-request-session',
       'leave-request-session',
@@ -1269,7 +1270,7 @@ describe('Windows managed web automation', () => {
     expect(closedTargetIds).toEqual([]);
   });
 
-  it('closes a markerless NEIS popup when the connected parent opened a separate browser window', async () => {
+  it('closes a markerless NEIS popup in a separate browser window without opener metadata', async () => {
     let requestOpen = true;
     const closedTargetIds: string[] = [];
     const protocol = {
@@ -1281,7 +1282,6 @@ describe('Windows managed web automation', () => {
               targetId: 'markerless-request',
               type: 'page',
               url: 'https://goe.neis.go.kr/request',
-              openerId: 'neis-main',
             }] : []),
             {
               targetId: 'neis-main',
@@ -1331,6 +1331,65 @@ describe('Windows managed web automation', () => {
 
     expect(requestOpen).toBe(false);
     expect(closedTargetIds).toEqual([]);
+  });
+
+  it('closes an in-page NEIS request dialog before reusing its connected parent', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'neis-main',
+            type: 'page',
+            url: 'https://goe.neis.go.kr/main',
+          }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'neis-main-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 73 };
+        if (
+          method === 'Runtime.evaluate' &&
+          String(params.expression ?? '').includes('const requestLabels=')
+        ) {
+          return { result: { value: { found: true, x: 420, y: 180 } } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+
+    await resetWindowsWorkflowTargets({
+      officeCode: 'goe',
+      browserId: 'edge',
+      systemTargetIds: { neis: 'neis-main' },
+      connectionTargetIds: { neis: 'neis-main' },
+      workflowResultTargetIds: {},
+      connection: {
+        protocol,
+        transportKind: 'pipe',
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    } as never, 'neis-trip');
+
+    expect(commands).toContainEqual({
+      method: 'Input.dispatchMouseEvent',
+      params: {
+        type: 'mouseReleased',
+        x: 420,
+        y: 180,
+        button: 'left',
+        clickCount: 1,
+      },
+      sessionId: 'neis-main-session',
+    });
+    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
   });
 
   it('does not close a NEIS request page opened by another NEIS tab', async () => {
@@ -1846,19 +1905,10 @@ describe('Windows managed web automation', () => {
     for (const expression of expressions.filter((value) => value.includes('displayedLabelMatches'))) {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
-    expect(inputCommands).toEqual([
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-      'mouseMoved', 'mousePressed', 'mouseReleased',
-    ]);
-    expect(releasedClickCounts).toEqual([1, 1, 1, 1, 1, 1, 1, 2, 1, 1]);
+    expect(inputCommands.filter((type) => type === 'mouseMoved')).toHaveLength(10);
+    expect(inputCommands.filter((type) => type === 'mousePressed')).toHaveLength(11);
+    expect(inputCommands.filter((type) => type === 'mouseReleased')).toHaveLength(11);
+    expect(releasedClickCounts).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1]);
     await workflowPage.release?.();
   });
 
