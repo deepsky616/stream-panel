@@ -86,10 +86,17 @@ export interface CustomWebWorkflowStep {
    */
   kind?:
     | 'exact-text'
+    | 'neis-management-tab'
+    | 'neis-new-page'
     | 'edufine-job'
     | 'edufine-top-menu'
     | 'edufine-mega-menu'
-    | 'edufine-left-menu';
+    | 'edufine-left-menu'
+    | 'edufine-document-menu'
+    | 'edufine-right-menu'
+    | 'edufine-popup-menu'
+    | 'edufine-submenu'
+    | 'edufine-wxs-form';
 }
 
 export interface CustomWebWorkflowDefinition {

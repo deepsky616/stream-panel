@@ -788,10 +788,13 @@ export async function executeWindowsWorkflow(
     throw new Error('웹 업무와 업무용 브라우저 설정이 서로 다릅니다. 편집기에서 브라우저를 다시 선택해 주세요.');
   }
   const definition = managedWorkflowDefinition(request);
-  if (request.workflowId === 'edufine-draft' && !await dependencies.isWxsClientRegistered()) {
+  const expectsWxsClient = definition.steps.some(
+    ({ postcondition }) => postcondition.kind === 'new-window',
+  );
+  if (expectsWxsClient && !await dependencies.isWxsClientRegistered()) {
     throw new Error('기안 편집 프로그램이 설치되어 있지 않습니다. 에듀파인 설치 안내에서 WXSClient를 설치한 뒤 다시 시도해 주세요.');
   }
-  const existingWindows = request.workflowId === 'edufine-draft'
+  const existingWindows = expectsWxsClient
     ? new Map((await dependencies.listWxsClientWindows()).map((window) => [
         `${window.id}:${window.handle ?? 0}`,
         window.title,
@@ -892,7 +895,7 @@ export async function executeWindowsWorkflow(
       result = await runWorkflow(definition, guardedPage, { signal });
     }
     if (!result) throw new Error('에듀파인 업무 이동 경로를 완료하지 못했습니다. 업무용 브라우저에서 메뉴 권한을 확인해 주세요.');
-    if (request.workflowId === 'edufine-draft') {
+    if (expectsWxsClient) {
       if (!newEditorWindow || !await dependencies.focusWindow(newEditorWindow.id)) {
         throw new Error('새 기안 편집기 창을 앞으로 가져오지 못했습니다. 작업 표시줄에서 WXSClient 창을 직접 선택해 주세요.');
       }

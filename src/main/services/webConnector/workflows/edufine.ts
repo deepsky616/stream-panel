@@ -27,10 +27,10 @@ const OPEN_STANDARD_FORM_STEP = {
   id: 'open-standard-form',
   candidateLabels: STANDARD_FORM_LABELS,
   selection: 'first-available',
-  // Some Nexacro skins select a standard form on the first mouse press and
-  // launch WXSClient only on the double-click gesture. Use the dedicated form
-  // launcher, preferring the open popup before the persistent left-tree copy.
-  interaction: 'edufine-form-launch',
+  // Restore the proven exact-element click used by v1.5.10. The current frame
+  // traversal still reaches nested/isolated frames, while this interaction
+  // clicks the exact standard-form text instead of its list container.
+  interaction: 'frame-exact-text',
   postcondition: {
     kind: 'new-window',
     processName: 'WXSClient',

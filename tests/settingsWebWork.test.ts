@@ -67,6 +67,8 @@ describe('web work settings view model', () => {
     expect(html).toContain('에듀파인');
     expect(html).toContain('업무 이름');
     expect(html).toContain('누를 메뉴 이름');
+    expect(html).toContain('하단 관리 탭');
+    expect(html).toContain('새 신청 창 열기');
     expect(html).toContain('도착 화면 확인 문구');
     expect(html).toContain('키로 추가');
   });
@@ -97,6 +99,9 @@ describe('web work settings view model', () => {
     expect(html).toContain('내 웹 업무 편집');
     expect(html).toContain('에듀파인 문서함');
     expect(html).toContain('서울특별시교육청');
+    expect(html).toContain('문서관리 메뉴');
+    expect(html).toContain('하위 메뉴');
+    expect(html).toContain('기안 편집기 열기');
     expect(html).toContain('변경 내용 저장');
   });
 

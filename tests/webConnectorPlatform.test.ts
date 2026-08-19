@@ -1640,6 +1640,12 @@ describe('Windows managed web automation', () => {
           if (expression.includes("[id$='btnUseTimeExtn']")) {
             return { result: { value: { handled: false } } };
           }
+          if (
+            expression.includes('const interaction="frame-exact-text";') &&
+            expression.includes('const labels=')
+          ) {
+            return { result: { value: [safeCandidate(0, '표준서식(결재4인,협조4인)')] } };
+          }
           if (expression.includes("'NEXACRO-COMBO'")) {
             return { result: { value: [safeCandidate(0, '학교회계')] } };
           }
@@ -1650,7 +1656,7 @@ describe('Windows managed web automation', () => {
             return { result: { value: [safeCandidate(0, '학교회계')] } };
           }
           if (expression.includes("'EXACT-TEXT'")) {
-            return { result: { value: [safeCandidate(0, '내 문서함')] } };
+            return { result: { value: [safeCandidate(0, '표준서식(결재4인,협조4인)')] } };
           }
           if (expression.includes("'NEXACRO-TOP-MENU'")) {
             return { result: { value: [safeCandidate(0, '사업관리')] } };
@@ -1810,8 +1816,8 @@ describe('Windows managed web automation', () => {
       checkDelayMs: 1,
     };
     const frameExactStep = {
-      id: 'open-custom-menu',
-      candidateLabels: ['내 문서함'],
+      id: 'open-standard-form-exactly',
+      candidateLabels: ['표준서식(결재4인,협조4인)'],
       interaction: 'frame-exact-text' as const,
       selection: 'first-available' as const,
       postcondition: { kind: 'visible-any' as const, labels: ['문서함 목록'] },
@@ -1905,6 +1911,76 @@ describe('Windows managed web automation', () => {
     for (const expression of expressions.filter((value) => value.includes('displayedLabelMatches'))) {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
+    const exactFormAction = expressions.find((expression) => (
+      expression.includes('const interaction="frame-exact-text";') &&
+      expression.includes('const wanted=')
+    ));
+    expect(exactFormAction).toBeDefined();
+    expect(exactFormAction).toContain(`const wanted="표준서식(결재4인,협조4인)";`);
+    class FakeElement {
+      readonly tagName = 'DIV';
+      readonly className = '';
+      readonly hidden = false;
+      readonly disabled = false;
+      readonly children: FakeElement[] = [];
+      parentElement: FakeElement | null = null;
+      ownerDocument!: FakeDocument;
+
+      constructor(
+        readonly id: string,
+        readonly innerText: string,
+        private readonly rect: { left: number; top: number; width: number; height: number },
+      ) {}
+
+      get textContent(): string { return this.innerText; }
+      getAttribute(): null { return null; }
+      closest(): null { return null; }
+      getBoundingClientRect() { return { ...this.rect, right: this.rect.left + this.rect.width, bottom: this.rect.top + this.rect.height }; }
+      querySelectorAll(selector: string): FakeElement[] {
+        if (selector !== '*') return [];
+        return this.children.flatMap((child) => [child, ...child.querySelectorAll('*')]);
+      }
+    }
+    class FakeDocument {
+      defaultView!: {
+        document: FakeDocument;
+        getComputedStyle: () => { display: string; visibility: string; opacity: string };
+      };
+      elements: FakeElement[] = [];
+
+      querySelector(): null { return null; }
+      querySelectorAll(selector: string): FakeElement[] {
+        return selector === '*' ? this.elements : [];
+      }
+    }
+    const formLabel = '표준서식(결재4인,협조4인)';
+    const fakeDocument = new FakeDocument();
+    const listContainer = new FakeElement('form-list', `일반서식 ${formLabel}`, {
+      left: 10, top: 40, width: 420, height: 240,
+    });
+    const generalForm = new FakeElement('general-form:text', '일반서식', {
+      left: 20, top: 80, width: 180, height: 30,
+    });
+    const standardForm = new FakeElement('standard-form:text', formLabel, {
+      left: 20, top: 220, width: 260, height: 30,
+    });
+    listContainer.children.push(generalForm, standardForm);
+    generalForm.parentElement = listContainer;
+    standardForm.parentElement = listContainer;
+    fakeDocument.elements = [listContainer, generalForm, standardForm];
+    const fakeWindow = {
+      document: fakeDocument,
+      getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
+    };
+    fakeDocument.defaultView = fakeWindow;
+    for (const element of fakeDocument.elements) element.ownerDocument = fakeDocument;
+    const exactFormResult = new Function(
+      'window',
+      'document',
+      'location',
+      `return ${exactFormAction}`,
+    )(fakeWindow, fakeDocument, { href: 'https://klef.goe.go.kr/main' });
+    expect(exactFormResult).toEqual({ ok: true, x: 150, y: 235 });
     expect(inputCommands.filter((type) => type === 'mouseMoved')).toHaveLength(10);
     expect(inputCommands.filter((type) => type === 'mousePressed')).toHaveLength(11);
     expect(inputCommands.filter((type) => type === 'mouseReleased')).toHaveLength(11);
@@ -3211,6 +3287,47 @@ describe('Windows managed web automation', () => {
     )).resolves.toEqual({ workflowId: 'custom', finalState: 'custom-target-ready' });
     expect(pressed).toEqual(['step-1', 'step-2']);
     expect(activated).toBe(2);
+  });
+
+  it('validates and focuses a WXSClient window launched by a custom Edufine route', async () => {
+    const workflowPage = page('https://klef.goe.go.kr');
+    const focused: number[] = [];
+    let windowChecks = 0;
+
+    await expect(executeWindowsWorkflow(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      {
+        officeCode: 'goe',
+        browserId: 'edge',
+        workflowId: 'custom',
+        workflowSpec: {
+          id: 'custom',
+          browserId: 'edge',
+          custom: {
+            name: '사용자 표준 기안',
+            system: 'edufine',
+            steps: [{
+              id: 'step-1',
+              label: '표준서식(결재4인,협조4인)',
+              kind: 'edufine-wxs-form',
+            }],
+            finalText: '표준서식',
+          },
+        },
+      },
+      {
+        openWorkflowPage: async () => workflowPage,
+        isWxsClientRegistered: async () => true,
+        listWxsClientWindows: async () => {
+          windowChecks += 1;
+          return windowChecks === 1
+            ? []
+            : [{ id: 77, handle: 700, title: '표준서식 - WXSClient' }];
+        },
+        focusWindow: async (id) => { focused.push(id); return true; },
+      },
+    )).resolves.toEqual({ workflowId: 'custom', finalState: 'custom-target-ready' });
+    expect(focused).toEqual([77]);
   });
 
   it('rejects a workflow identifier and definition mismatch before opening a page', async () => {

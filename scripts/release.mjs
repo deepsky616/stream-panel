@@ -1,24 +1,50 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const resolveGitExecPath = () => {
-  if (process.platform !== 'win32' || process.env.GIT_EXEC_PATH) {
-    return process.env.GIT_EXEC_PATH
+const resolveGitRuntime = () => {
+  if (process.platform !== 'win32') {
+    return { command: 'git', execPath: process.env.GIT_EXEC_PATH, useOpenSsl: false }
   }
   const probe = spawnSync('git', ['--exec-path'], {
     cwd: process.cwd(),
     encoding: 'utf8',
     stdio: 'pipe'
   })
-  if (probe.status !== 0) return undefined
-  const current = probe.stdout.trim()
-  if (existsSync(resolve(current, 'git-remote-https.exe'))) return current
-  const bundledBin = resolve(current, '..', '..', 'bin')
-  return existsSync(resolve(bundledBin, 'git-remote-https.exe')) ? bundledBin : undefined
+  if (probe.status === 0) {
+    const current = probe.stdout.trim()
+    if (existsSync(resolve(current, 'git-remote-https.exe'))) {
+      return { command: 'git', execPath: current, useOpenSsl: false }
+    }
+    const bundledBin = resolve(current, '..', '..', 'bin')
+    if (existsSync(resolve(bundledBin, 'git-remote-https.exe'))) {
+      return { command: 'git', execPath: bundledBin, useOpenSsl: false }
+    }
+  }
+
+  // Codex's lightweight Windows Git runtime can omit the HTTPS remote helper.
+  // Prefer a verified MinGit unpacked beside this checkout so releases remain
+  // reproducible without modifying the user's system Git installation.
+  const toolsDirectory = resolve(process.cwd(), '..', '.tools')
+  if (existsSync(toolsDirectory)) {
+    const candidates = readdirSync(toolsDirectory, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith('mingit-'))
+      .map((entry) => entry.name)
+      .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }))
+    for (const candidate of candidates) {
+      const root = resolve(toolsDirectory, candidate)
+      const command = resolve(root, 'cmd', 'git.exe')
+      const execPath = resolve(root, 'mingw64', 'bin')
+      if (existsSync(command) && existsSync(resolve(execPath, 'git-remote-https.exe'))) {
+        return { command, execPath, useOpenSsl: true }
+      }
+    }
+  }
+
+  return { command: 'git', execPath: process.env.GIT_EXEC_PATH, useOpenSsl: false }
 }
 
-const gitExecPath = resolveGitExecPath()
+const gitRuntime = resolveGitRuntime()
 
 const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, {
@@ -26,9 +52,7 @@ const run = (command, args, options = {}) => {
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
     shell: process.platform === 'win32' && command === 'npm',
-    env: command === 'git' && gitExecPath
-      ? { ...process.env, GIT_EXEC_PATH: gitExecPath }
-      : process.env
+    env: options.env ?? process.env
   })
 
   if (result.status !== 0) {
@@ -41,7 +65,17 @@ const run = (command, args, options = {}) => {
   return options.capture ? result.stdout.trim() : ''
 }
 
-const git = (...args) => run('git', args, { capture: true })
+const runGit = (args, options = {}) => run(
+  gitRuntime.command,
+  gitRuntime.useOpenSsl ? ['-c', 'http.sslBackend=openssl', ...args] : args,
+  {
+    ...options,
+    env: gitRuntime.execPath
+      ? { ...process.env, GIT_EXEC_PATH: gitRuntime.execPath }
+      : process.env
+  }
+)
+const git = (...args) => runGit(args, { capture: true })
 const fail = (message) => {
   throw new Error(message)
 }
@@ -86,12 +120,18 @@ try {
   }
 
   console.log(`\nReleasing Stream Panel ${version}\n`)
-  run('npm', ['run', 'lint'])
-  run('npm', ['run', 'typecheck'])
-  run('npm', ['test'])
+  run(process.execPath, ['node_modules/eslint/bin/eslint.js', '.', '--ext', '.ts,.tsx'])
+  run(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.node.json'])
+  run(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.web.json'])
+  run(process.execPath, [
+    'node_modules/vitest/vitest.mjs',
+    'run',
+    '--configLoader',
+    'runner'
+  ])
 
   if (remoteMain !== head) {
-    run('git', ['push', 'origin', 'HEAD:main'])
+    runGit(['push', 'origin', 'HEAD:main'])
   }
 
   if (!remoteTag) {
@@ -101,7 +141,7 @@ try {
     } else if (git('rev-list', '-n', '1', tag) !== head) {
       fail(`local ${tag} points to another commit`)
     }
-    run('git', ['push', 'origin', `refs/tags/${tag}`])
+    runGit(['push', 'origin', `refs/tags/${tag}`])
   }
 
   console.log(`\nRelease build started: https://github.com/deepsky616/stream-panel/actions/workflows/release.yml`)

@@ -140,24 +140,49 @@ function isCustomWebWorkflowDefinition(value: unknown): value is CustomWebWorkfl
     if (!step || typeof step !== 'object' || Array.isArray(step)) return false;
     const candidate = step as Record<string, unknown>;
     const label = normalizeWorkflowText(candidate.label);
-    const supportedKind = candidate.kind === undefined || [
-      'exact-text',
-      'edufine-job',
-      'edufine-top-menu',
-      'edufine-mega-menu',
-      'edufine-left-menu',
-    ].includes(String(candidate.kind));
+    const kind = candidate.kind as CustomWebWorkflowStep['kind'];
+    const supportedKind = isCustomWorkflowStepKindForSystem(record.system, kind);
     return (
       Object.keys(candidate).every((key) => key === 'id' || key === 'label' || key === 'kind') &&
       candidate.id === `step-${index + 1}` &&
       candidate.label === label &&
       supportedKind &&
-      (record.system === 'edufine' || candidate.kind === undefined || candidate.kind === 'exact-text') &&
+      (kind !== 'edufine-wxs-form' || index === (record.steps as unknown[]).length - 1) &&
       label.length > 0 &&
       Array.from(label).length <= 40 &&
       !isForbiddenCustomWorkflowLabel(label)
     );
   });
+}
+
+const NEIS_CUSTOM_STEP_KINDS = new Set<CustomWebWorkflowStep['kind']>([
+  undefined,
+  'exact-text',
+  'neis-management-tab',
+  'neis-new-page',
+]);
+
+const EDUFINE_CUSTOM_STEP_KINDS = new Set<CustomWebWorkflowStep['kind']>([
+  undefined,
+  'exact-text',
+  'edufine-job',
+  'edufine-top-menu',
+  'edufine-mega-menu',
+  'edufine-left-menu',
+  'edufine-document-menu',
+  'edufine-right-menu',
+  'edufine-popup-menu',
+  'edufine-submenu',
+  'edufine-wxs-form',
+]);
+
+function isCustomWorkflowStepKindForSystem(
+  system: unknown,
+  kind: CustomWebWorkflowStep['kind'],
+): boolean {
+  return system === 'neis'
+    ? NEIS_CUSTOM_STEP_KINDS.has(kind)
+    : system === 'edufine' && EDUFINE_CUSTOM_STEP_KINDS.has(kind);
 }
 
 export function isWebConnectorSupportedPlatform(
@@ -387,6 +412,14 @@ export function createCustomWebWorkflowTemplate({
     }
     if (isForbiddenCustomWorkflowLabel(label)) {
       throw new Error(`'${label}' 동작은 안전을 위해 자동으로 누를 수 없습니다. 해당 단계는 사용자가 직접 진행해 주세요.`);
+    }
+  }
+  for (const [index, kind] of (stepKinds ?? []).entries()) {
+    if (!isCustomWorkflowStepKindForSystem(system, kind)) {
+      throw new Error('선택한 업무 시스템에서 사용할 수 없는 단계 유형이 포함되어 있습니다.');
+    }
+    if (kind === 'edufine-wxs-form' && index !== normalizedSteps.length - 1) {
+      throw new Error('기안 편집기 열기는 마지막 단계에서만 사용할 수 있습니다.');
     }
   }
   if (Array.from(normalizedFinalText).length < 1 || Array.from(normalizedFinalText).length > 60) {

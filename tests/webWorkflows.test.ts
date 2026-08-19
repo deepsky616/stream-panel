@@ -31,6 +31,14 @@ const createCustomWebWorkflowTemplate = (
       system: 'neis' | 'edufine';
       browserId: 'chrome' | 'edge';
       stepLabels: string[];
+      stepKinds?: Array<
+        | 'exact-text'
+        | 'neis-management-tab'
+        | 'neis-new-page'
+        | 'edufine-job'
+        | 'edufine-submenu'
+        | 'edufine-wxs-form'
+      >;
       finalText: string;
       officeCode?: 'goe' | 'sen' | 'gbe';
     }) => unknown;
@@ -152,6 +160,45 @@ describe('web workflow templates', () => {
       },
     };
     expect(webWorkflows.isWebWorkflowSpec(withControlCharacters)).toBe(false);
+  });
+
+  it('stores system-specific custom adapters and rejects mismatched or unfinished native routes', () => {
+    const neis = createCustomWebWorkflowTemplate!({
+      name: '나이스 출장 신청',
+      system: 'neis',
+      browserId: 'edge',
+      stepLabels: ['개인출장관리', '신청'],
+      stepKinds: ['neis-management-tab', 'neis-new-page'],
+      finalText: '출장신청',
+    }) as { webWorkflow: unknown };
+    expect(webWorkflows.isWebWorkflowSpec(neis.webWorkflow)).toBe(true);
+
+    const edufine = createCustomWebWorkflowTemplate!({
+      name: '에듀파인 표준 기안',
+      system: 'edufine',
+      browserId: 'edge',
+      stepLabels: ['업무관리', '공용서식', '표준서식(결재4인,협조4인)'],
+      stepKinds: ['edufine-job', 'edufine-submenu', 'edufine-wxs-form'],
+      finalText: '표준서식',
+    }) as { webWorkflow: unknown };
+    expect(webWorkflows.isWebWorkflowSpec(edufine.webWorkflow)).toBe(true);
+
+    expect(() => createCustomWebWorkflowTemplate!({
+      name: '잘못된 나이스 업무',
+      system: 'neis',
+      browserId: 'edge',
+      stepLabels: ['업무관리'],
+      stepKinds: ['edufine-job'],
+      finalText: '업무관리',
+    })).toThrow(/사용할 수 없는 단계 유형/);
+    expect(() => createCustomWebWorkflowTemplate!({
+      name: '잘못된 기안 업무',
+      system: 'edufine',
+      browserId: 'edge',
+      stepLabels: ['표준서식(결재4인,협조4인)', '다음 단계'],
+      stepKinds: ['edufine-wxs-form', 'exact-text'],
+      finalText: '완료 화면',
+    })).toThrow(/마지막 단계/);
   });
 
   it('exposes the connector and workflow templates only on Windows', () => {

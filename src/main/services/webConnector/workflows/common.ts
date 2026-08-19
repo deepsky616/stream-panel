@@ -228,30 +228,54 @@ export function createCustomManagedWorkflowDefinition(
     label: spec.custom.name,
     finalState: 'custom-target-ready',
     steps: spec.custom.steps.map((step, index) => {
+      const kind = step.kind ?? 'exact-text';
       const requiresConfirmation = customWorkflowStepRequiresConfirmation(step.label);
-      const interaction: WorkflowStep['interaction'] = spec.custom.system === 'edufine'
-        ? {
-            'edufine-job': 'edufine-job' as const,
-            'edufine-top-menu': 'edufine-top-menu' as const,
-            'edufine-mega-menu': 'edufine-mega-menu' as const,
-            'edufine-left-menu': 'edufine-left-menu' as const,
-            'exact-text': 'frame-exact-text' as const,
-          }[step.kind ?? 'exact-text']
-        : 'frame-exact-text';
+      const interaction: WorkflowStep['interaction'] = {
+        'exact-text': 'frame-exact-text' as const,
+        'neis-management-tab': 'neis-management-tab' as const,
+        'neis-new-page': 'frame-exact-text' as const,
+        'edufine-job': 'edufine-job' as const,
+        'edufine-top-menu': 'edufine-top-menu' as const,
+        'edufine-mega-menu': 'edufine-mega-menu' as const,
+        'edufine-left-menu': 'edufine-left-menu' as const,
+        'edufine-document-menu': 'edufine-document-menu' as const,
+        'edufine-right-menu': 'edufine-right-menu' as const,
+        'edufine-popup-menu': 'edufine-popup-menu' as const,
+        'edufine-submenu': 'edufine-submenu' as const,
+        // Use the proven exact-element click for the final standard-form item.
+        // The postcondition below changes this into a WXSClient launch step.
+        'edufine-wxs-form': 'frame-exact-text' as const,
+      }[kind];
       const nextLabel = spec.custom.steps[index + 1]?.label ?? spec.custom.finalText;
       const constrainedEdufineMenu = interaction.startsWith('edufine-');
+      const trustedSystemNavigation = constrainedEdufineMenu || kind === 'edufine-wxs-form';
+      const postcondition: WorkflowPostcondition = kind === 'edufine-wxs-form'
+        ? {
+            kind: 'new-window',
+            processName: 'WXSClient',
+            titleIncludes: spec.custom.finalText,
+          }
+        : kind === 'neis-new-page'
+          ? { kind: 'new-page-any', labels: [nextLabel] }
+          : kind === 'neis-management-tab'
+            ? { kind: 'active-view-any', labels: [nextLabel] }
+            : interaction === 'edufine-top-menu'
+              ? { kind: 'edufine-mega-menu-any', labels: [nextLabel] }
+              : { kind: 'visible-any', labels: [nextLabel] };
       return {
         id: step.id,
         candidateLabels: [step.label],
         interaction,
         selection: 'first-available',
         navigationOnly: false,
-        ...(requiresConfirmation && !constrainedEdufineMenu ? { requiresConfirmation: true } : {}),
-        ...(requiresConfirmation && constrainedEdufineMenu ? { allowActionText: true } : {}),
-        skipWhenSatisfied: interaction !== 'edufine-top-menu',
-        postcondition: interaction === 'edufine-top-menu'
-          ? { kind: 'edufine-mega-menu-any' as const, labels: [nextLabel] }
-          : { kind: 'visible-any' as const, labels: [nextLabel] },
+        ...(requiresConfirmation && !trustedSystemNavigation ? { requiresConfirmation: true } : {}),
+        ...(requiresConfirmation && trustedSystemNavigation ? { allowActionText: true } : {}),
+        skipWhenSatisfied: ![
+          'edufine-top-menu',
+          'neis-new-page',
+          'edufine-wxs-form',
+        ].includes(kind),
+        postcondition,
         maxChecks: 67,
         checkDelayMs: 150,
       };

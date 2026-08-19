@@ -139,6 +139,75 @@ describe('managed web workflow definitions', () => {
     expect(definition.steps[2]).not.toHaveProperty('requiresConfirmation');
   });
 
+  it('supports the full custom NEIS route including management tabs and new request pages', () => {
+    const definition = workflowCommon.createCustomManagedWorkflowDefinition({
+      id: 'custom',
+      browserId: 'edge',
+      custom: {
+        name: '사용자 출장 신청',
+        system: 'neis',
+        steps: [
+          { id: 'step-1', label: '개인출장관리', kind: 'neis-management-tab' },
+          { id: 'step-2', label: '신청', kind: 'neis-new-page' },
+        ],
+        finalText: '출장신청',
+      },
+    });
+
+    expect(definition.steps.map(({ interaction }) => interaction)).toEqual([
+      'neis-management-tab',
+      'frame-exact-text',
+    ]);
+    expect(definition.steps[0].postcondition).toEqual({
+      kind: 'active-view-any',
+      labels: ['신청'],
+    });
+    expect(definition.steps[1]).toEqual(expect.objectContaining({
+      requiresConfirmation: true,
+      skipWhenSatisfied: false,
+      postcondition: { kind: 'new-page-any', labels: ['출장신청'] },
+    }));
+  });
+
+  it('supports scoped Edufine menus and an exact standard-form WXSClient launch', () => {
+    const definition = workflowCommon.createCustomManagedWorkflowDefinition({
+      id: 'custom',
+      browserId: 'edge',
+      custom: {
+        name: '사용자 표준 기안',
+        system: 'edufine',
+        steps: [
+          { id: 'step-1', label: '업무관리', kind: 'edufine-job' },
+          { id: 'step-2', label: '기안', kind: 'edufine-left-menu' },
+          { id: 'step-3', label: '공용서식', kind: 'edufine-submenu' },
+          {
+            id: 'step-4',
+            label: '표준서식(결재4인,협조4인)',
+            kind: 'edufine-wxs-form',
+          },
+        ],
+        finalText: '표준서식',
+      },
+    });
+
+    expect(definition.steps.map(({ interaction }) => interaction)).toEqual([
+      'edufine-job',
+      'edufine-left-menu',
+      'edufine-submenu',
+      'frame-exact-text',
+    ]);
+    expect(definition.steps[3]).toEqual(expect.objectContaining({
+      allowActionText: true,
+      skipWhenSatisfied: false,
+      postcondition: {
+        kind: 'new-window',
+        processName: 'WXSClient',
+        titleIncludes: '표준서식',
+      },
+    }));
+    expect(definition.steps[3]).not.toHaveProperty('requiresConfirmation');
+  });
+
   it.each(['상신', '승인'])('allows %s as a confirmed custom step', (label) => {
     const createCustomManagedWorkflowDefinition = (
       workflowCommon as unknown as {
@@ -205,7 +274,7 @@ describe('managed web workflow definitions', () => {
       'edufine-job',
       'edufine-left-menu',
       'edufine-submenu',
-      'edufine-form-launch',
+      'frame-exact-text',
     ]);
     expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
       kind: 'visible-any',
@@ -267,7 +336,7 @@ describe('managed web workflow definitions', () => {
     expect(EDUFINE_DRAFT_WORKFLOW_ROUTES).toHaveLength(2);
     expect(EDUFINE_DRAFT_WORKFLOW_ROUTES[1].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-document-menu', 'edufine-form-launch']);
+    )).toEqual(['edufine-job', 'edufine-document-menu', 'frame-exact-text']);
     expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
       ({ id }) => ![
         'open-leave-management',
