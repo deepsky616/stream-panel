@@ -460,7 +460,7 @@ describe('Windows managed web automation', () => {
     });
   });
 
-  it('reuses the connected system tab for approval checks without creating or closing a tab', async () => {
+  it('runs scheduled approval checks in a disposable background tab', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     const protocol = {
       isClosed: false,
@@ -476,7 +476,8 @@ describe('Windows managed web automation', () => {
             }],
           };
         }
-        if (method === 'Target.attachToTarget') return { sessionId: 'approval-session' };
+        if (method === 'Target.createTarget') return { targetId: 'approval-monitor-target' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'approval-monitor-session' };
         if (method === 'Runtime.evaluate') {
           if (String(params.expression ?? '').includes('loginVisible')) {
             return { result: { value: {
@@ -517,19 +518,29 @@ describe('Windows managed web automation', () => {
     await releasablePage.release?.();
 
     expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://sen.neis.go.kr/', background: true },
+    });
+    expect(commands).toContainEqual({
       method: 'Target.attachToTarget',
-      params: { targetId: 'user-work-target', flatten: true },
+      params: { targetId: 'approval-monitor-target', flatten: true },
     });
     expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(commands).toContainEqual({
       method: 'Target.detachFromTarget',
-      params: { sessionId: 'approval-session' },
+      params: { sessionId: 'approval-monitor-session' },
     });
-    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
-    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'approval-monitor-target' },
+    });
+    expect(commands.some(({ method, params }) => (
+      method === 'Target.attachToTarget' && params.targetId === 'user-work-target'
+    ))).toBe(false);
+    expect(managedSession.systemTargetIds.neis).toBe('user-work-target');
   });
 
-  it('does not let a scheduled approval check navigate away from an active work form', async () => {
+  it('does not inspect or navigate the connected tab during a scheduled approval check', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     const protocol = {
       isClosed: false,
@@ -542,11 +553,19 @@ describe('Windows managed web automation', () => {
             url: 'https://klef.goe.go.kr/purchase',
           }] };
         }
-        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-work-session' };
-        if (
-          method === 'Runtime.evaluate' &&
-          String(params.expression ?? '').includes('const activeWorkSystem="edufine"')
-        ) return { result: { value: true } };
+        if (method === 'Target.createTarget') return { targetId: 'edufine-monitor-target' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-monitor-session' };
+        if (method === 'Runtime.evaluate') {
+          if (String(params.expression ?? '').includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://klef.goe.go.kr/',
+              origin: 'https://klef.goe.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          return { result: { value: 'https://klef.goe.go.kr' } };
+        }
         return {};
       },
       close() { this.isClosed = true; },
@@ -564,14 +583,77 @@ describe('Windows managed web automation', () => {
       close: async () => undefined,
     };
 
-    await expect(openCdpWindowsApprovalPage(managedSession as never, {
+    const approvalPage = await openCdpWindowsApprovalPage(managedSession as never, {
       system: 'edufine',
       officeCode: 'goe',
       browserId: 'edge',
-    })).rejects.toMatchObject({ name: 'AbortError' });
+    });
+    await approvalPage.release?.();
 
     expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
-    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://klef.goe.go.kr/', background: true },
+    });
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'edufine-monitor-target' },
+    });
+    expect(commands.some(({ method, params }) => (
+      method === 'Target.attachToTarget' && params.targetId === 'edufine-work-form'
+    ))).toBe(false);
+  });
+
+  it('does not close the managed browser when disposable-tab cleanup fails', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let sessionCloses = 0;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') return { targetInfos: [] };
+        if (method === 'Target.createTarget') return { targetId: 'approval-monitor-target' };
+        if (method === 'Target.attachToTarget') return { sessionId: 'approval-monitor-session' };
+        if (method === 'Target.detachFromTarget') throw new Error('detach failed');
+        if (method === 'Runtime.evaluate') {
+          if (String(params.expression ?? '').includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://sen.neis.go.kr/',
+              origin: 'https://sen.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          return { result: { value: 'https://sen.neis.go.kr' } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const managedSession = {
+      officeCode: 'sen' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => { sessionCloses += 1; },
+    };
+
+    const approvalPage = await openCdpWindowsApprovalPage(managedSession as never, {
+      system: 'neis',
+      officeCode: 'sen',
+      browserId: 'edge',
+    });
+    await approvalPage.release?.();
+
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'approval-monitor-target' },
+    });
+    expect(sessionCloses).toBe(0);
   });
 
   it('counts only the Edufine approval-list grid and ignores an unrelated 100-row selector', async () => {

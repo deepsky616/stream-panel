@@ -2076,26 +2076,6 @@ return {
 };
 })()`;
 
-function activeWorkFormExpression(system: WebWorkflowSystem): string {
-  return `(()=>{
-${PAGE_ELEMENT_HELPERS}
-const activeWorkSystem=${JSON.stringify(system)};
-const texts=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
-  'h1,h2,h3,label,span,div,[aria-label],[title]'
-))).filter(visible).flatMap(surfaceTextsOf).map(normalize);
-const has=(labels)=>labels.some(label=>texts.some(text=>text===label));
-const editable=documents.flatMap(({document})=>Array.from(document.querySelectorAll(
-  'input:not([type="hidden"]),textarea,select,[contenteditable="true"]'
-))).filter(element=>visible(element)&&enabled(element));
-if(editable.length===0)return false;
-if(activeWorkSystem==='neis'){
-  return has(['근무상황신청','개인근무상황신청','출장신청']);
-}
-return has(['품의등록','품의 등록'])&&
-  has(['기본정보','제목','개요','예산내역','품목내역']);
-})()`;
-}
-
 function approvalCounterExpression(system: WebWorkflowSystem): string {
   const labels = system === 'neis'
     ? ['Total', 'TOTAL', 'total']
@@ -2479,6 +2459,7 @@ interface AttachedWindowsTarget {
 interface WorkflowTargetOptions {
   background?: boolean;
   cloneExistingTargetUrl?: boolean;
+  closeSessionOnCleanupFailure?: boolean;
   closeCreatedTargetOnRelease?: boolean;
   failFastOnLoginRequired?: boolean;
   forceNewTarget?: boolean;
@@ -3316,61 +3297,29 @@ export async function openCdpWindowsApprovalPage(
   input: ApprovalScanInput,
   signal?: AbortSignal,
 ): Promise<WindowsApprovalPage> {
-  if (!input.interactive) {
-    const workflowId = input.system === 'neis'
-      ? 'neis-approval-inbox' as const
-      : 'edufine-approval-inbox' as const;
-    const targets = readTargetInfos(
-      await session.connection.protocol.send('Target.getTargets', {}),
-    );
-    const rememberedTargetId = systemTargetMap(session)[input.system];
-    const target = targets.find((candidate) => candidate.targetId === rememberedTargetId) ??
-      selectWindowsWorkflowTarget(targets, session.officeCode, workflowId);
-    if (target) {
-      let attached: AttachedWindowsTarget | undefined;
-      try {
-        attached = await attachWindowsTarget(session, target);
-        const expression = activeWorkFormExpression(input.system);
-        let rootActive: unknown = false;
-        try {
-          rootActive = await evaluateValue<unknown>(
-            session,
-            attached.sessionId,
-            expression,
-          );
-        } catch {
-          // A frame can be rebuilding before the normal workflow readiness wait.
-        }
-        const childActive = rootActive === true
-          ? []
-          : await evaluateValuesInChildFrames<unknown>(
-              session,
-              attached.sessionId,
-              expression,
-              `${input.system}-active-work-form`,
-            );
-        if (rootActive === true || childActive.some((value) => value === true)) {
-          throw createApprovalCheckCancelledError();
-        }
-      } finally {
-        if (attached) await detachWindowsTarget(session, attached);
-      }
-    }
-  }
+  const scheduled = input.interactive !== true;
   const page = await openCdpWindowsWorkflowPage(
     session,
     input.system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
     undefined,
     {
-      background: input.interactive !== true,
+      background: scheduled,
+      // Scheduled scans use a clean disposable tab in the same browser profile.
+      // Authenticated cookies are shared, while the connected NEIS/Edufine tab
+      // remains exactly where the user is working.
+      forceNewTarget: scheduled,
+      closeCreatedTargetOnRelease: scheduled,
+      // A disposable monitoring-tab cleanup failure must never close all of the
+      // user's active managed-browser tabs.
+      closeSessionOnCleanupFailure: !scheduled,
       failFastOnLoginRequired: true,
-      // Approval checks must continue from the connected application tab.
-      // Navigating the tab back to the root rebuilds Edufine's Nexacro frames
-      // and makes the following 결재 -> 결재대기 route intermittently vanish.
+      // Manual checks remain on the connected application tab so the user can
+      // inspect the list. A scheduled scan starts at the workflow root in its
+      // disposable background tab.
       navigateExistingTarget: false,
       keepCreatedTargetOnFailure: input.interactive === true,
-      // The explicit Connect button owns SSO preparation. Approval scans reuse
-      // that verified tab and fail quickly instead of creating another login flow.
+      // The explicit Connect button owns SSO preparation. Approval scans share
+      // that verified browser session and fail quickly instead of opening a new login flow.
       recoverViaPortal: false,
       signal,
     },
@@ -3414,7 +3363,11 @@ export async function openCdpWindowsWorkflowPage(
         }
       }
     }
-    if (cleanupFailed && !releaseOptions.keepCreatedTargets) {
+    if (
+      cleanupFailed &&
+      !releaseOptions.keepCreatedTargets &&
+      options.closeSessionOnCleanupFailure !== false
+    ) {
       try {
         await session.close();
       } catch {
