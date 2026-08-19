@@ -217,6 +217,7 @@ const fail = (message) => {
 }
 
 try {
+  const pushOnly = process.argv.includes('--push-only')
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
   const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
   const version = pkg.version
@@ -243,7 +244,9 @@ try {
     fail('could not read origin/main')
   }
 
-  const remoteTag = ghCredentialHelper
+  const remoteTag = pushOnly
+    ? ''
+    : ghCredentialHelper
     ? readGhRef(`tags/${tag}`)
     : (() => {
         const lines = git(
@@ -258,11 +261,13 @@ try {
           ''
         return line.split(/\s+/)[0]
       })()
-  if (remoteTag && remoteTag !== head) {
+  if (!pushOnly && remoteTag && remoteTag !== head) {
     fail(`${tag} already exists on another commit`)
   }
 
-  console.log(`\nReleasing Stream Panel ${version}\n`)
+  console.log(pushOnly
+    ? '\nPublishing Stream Panel main\n'
+    : `\nReleasing Stream Panel ${version}\n`)
   run(process.execPath, ['node_modules/eslint/bin/eslint.js', '.', '--ext', '.ts,.tsx'])
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.node.json'])
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.web.json'])
@@ -278,7 +283,7 @@ try {
     else runGit(['push', 'origin', 'HEAD:main'])
   }
 
-  if (!remoteTag) {
+  if (!pushOnly && !remoteTag) {
     if (ghCredentialHelper) {
       ghApi(`repos/${repository}/git/refs`, 'POST', { ref: `refs/tags/${tag}`, sha: head })
       if (!git('tag', '--list', tag)) runGit(['tag', tag, head])
@@ -293,7 +298,11 @@ try {
     }
   }
 
-  console.log(`\nRelease build started: https://github.com/deepsky616/stream-panel/actions/workflows/release.yml`)
+  if (pushOnly) {
+    console.log('\nStream Panel main published\n')
+  } else {
+    console.log(`\nRelease build started: https://github.com/deepsky616/stream-panel/actions/workflows/release.yml`)
+  }
 } catch (error) {
   console.error(`\nRelease stopped: ${error.message}`)
   console.error('If Git authentication is unavailable, push main through GitHub and run the Release workflow manually.')

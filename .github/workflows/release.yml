@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags: ['v*']
-    branches: [main]
-    paths:
-      - package.json
-      - package-lock.json
   workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
