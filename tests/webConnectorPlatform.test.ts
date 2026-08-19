@@ -1269,6 +1269,70 @@ describe('Windows managed web automation', () => {
     expect(closedTargetIds).toEqual([]);
   });
 
+  it('closes a markerless NEIS popup when the connected parent opened a separate browser window', async () => {
+    let requestOpen = true;
+    const closedTargetIds: string[] = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            ...(requestOpen ? [{
+              targetId: 'markerless-request',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/request',
+              openerId: 'neis-main',
+            }] : []),
+            {
+              targetId: 'neis-main',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/main',
+            },
+          ] };
+        }
+        if (method === 'Browser.getWindowForTarget') {
+          return { windowId: params.targetId === 'markerless-request' ? 72 : 71 };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (
+          method === 'Runtime.evaluate' &&
+          sessionId === 'markerless-request-session' &&
+          String(params.expression ?? '').includes('window.close()')
+        ) {
+          requestOpen = false;
+          return { result: { value: true } };
+        }
+        if (method === 'Runtime.evaluate') return { result: { value: false } };
+        if (method === 'Target.closeTarget') {
+          closedTargetIds.push(String(params.targetId));
+          return { success: true };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+
+    await resetWindowsWorkflowTargets({
+      officeCode: 'goe',
+      browserId: 'edge',
+      systemTargetIds: { neis: 'neis-main' },
+      connectionTargetIds: { neis: 'neis-main' },
+      workflowResultTargetIds: {},
+      connection: {
+        protocol,
+        transportKind: 'pipe',
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    } as never, 'neis-trip');
+
+    expect(requestOpen).toBe(false);
+    expect(closedTargetIds).toEqual([]);
+  });
+
   it('does not close a NEIS request page opened by another NEIS tab', async () => {
     const closedTargetIds: string[] = [];
     const attachedTargetIds: string[] = [];
@@ -1483,6 +1547,7 @@ describe('Windows managed web automation', () => {
   it('uses each scoped Nexacro menu surface for Edufine navigation', async () => {
     const expressions: string[] = [];
     const inputCommands: string[] = [];
+    const releasedClickCounts: number[] = [];
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>) {
@@ -1497,6 +1562,9 @@ describe('Windows managed web automation', () => {
         if (method === 'Browser.getWindowForTarget') return { windowId: 19 };
         if (method === 'Input.dispatchMouseEvent') {
           inputCommands.push(String(params.type));
+          if (params.type === 'mouseReleased') {
+            releasedClickCounts.push(Number(params.clickCount));
+          }
           return {};
         }
         if (method === 'Runtime.evaluate') {
@@ -1540,6 +1608,9 @@ describe('Windows managed web automation', () => {
           if (expression.includes("'NEXACRO-POPUP-MENU'")) {
             return { result: { value: [safeCandidate(0, '표준서식(결재4인,협조4인)')] } };
           }
+          if (expression.includes("'NEXACRO-FORM-LAUNCH'")) {
+            return { result: { value: [safeCandidate(0, '표준서식(결재4인,협조4인)')] } };
+          }
           if (expression.includes("'NEXACRO-LEFT-MENU'")) {
             return { result: { value: [safeCandidate(0, '사업담당')] } };
           }
@@ -1551,7 +1622,8 @@ describe('Windows managed web automation', () => {
             expression.includes('const interaction="edufine-right-menu"') ||
             expression.includes('const interaction="edufine-mega-menu"') ||
             expression.includes('const interaction="edufine-popup-menu"') ||
-            expression.includes('const interaction="edufine-submenu"')) {
+            expression.includes('const interaction="edufine-submenu"') ||
+            expression.includes('const interaction="edufine-form-launch"')) {
             return { result: { value: { ok: true, x: 100, y: 50 } } };
           }
           if (expression.includes('const interaction="edufine-left-menu"')) {
@@ -1658,10 +1730,10 @@ describe('Windows managed web automation', () => {
       maxChecks: 1,
       checkDelayMs: 1,
     };
-    const popupStep = {
+    const formLaunchStep = {
       id: 'open-standard-form',
       candidateLabels: ['표준서식(결재4인,협조4인)'],
-      interaction: 'edufine-popup-menu' as const,
+      interaction: 'edufine-form-launch' as const,
       postcondition: {
         kind: 'new-window' as const,
         processName: 'WXSClient' as const,
@@ -1721,8 +1793,8 @@ describe('Windows managed web automation', () => {
       megaStep,
     );
     await workflowPage.pressCandidate(
-      (await workflowPage.inspectCandidates(popupStep))[0],
-      popupStep,
+      (await workflowPage.inspectCandidates(formLaunchStep))[0],
+      formLaunchStep,
     );
     await workflowPage.pressCandidate(
       (await workflowPage.inspectCandidates(submenuStep))[0],
@@ -1744,7 +1816,7 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => expression.includes('rightframe|rightmenu|right_menu|quickmenu'))).toBe(true);
     expect(expressions.some((expression) => expression.includes('popupmenu|popup_menu|popupdiv'))).toBe(true);
     expect(expressions.some((expression) => (
-      expression.includes('const interaction="edufine-popup-menu"') &&
+      expression.includes('const interaction="edufine-form-launch"') &&
       expression.includes('if(excluded.test(signal)&&!explicit)return null')
     ))).toBe(true);
     expect(expressions.some((expression) => (
@@ -1754,6 +1826,14 @@ describe('Windows managed web automation', () => {
     expect(expressions.some((expression) => (
       expression.includes('const interaction="edufine-submenu"') &&
       expression.includes('leftMenuMatch()||popupMenuMatch()')
+    ))).toBe(true);
+    expect(expressions.some((expression) => (
+      expression.includes('const interaction="edufine-form-launch"') &&
+      expression.includes('popupMenuMatch(label)||leftMenuMatch(label)')
+    ))).toBe(true);
+    expect(expressions.some((expression) => (
+      expression.includes('const interaction="edufine-form-launch"') &&
+      expression.includes('popupMenuMatch()||leftMenuMatch()')
     ))).toBe(true);
     expect(expressions.some((expression) => expression.includes("sectionLabels=['문서관리','문서 관리']"))).toBe(true);
     expect(expressions.some((expression) => expression.includes('rightframe|rightmenu|right_menu|quickmenu'))).toBe(true);
@@ -1778,6 +1858,7 @@ describe('Windows managed web automation', () => {
       'mouseMoved', 'mousePressed', 'mouseReleased',
       'mouseMoved', 'mousePressed', 'mouseReleased',
     ]);
+    expect(releasedClickCounts).toEqual([1, 1, 1, 1, 1, 1, 1, 2, 1, 1]);
     await workflowPage.release?.();
   });
 

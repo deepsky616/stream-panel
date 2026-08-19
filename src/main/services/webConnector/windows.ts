@@ -487,7 +487,21 @@ function targetOpenedFromAnchor(
     visited.add(openerId);
     openerId = targets.find((candidate) => candidate.targetId === openerId)?.openerId;
   }
-  return target.openerId === undefined;
+  return false;
+}
+
+async function targetBrowserWindowId(
+  session: WindowsManagedBrowserSession,
+  targetId: string,
+): Promise<number | undefined> {
+  try {
+    const result = await session.connection.protocol.send<{
+      windowId?: unknown;
+    }>('Browser.getWindowForTarget', { targetId });
+    return Number.isInteger(result.windowId) ? Number(result.windowId) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function waitForTargetToClose(
@@ -614,6 +628,7 @@ async function closeRememberedWorkflowResultTarget(
   // connected parent, plus exact request forms whose opener metadata is absent,
   // while leaving the connected parent and every non-request NEIS page untouched.
   if (system === 'neis') {
+    const anchorWindowId = await targetBrowserWindowId(session, anchorTargetId);
     const ownedTargetIds = new Set([
       resultTargetId,
       systemTargetMap(session).neis,
@@ -625,11 +640,27 @@ async function closeRememberedWorkflowResultTarget(
         target.type !== 'page' ||
         !workflowTargetAllowed(target.url, session.officeCode, workflowId)
       ) continue;
+      const openedFromAnchor = targetOpenedFromAnchor(
+        target,
+        anchorTargetId,
+        targets,
+      );
       if (
         !ownedTargetIds.has(target.targetId) &&
-        !targetOpenedFromAnchor(target, anchorTargetId, targets)
+        !openedFromAnchor &&
+        target.openerId !== undefined
       ) continue;
-      if (await isNeisRequestResultTarget(session, target)) {
+      const targetWindowId = openedFromAnchor
+        ? await targetBrowserWindowId(session, target.targetId)
+        : undefined;
+      const separateChildWindow = openedFromAnchor &&
+        anchorWindowId !== undefined &&
+        targetWindowId !== undefined &&
+        targetWindowId !== anchorWindowId;
+      // A request window is sometimes a Nexacro surface whose document title
+      // and DOM expose no readable form marker. A different browser window
+      // opened by the connected parent is still an unambiguous popup target.
+      if (separateChildWindow || await isNeisRequestResultTarget(session, target)) {
         closeTargetIds.add(target.targetId);
       }
     }
@@ -1460,6 +1491,12 @@ if(interaction==='edufine-submenu'){
     return match?[summary(match.element,index,label,'NEXACRO-SUBMENU',match.offsetX,match.offsetY)]:[];
   });
 }
+if(interaction==='edufine-form-launch'){
+  return labels.flatMap((label,index)=>{
+    const match=popupMenuMatch(label)||leftMenuMatch(label);
+    return match?[summary(match.element,index,label,'NEXACRO-FORM-LAUNCH',match.offsetX,match.offsetY)]:[];
+  });
+}
 if(interaction==='edufine-exact-text'||interaction==='frame-exact-text'){
   return labels.flatMap((label,index)=>{
     const matches=documents.flatMap(({document,offsetX,offsetY})=>
@@ -1769,7 +1806,7 @@ const documentMenuMatch=()=>{
     .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
   return matches[0]||null;
 };
-if(interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'||interaction==='edufine-submenu'){
+if(interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'||interaction==='edufine-submenu'||interaction==='edufine-form-launch'){
   const match=interaction==='neis-management-tab'
     ? neisManagementTabMatch()
     : interaction==='edufine-left-toggle'
@@ -1786,6 +1823,8 @@ if(interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||int
       ? popupMenuMatch()
     : interaction==='edufine-submenu'
       ? leftMenuMatch()||popupMenuMatch()
+    : interaction==='edufine-form-launch'
+      ? popupMenuMatch()||leftMenuMatch()
       : choose('[id*="pdvMegaMenu"],[id*="pdvmegamenu"],[id*="megaMenu"],[id*="megamenu"]',':text');
   if(!match)return returnElement?null:{ok:false};
   if(returnElement)return match.element;
@@ -2111,16 +2150,17 @@ async function dispatchCdpMouseClick(
   sessionId: string,
   x: number,
   y: number,
+  clickCount = 1,
 ): Promise<void> {
   const protocol = session.connection.protocol;
   await protocol.send('Input.dispatchMouseEvent', {
     type: 'mouseMoved', x, y,
   }, sessionId);
   await protocol.send('Input.dispatchMouseEvent', {
-    type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+    type: 'mousePressed', x, y, button: 'left', clickCount,
   }, sessionId);
   await protocol.send('Input.dispatchMouseEvent', {
-    type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+    type: 'mouseReleased', x, y, button: 'left', clickCount,
   }, sessionId);
 }
 
@@ -2568,7 +2608,6 @@ async function pressCandidateWithCdp(
   allowActionText = false,
   allowedActionLabels: readonly string[] = [],
 ): Promise<void> {
-  const protocol = session.connection.protocol;
   const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
   const isSpecializedInteraction = interaction.startsWith('edufine-') ||
     interaction === 'frame-exact-text' ||
@@ -2609,6 +2648,7 @@ async function pressCandidateWithCdp(
       normalizedText,
       allowActionText,
       allowedActionLabels,
+      interaction === 'edufine-form-launch' ? 2 : 1,
     )) return;
     throw new Error(`'${normalizedText}' 메뉴의 위치가 바뀌었습니다. 화면을 확인한 뒤 다시 시도해 주세요.`);
   }
@@ -2621,15 +2661,13 @@ async function pressCandidateWithCdp(
   if (typeof action.x !== 'number' || typeof action.y !== 'number') {
     throw new Error(`'${normalizedText}' 메뉴 위치를 확인하지 못했습니다. 화면에서 직접 눌러 주세요.`);
   }
-  await protocol.send('Input.dispatchMouseEvent', {
-    type: 'mouseMoved', x: action.x, y: action.y,
-  }, sessionId);
-  await protocol.send('Input.dispatchMouseEvent', {
-    type: 'mousePressed', x: action.x, y: action.y, button: 'left', clickCount: 1,
-  }, sessionId);
-  await protocol.send('Input.dispatchMouseEvent', {
-    type: 'mouseReleased', x: action.x, y: action.y, button: 'left', clickCount: 1,
-  }, sessionId);
+  await dispatchCdpMouseClick(
+    session,
+    sessionId,
+    action.x,
+    action.y,
+    interaction === 'edufine-form-launch' ? 2 : 1,
+  );
 }
 
 async function childFrameExecutionContexts(
@@ -2735,6 +2773,7 @@ async function pressEdufineCandidateAcrossFrames(
   expectedText: string,
   allowActionText: boolean,
   allowedActionLabels: readonly string[],
+  clickCount = 1,
 ): Promise<boolean> {
   const expression = edufineCandidateActionExpression(
     interaction,
@@ -2774,7 +2813,13 @@ async function pressEdufineCandidateAcrossFrames(
         sessionId,
       ));
       if (!center) continue;
-      await dispatchCdpMouseClick(session, sessionId, center.x, center.y);
+      await dispatchCdpMouseClick(
+        session,
+        sessionId,
+        center.x,
+        center.y,
+        clickCount,
+      );
       return true;
     } catch {
       // Continue with another frame if the menu was re-rendered mid-click.
@@ -3045,6 +3090,13 @@ function createWindowsWorkflowPage(
             workflowSpec,
           )
         ));
+        // Remember the single page created by the exact NEIS request action
+        // immediately. Some Nexacro request windows do not expose a readable
+        // title until much later, but the next button press must still be able
+        // to close this child and return to the connected parent.
+        if (workflowSystem === 'neis' && targets.length === 1) {
+          workflowResultTargetMap(session).neis = targets[0].targetId;
+        }
         for (const target of targets) {
           let next = newPageAttachments.get(target.targetId);
           if (!next) {

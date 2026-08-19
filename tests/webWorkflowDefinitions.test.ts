@@ -205,7 +205,7 @@ describe('managed web workflow definitions', () => {
       'edufine-job',
       'edufine-left-menu',
       'edufine-submenu',
-      'edufine-submenu',
+      'edufine-form-launch',
     ]);
     expect(definitions['edufine-draft'].steps[0].postcondition).toEqual({
       kind: 'visible-any',
@@ -267,7 +267,7 @@ describe('managed web workflow definitions', () => {
     expect(EDUFINE_DRAFT_WORKFLOW_ROUTES).toHaveLength(2);
     expect(EDUFINE_DRAFT_WORKFLOW_ROUTES[1].steps.map(
       ({ interaction }) => interaction,
-    )).toEqual(['edufine-job', 'edufine-document-menu', 'edufine-submenu']);
+    )).toEqual(['edufine-job', 'edufine-document-menu', 'edufine-form-launch']);
     expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
       ({ id }) => ![
         'open-leave-management',

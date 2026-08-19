@@ -27,9 +27,10 @@ const OPEN_STANDARD_FORM_STEP = {
   id: 'open-standard-form',
   candidateLabels: STANDARD_FORM_LABELS,
   selection: 'first-available',
-  // Education-office skins render this either in the left navigation tree or
-  // in a Nexacro popup. Prefer the exact left entry, then accept one popup item.
-  interaction: 'edufine-submenu',
+  // Some Nexacro skins select a standard form on the first mouse press and
+  // launch WXSClient only on the double-click gesture. Use the dedicated form
+  // launcher, preferring the open popup before the persistent left-tree copy.
+  interaction: 'edufine-form-launch',
   postcondition: {
     kind: 'new-window',
     processName: 'WXSClient',

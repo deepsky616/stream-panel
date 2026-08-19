@@ -55,6 +55,7 @@ export interface WorkflowStep {
     | 'edufine-mega-menu'
     | 'edufine-popup-menu'
     | 'edufine-submenu'
+    | 'edufine-form-launch'
     | 'edufine-exact-text';
   selection?: 'unique-any' | 'first-available';
   navigationOnly?: boolean;
