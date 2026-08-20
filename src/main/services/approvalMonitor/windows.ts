@@ -341,7 +341,7 @@ export async function scanWindowsApprovalCount(
             continue;
           }
         }
-        if (input.interactive) {
+        if (input.interactive && input.system !== 'edufine') {
           try {
             await page.activate?.();
           } catch {
@@ -358,7 +358,7 @@ export async function scanWindowsApprovalCount(
     }
     throw countError;
   } catch (error) {
-    if (input.interactive && !signal?.aborted) {
+    if (input.interactive && input.system !== 'edufine' && !signal?.aborted) {
       try {
         await page.activate?.();
       } catch {

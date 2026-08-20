@@ -548,13 +548,15 @@ describe('Windows managed web automation', () => {
     expect(shouldScanApprovalListFirst({ system: 'neis', interactive: true })).toBe(true);
   });
 
-  it('derives one persistent Edufine monitor tab and reuses it without navigating the work tab', async () => {
+  it('derives and closes an Edufine monitor tab for every check without navigating the work tab', async () => {
     const commands: Array<{
       method: string;
       params: Record<string, unknown>;
       sessionId?: string;
     }> = [];
-    let monitorOpened = false;
+    let monitorSequence = 0;
+    let monitorTargetId: string | null = null;
+    let workActive = false;
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>, sessionId?: string) {
@@ -566,10 +568,10 @@ describe('Windows managed web automation', () => {
               type: 'page',
               url: 'https://klef.goe.go.kr/purchase',
             },
-            ...(monitorOpened ? [{
-              targetId: 'edufine-monitor-target',
+            ...(monitorTargetId ? [{
+              targetId: monitorTargetId,
               type: 'page',
-              url: 'https://klef.goe.go.kr/purchase',
+              url: 'https://klef.goe.go.kr/',
               openerId: 'edufine-work-form',
             }] : []),
           ] };
@@ -577,22 +579,30 @@ describe('Windows managed web automation', () => {
         if (method === 'Target.attachToTarget') {
           return { sessionId: params.targetId === 'edufine-work-form'
             ? 'edufine-work-session'
-            : 'edufine-monitor-session' };
+            : `${String(params.targetId)}-session` };
+        }
+        if (method === 'Target.closeTarget') {
+          if (params.targetId === monitorTargetId) monitorTargetId = null;
+          return { success: true };
         }
         if (method === 'Runtime.evaluate') {
           const expression = String(params.expression ?? '');
-          if (expression.includes('stream-panel-edufine-approval-monitor') && expression.includes('window.open(')) {
-            monitorOpened = true;
-            return { result: { value: true } };
+          if (expression.includes('visibilityState')) {
+            return { result: { value: {
+              visible: sessionId === 'edufine-work-session' && workActive,
+              focused: sessionId === 'edufine-work-session' && workActive,
+            } } };
           }
-          if (expression === "String(window.name||'')") {
-            return { result: { value: sessionId === 'edufine-monitor-session'
-              ? 'stream-panel-edufine-approval-monitor'
-              : 'stream-panel-edufine' } };
+          if (expression.includes('stream-panel-edufine-approval-') && expression.includes('window.open(')) {
+            monitorSequence += 1;
+            monitorTargetId = `edufine-monitor-${monitorSequence}`;
+            return { result: { value: true } };
           }
           if (String(params.expression ?? '').includes('loginVisible')) {
             return { result: { value: {
-              href: 'https://klef.goe.go.kr/purchase',
+              href: sessionId === 'edufine-work-session'
+                ? 'https://klef.goe.go.kr/purchase'
+                : 'https://klef.goe.go.kr/',
               origin: 'https://klef.goe.go.kr',
               readyState: 'complete',
               loginVisible: false,
@@ -623,6 +633,9 @@ describe('Windows managed web automation', () => {
       officeCode: 'goe',
       browserId: 'edge',
     });
+    workActive = true;
+    await expect(firstPage.currentOrigin()).rejects.toMatchObject({ name: 'AbortError' });
+    workActive = false;
     await firstPage.release?.();
     const secondPage = await openCdpWindowsApprovalPage(managedSession as never, {
       system: 'edufine',
@@ -633,19 +646,229 @@ describe('Windows managed web automation', () => {
 
     expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
     expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
-    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
+    expect(commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(2);
     expect(commands.filter(({ method, params }) => (
       method === 'Runtime.evaluate' &&
-      String(params.expression ?? '').includes('stream-panel-edufine-approval-monitor') &&
+      String(params.expression ?? '').includes('stream-panel-edufine-approval-') &&
       String(params.expression ?? '').includes('window.open(')
-    ))).toHaveLength(1);
+    ))).toHaveLength(2);
     expect(commands.filter(({ method, params }) => (
-      method === 'Target.attachToTarget' && params.targetId === 'edufine-monitor-target'
+      method === 'Target.attachToTarget' && String(params.targetId).startsWith('edufine-monitor-')
     )).length).toBeGreaterThanOrEqual(2);
     expect(managedSession).toMatchObject({
-      approvalMonitorTargetIds: { edufine: 'edufine-monitor-target' },
       systemTargetIds: { edufine: 'edufine-work-form' },
       connectionTargetIds: { edufine: 'edufine-work-form' },
+    });
+    expect(monitorTargetId).toBeNull();
+  });
+
+  it('defers a scheduled Edufine check before opening a tab when an Edufine work tab is active', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') return { targetInfos: [{
+          targetId: 'edufine-work',
+          type: 'page',
+          url: 'https://klef.goe.go.kr/draft',
+        }] };
+        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-work-session' };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('visibilityState')) {
+            return { result: { value: { visible: true, focused: true } } };
+          }
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://klef.goe.go.kr/draft',
+              origin: 'https://klef.goe.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          return { result: { value: 'stream-panel-edufine' } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connectionTargetIds: { edufine: 'edufine-work' },
+      systemTargetIds: { edufine: 'edufine-work' },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await expect(openCdpWindowsApprovalPage(session as never, {
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(commands.some(({ method, params }) => (
+      method === 'Runtime.evaluate' && String(params.expression ?? '').includes('window.open(')
+    ))).toBe(false);
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+  });
+
+  it('allows a scheduled Edufine check when its selected work tab is not browser-focused', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
+    let monitorOpened = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') return { targetInfos: [
+          {
+            targetId: 'edufine-work',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/draft',
+          },
+          ...(monitorOpened ? [{
+            targetId: 'edufine-monitor',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/',
+            openerId: 'edufine-work',
+          }] : []),
+        ] };
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: params.targetId === 'edufine-work' ? 'work-session' : 'monitor-session' };
+        }
+        if (method === 'Target.closeTarget') return { success: true };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('visibilityState')) {
+            return { result: { value: { visible: sessionId === 'work-session', focused: false } } };
+          }
+          if (expression.includes('window.open(')) {
+            monitorOpened = true;
+            return { result: { value: true } };
+          }
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://klef.goe.go.kr/',
+              origin: 'https://klef.goe.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          return { result: { value: true } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connectionTargetIds: { edufine: 'edufine-work' },
+      systemTargetIds: { edufine: 'edufine-work' },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    const page = await openCdpWindowsApprovalPage(session as never, {
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+    });
+    await page.release?.();
+
+    expect(commands.some(({ method, params }) => (
+      method === 'Runtime.evaluate' && String(params.expression ?? '').includes('window.open(')
+    ))).toBe(true);
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'edufine-monitor' },
+      sessionId: undefined,
+    });
+  });
+
+  it('closes the derived Edufine tab when readiness validation fails', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
+    let monitorOpened = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') return { targetInfos: [
+          {
+            targetId: 'edufine-work',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/main',
+          },
+          ...(monitorOpened ? [{
+            targetId: 'edufine-monitor',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/login',
+            openerId: 'edufine-work',
+          }] : []),
+        ] };
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: params.targetId === 'edufine-work' ? 'work-session' : 'monitor-session' };
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('visibilityState')) {
+            return { result: { value: { visible: false, focused: false } } };
+          }
+          if (expression.includes('window.open(')) {
+            monitorOpened = true;
+            return { result: { value: true } };
+          }
+          if (expression.includes('loginVisible')) {
+            const login = sessionId === 'monitor-session';
+            return { result: { value: {
+              href: login ? 'https://klef.goe.go.kr/login' : 'https://klef.goe.go.kr/main',
+              origin: 'https://klef.goe.go.kr',
+              readyState: 'complete',
+              loginVisible: login,
+            } } };
+          }
+          return { result: { value: true } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connectionTargetIds: { edufine: 'edufine-work' },
+      systemTargetIds: { edufine: 'edufine-work' },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await expect(openCdpWindowsApprovalPage(session as never, {
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+      interactive: true,
+    })).rejects.toThrow(/세션|로그인|인증/);
+
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'edufine-monitor' },
+      sessionId: undefined,
     });
   });
 
@@ -729,6 +952,9 @@ describe('Windows managed web automation', () => {
         if (method === 'Target.attachToTarget') return { sessionId: 'edufine-approval-session' };
         if (method === 'Runtime.evaluate') {
           const expression = String(params.expression ?? '');
+          if (expression.includes('visibilityState')) {
+            return { result: { value: { visible: false, focused: false } } };
+          }
           if (expression.includes('loginVisible')) {
             return { result: { value: {
               href: 'https://klef.goe.go.kr/main',
@@ -1170,12 +1396,6 @@ describe('Windows managed web automation', () => {
     session.portalTargetId = 'portal';
     session.connectionTargetIds = { neis: 'neis', edufine: 'edufine' };
     session.systemTargetIds = { neis: 'neis', edufine: 'edufine' };
-    session.approvalMonitorTargetIds = { edufine: 'edufine-monitor' };
-
-    eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'edufine-monitor' } });
-    expect(session.approvalMonitorTargetIds.edufine).toBeUndefined();
-    expect(closed).toEqual([]);
-
     eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'neis' } });
     expect(getWindowsConnectionPresence(session)).toEqual({
       portal: true,

@@ -239,7 +239,7 @@ describe('Windows approval count reader', () => {
       'open-document-approval-menu',
       'open-waiting-approval-inbox',
     ]);
-    expect(activations).toBe(1);
+    expect(activations).toBe(0);
   });
 
   it('waits briefly for a dynamically rendered list count', async () => {
