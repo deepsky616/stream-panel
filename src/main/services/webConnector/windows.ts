@@ -2896,6 +2896,42 @@ async function evaluateValuesInChildFrames<T>(
   return values;
 }
 
+async function evaluateValuesInFrameTargets<T>(
+  session: WindowsManagedBrowserSession,
+  parentSessionId: string,
+  parentTargetId: string,
+  expression: string,
+): Promise<T[]> {
+  let frameIds: Set<string>;
+  let targets: WindowsTargetInfo[];
+  try {
+    frameIds = new Set(portalFrameIds(
+      await session.connection.protocol.send('Page.getFrameTree', {}, parentSessionId),
+    ).slice(1));
+    targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    ).filter((target) => (
+      target.type === 'iframe' &&
+      (frameIds.has(target.targetId) || target.openerId === parentTargetId)
+    ));
+  } catch {
+    return [];
+  }
+  const values: T[] = [];
+  for (const target of targets) {
+    let attached: AttachedWindowsTarget | undefined;
+    try {
+      attached = await attachWindowsTarget(session, target);
+      values.push(await evaluateValue<T>(session, attached.sessionId, expression));
+    } catch {
+      // An out-of-process iframe can be replaced while K-Edufine redraws its shell.
+    } finally {
+      if (attached) await detachWindowsTarget(session, attached);
+    }
+  }
+  return values;
+}
+
 async function inspectEdufineCandidatesAcrossFrames(
   session: WindowsManagedBrowserSession,
   sessionId: string,
@@ -3650,6 +3686,12 @@ export async function scanWindowsSystemApprovalCount(
           attached.sessionId,
           SYSTEM_APPROVAL_SUMMARY_EXPRESSION,
           `${system}-global-approval-summary`,
+        ));
+        values.push(...await evaluateValuesInFrameTargets<unknown>(
+          session,
+          attached.sessionId,
+          target.targetId,
+          SYSTEM_APPROVAL_SUMMARY_EXPRESSION,
         ));
         const count = parseSystemApprovalCount(values, system);
         stableCount = count === stableValue ? stableCount + 1 : 1;

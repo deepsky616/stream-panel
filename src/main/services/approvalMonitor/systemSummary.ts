@@ -92,6 +92,13 @@ const visible=(element)=>{
   const rect=element.getBoundingClientRect();
   return rect.width>0&&rect.height>0&&style?.display!=='none'&&style?.visibility!=='hidden'&&Number(style?.opacity??1)>0;
 };
+const pseudoText=(element,pseudo)=>{
+  try{
+    const raw=normalize(element?.ownerDocument?.defaultView?.getComputedStyle?.(element,pseudo)?.content);
+    if(!raw||raw==='none'||raw==='normal')return '';
+    return raw.replace(/^["']|["']$/g,'');
+  }catch{return '';}
+};
 const surfaceTexts=(element)=>Array.from(new Set([
   element?.innerText,
   element?.textContent,
@@ -100,6 +107,8 @@ const surfaceTexts=(element)=>Array.from(new Set([
   element?.getAttribute?.('data-count'),
   element?.getAttribute?.('data-value'),
   element?.getAttribute?.('value'),
+  pseudoText(element,'::before'),
+  pseudoText(element,'::after'),
 ].map(normalize).filter(Boolean)));
 const elementsIn=(root)=>{
   const result=[];
@@ -112,7 +121,21 @@ const elementsIn=(root)=>{
   visit(root);
   return result;
 };
-const elements=elementsIn(document).filter(visible);
+const contexts=[];
+const visitedViews=new Set();
+const visitView=(view)=>{
+  if(!view||visitedViews.has(view))return;
+  visitedViews.add(view);
+  try{
+    const frameDocument=view.document;
+    contexts.push({view,document:frameDocument});
+    for(const frame of Array.from(frameDocument.querySelectorAll('iframe,frame'))){
+      try{visitView(frame.contentWindow);}catch{}
+    }
+  }catch{}
+};
+visitView(window);
+const elements=contexts.flatMap(({document})=>elementsIn(document)).filter(visible);
 const numericValue=(element)=>{
   for(const text of surfaceTexts(element)){
     const match=text.match(/^[\\(\\[]?\\s*(\\d{1,4})\\s*(?:건)?\\s*[\\)\\]]?$/);
@@ -166,8 +189,9 @@ for(const definition of definitions){
       }
     }
   }
-  try{
-    const view=document.defaultView;
+  for(const context of contexts){
+   try{
+    const view=context.view;
     const application=view?.nexacro?.getApplication?.();
     const roots=[application?.mainframe,application?._mainframe,view?._application].filter(Boolean);
     const seen=new Set();
@@ -223,7 +247,8 @@ for(const definition of definitions){
       for(const child of [component.form,component.frame,component.mainframe,component.childframe])visit(child,depth+1);
     };
     for(const root of roots)visit(root);
-  }catch{}
+   }catch{}
+  }
 }
 return {candidates:candidates.slice(0,100)};
 })()`;

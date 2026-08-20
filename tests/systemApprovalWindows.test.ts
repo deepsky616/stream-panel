@@ -70,4 +70,86 @@ describe('Windows connected system approval summary', () => {
       !String(params.expression ?? '').includes('.click(')
     ))).toBe(true);
   });
+
+  it('reads the Edufine Nexacro badge from an out-of-process iframe main world', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') return { targetInfos: [
+          {
+            targetId: 'edufine-main',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/',
+          },
+          {
+            targetId: 'edufine-nexacro-frame',
+            type: 'iframe',
+            url: 'https://klef.goe.go.kr/ui/main/index.html',
+          },
+        ] };
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Page.getFrameTree') return { frameTree: {
+          frame: { id: 'edufine-main-frame' },
+          childFrames: [{ frame: { id: 'edufine-nexacro-frame' } }],
+        } };
+        if (method === 'Page.createIsolatedWorld') return { executionContextId: 17 };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes("relation:'nexacro'")) {
+            return { result: { value: {
+              candidates: sessionId === 'edufine-nexacro-frame-session' ? [{
+                system: 'edufine',
+                value: 1,
+                itemLabel: '결재(긴급)',
+                relation: 'nexacro',
+                confidence: 100,
+                controlContext: 'topframe urgent approval badge',
+              }] : [],
+            } } };
+          }
+          if (expression.includes('window.name=')) {
+            return { result: { value: 'stream-panel-edufine' } };
+          }
+          return { result: { value: {
+            href: 'https://klef.goe.go.kr/',
+            origin: 'https://klef.goe.go.kr',
+            readyState: 'complete',
+            loginVisible: false,
+            edufineReady: true,
+          } } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      systemTargetIds: { edufine: 'edufine-main' },
+      connectionTargetIds: { edufine: 'edufine-main' },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      maintenancePauseDepth: 0,
+      cdpOperationTail: Promise.resolve(),
+      workflowState: 'IDLE' as const,
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await expect(scanWindowsSystemApprovalCount(session as never, 'edufine')).resolves.toBe(1);
+    expect(commands).toContainEqual(expect.objectContaining({
+      method: 'Target.attachToTarget',
+      params: { targetId: 'edufine-nexacro-frame', flatten: true },
+    }));
+    expect(commands.some(({ method }) => (
+      ['Target.createTarget', 'Page.navigate', 'Page.reload'].includes(method)
+    ))).toBe(false);
+  });
 });
