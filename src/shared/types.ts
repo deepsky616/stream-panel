@@ -164,7 +164,7 @@ export interface ApprovalMonitorConfig {
 
 export interface ApprovalMonitorStatus {
   system: WebWorkflowSystem;
-  state: 'disabled' | 'idle' | 'checking' | 'ready' | 'login-required' | 'error';
+  state: 'disabled' | 'idle' | 'checking' | 'retrying' | 'ready' | 'login-required' | 'error';
   pendingCount?: number;
   previousPendingCount?: number;
   increase?: number;

@@ -118,6 +118,11 @@ button {
   background: var(--tile-hover);
 }
 
+.title-approval-retrying b {
+  color: #fff;
+  background: #d97706;
+}
+
 .title-approval-error b,
 .title-approval-login-required b {
   color: #fff;

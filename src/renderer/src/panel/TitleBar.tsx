@@ -32,6 +32,9 @@ function approvalTitle(
   if (status?.increase && status.previousPendingCount !== undefined) {
     return `${label} 결재 대기가 ${status.previousPendingCount}건에서 ${status.pendingCount}건으로 늘었습니다. 새 결재 +${status.increase}건, 결재함 열기`;
   }
+  if (status?.state === 'retrying' && status.pendingCount !== undefined) {
+    return `${label} 결재함 마지막 확인 ${status.pendingCount}건, 재확인 중. 결재함 열기`;
+  }
   if (status?.pendingCount !== undefined) return `${label} 결재함 총 ${status.pendingCount}건 열기`;
   if (status?.state === 'checking') return `${label} 결재함 확인 중`;
   if (status?.state === 'login-required') return `${label} 로그인이 필요합니다. 결재함 열기`;

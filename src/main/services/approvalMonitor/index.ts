@@ -15,6 +15,7 @@ import type { ApprovalScanInput } from './definitions';
 import { isApprovalCheckCancelled } from './cancellation';
 
 const SYSTEMS = ['neis', 'edufine'] as const;
+const BUSY_RETRY_DELAY_MS = 60_000;
 
 interface PersistedSystemState {
   officeCode: EducationOfficeCode;
@@ -221,9 +222,11 @@ export function createApprovalMonitorService({
   let started = false;
   let stateLoadError: string | null = null;
   let timer: unknown = null;
+  const busyRetrySystems = new Set<WebWorkflowSystem>();
   let tail: Promise<void> = Promise.resolve();
   const inFlightBySystem = new Map<WebWorkflowSystem, Promise<void>>();
   const interactiveChecks = new Set<WebWorkflowSystem>();
+  const consecutiveFailures = new Map<WebWorkflowSystem, number>();
   const checkRevisions = new Map<WebWorkflowSystem, number>(
     SYSTEMS.map((system) => [system, 0]),
   );
@@ -401,6 +404,8 @@ export function createApprovalMonitorService({
             }
             state = nextState;
             stateLoadError = null;
+            consecutiveFailures.delete(system);
+            busyRetrySystems.delete(system);
             statuses[index] = {
               system,
               state: 'ready',
@@ -429,6 +434,7 @@ export function createApprovalMonitorService({
               return;
             }
             if (isApprovalCheckCancelled(error)) {
+              if (!interactive) busyRetrySystems.add(system);
               statuses[index] = previous
                 ? {
                     system,
@@ -441,15 +447,33 @@ export function createApprovalMonitorService({
               return;
             }
             const message = errorDetail(error);
-            statuses[index] = {
-              system,
-              state: /로그인|인증/.test(message) ? 'login-required' : 'error',
-              message,
-              ...(previous ? {
-                pendingCount: previous.pendingCount,
-                lastCheckedAt: previous.lastCheckedAt,
-              } : {}),
-            };
+            const connectionProblem = /로그인|인증|연결 탭|다시 연결/.test(message);
+            const persistentLocalProblem = /상태.*저장|권한|남은 저장 공간/.test(message);
+            const failures = (consecutiveFailures.get(system) ?? 0) + 1;
+            consecutiveFailures.set(system, failures);
+            if (!interactive && !connectionProblem && !persistentLocalProblem && failures < 3) {
+              busyRetrySystems.add(system);
+              statuses[index] = {
+                system,
+                state: 'retrying',
+                message: `업무 화면을 사용하는 동안 건수 확인을 마치지 못했습니다. 1분 뒤 다시 확인합니다. (${failures}/3)`,
+                ...(previous ? {
+                  pendingCount: previous.pendingCount,
+                  lastCheckedAt: previous.lastCheckedAt,
+                } : {}),
+              };
+            } else {
+              busyRetrySystems.delete(system);
+              statuses[index] = {
+                system,
+                state: connectionProblem ? 'login-required' : 'error',
+                message,
+                ...(previous ? {
+                  pendingCount: previous.pendingCount,
+                  lastCheckedAt: previous.lastCheckedAt,
+                } : {}),
+              };
+            }
           }
           publish();
         };
@@ -480,6 +504,8 @@ export function createApprovalMonitorService({
         const nextSignature = sourceSignature(config, system);
         if (sourceSignatures.get(system) !== nextSignature) {
           establishedBaselines.delete(system);
+          consecutiveFailures.delete(system);
+          busyRetrySystems.delete(system);
           sourceRevisions.set(system, (sourceRevisions.get(system) ?? 0) + 1);
           delete state.systems[system];
         }
@@ -506,6 +532,7 @@ export function createApprovalMonitorService({
     const intervalMinutes = [5, 10, 30].includes(config.intervalMinutes)
       ? config.intervalMinutes
       : 10;
+    const retryAfterBusyWork = busyRetrySystems.size > 0;
     timer = setTimer(() => {
       timer = null;
       let current: ApprovalMonitorConfig;
@@ -523,7 +550,7 @@ export function createApprovalMonitorService({
       } else {
         schedule();
       }
-    }, intervalMinutes * 60_000);
+    }, retryAfterBusyWork ? BUSY_RETRY_DELAY_MS : intervalMinutes * 60_000);
   }
 
   statuses = createStatuses();

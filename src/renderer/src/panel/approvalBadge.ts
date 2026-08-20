@@ -17,14 +17,23 @@ export function getApprovalBadgeForItem(
   const system = systemForItem(item);
   if (!system) return null;
   const status = statuses.find((candidate) => candidate.system === system);
-  if (!status || status.state !== 'ready' || status.pendingCount === undefined) return null;
+  if (
+    !status ||
+    !['ready', 'retrying'].includes(status.state) ||
+    status.pendingCount === undefined
+  ) return null;
   const systemLabel = system === 'neis' ? '나이스' : '에듀파인';
+  const retryingSuffix = status.state === 'retrying' ? ', 마지막 확인값·재확인 중' : '';
   return {
     label: status.pendingCount > 99 ? '99+' : String(status.pendingCount),
     title: status.increase && status.previousPendingCount !== undefined
-      ? `${systemLabel} 결재 대기 ${status.pendingCount}건, 새 결재 +${status.increase}건`
-      : `${systemLabel} 결재 대기 ${status.pendingCount}건`,
-    state: status.increase ? 'increased' : status.pendingCount === 0 ? 'empty' : status.state,
+      ? `${systemLabel} 결재 대기 ${status.pendingCount}건, 새 결재 +${status.increase}건${retryingSuffix}`
+      : `${systemLabel} 결재 대기 ${status.pendingCount}건${retryingSuffix}`,
+    state: status.increase
+      ? 'increased'
+      : status.pendingCount === 0
+        ? 'empty'
+        : status.state,
     ...(status.changedAt !== undefined ? { pulseKey: status.changedAt } : {}),
   };
 }

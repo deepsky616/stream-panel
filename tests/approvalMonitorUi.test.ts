@@ -81,9 +81,9 @@ describe('approval monitor settings UI', () => {
     expect(html).not.toContain('브라우저 확인');
     expect(html).toContain('업무 알림');
     expect(html).not.toContain('결재함 키 추가');
-    expect(html).toContain('업무포털 승인사항 → 미결/협조함 오른쪽 숫자');
-    expect(html).toContain('업무포털 전자결재 현황 → 결재(긴급) 오른쪽 숫자');
-    expect(html).toContain('페이지 크기·페이지 번호·페이지당 숫자는 건수로 사용하지 않습니다');
+    expect(html).toContain('연결된 나이스 탭 → 미결/협조함 전역 건수');
+    expect(html).toContain('연결된 K-에듀파인 탭 → 결재(긴급) 전역 건수');
+    expect(html).toContain('페이지 크기·페이지 번호·페이지당 숫자는 사용하지 않습니다');
   });
 
   it('shows read-only NEIS and Edufine monitor controls without approval actions', () => {
@@ -176,6 +176,19 @@ describe('approval monitor settings UI', () => {
       label: '0',
       title: '나이스 결재 대기 0건',
       state: 'empty',
+    });
+  });
+
+  it('keeps the last confirmed badge visible while a transient check retries', () => {
+    expect(getApprovalBadgeForItem(approvalAction('edufine-approval-inbox'), [{
+      system: 'edufine',
+      state: 'retrying',
+      pendingCount: 1,
+      lastCheckedAt: 1_800_000_000_000,
+    }])).toEqual({
+      label: '1',
+      title: '에듀파인 결재 대기 1건, 마지막 확인값·재확인 중',
+      state: 'retrying',
     });
   });
 

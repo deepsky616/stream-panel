@@ -168,12 +168,17 @@ describe('approval monitor rules', () => {
 describe('approval monitor service', () => {
   it('returns to the previous state instead of showing an error when a key preempts a scan', async () => {
     const config = windowsConfig();
+    const timers: Array<{ handler: () => void; delayMs: number }> = [];
     const service = createApprovalMonitorService({
       platform: 'win32',
       getConfig: () => config,
       scanner: { scan: async () => { throw createApprovalCheckCancelledError(); } },
       stateIo: { read: async () => undefined, write: async () => undefined },
-      setTimer: () => 1,
+      setTimer: (handler, delayMs) => {
+        const timer = { handler, delayMs };
+        timers.push(timer);
+        return timer;
+      },
       clearTimer: () => undefined,
     });
     await service.start();
@@ -181,6 +186,45 @@ describe('approval monitor service', () => {
     await expect(service.check({ system: 'neis' })).resolves.toEqual(
       expect.arrayContaining([{ system: 'neis', state: 'idle' }]),
     );
+    expect(timers.at(-1)?.delayMs).toBe(60_000);
+  });
+
+  it('keeps a transient read failure recoverable and retries twice before showing an error', async () => {
+    const config = windowsConfig();
+    config.approvalMonitor.sources.neis.enabled = true;
+    config.approvalMonitor.sources.edufine.enabled = false;
+    const timers: Array<{ handler: () => void; delayMs: number }> = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => { throw new Error('전역 건수를 아직 읽지 못했습니다.'); } },
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      setTimer: (handler, delayMs) => {
+        const timer = { handler, delayMs };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer: () => undefined,
+    });
+    await service.start();
+
+    await service.check({ system: 'neis' });
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'neis', state: 'retrying', message: expect.stringMatching(/1분 뒤.*1\/3/),
+    }));
+    expect(timers.at(-1)?.delayMs).toBe(60_000);
+
+    await service.check({ system: 'neis' });
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'neis', state: 'retrying', message: expect.stringMatching(/2\/3/),
+    }));
+    expect(timers.at(-1)?.delayMs).toBe(60_000);
+
+    await service.check({ system: 'neis' });
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'neis', state: 'error', message: expect.stringMatching(/전역 건수/),
+    }));
+    expect(timers.at(-1)?.delayMs).toBe(10 * 60_000);
   });
 
   it('shows a recoverable error for a corrupt state file instead of silently resetting it', async () => {

@@ -24,6 +24,9 @@ function statusText(status: ApprovalMonitorStatus | undefined): string {
   if (!status || status.state === 'idle') return '확인 전';
   if (status.state === 'disabled') return '사용 안 함';
   if (status.state === 'checking') return '확인 중';
+  if (status.state === 'retrying') return status.pendingCount === undefined
+    ? '잠시 후 재확인'
+    : `대기 ${status.pendingCount}건 · 재확인 중`;
   if (status.state === 'ready') return `대기 ${status.pendingCount ?? 0}건`;
   if (status.state === 'login-required') return '로그인 필요';
   return '확인 오류';
@@ -62,7 +65,7 @@ export function ApprovalMonitorSettings({
       <div className="web-work-heading">
         <div>
           <h3 id="approval-monitor-title">업무 알림</h3>
-          <p>업무포털 현황 숫자를 확인하고, 증가하면 실제 결재 목록으로 검증해 알려줍니다.</p>
+          <p>로그인된 나이스·K-에듀파인 탭의 전역 건수를 읽고, 증가하면 실제 결재 목록으로 검증해 알려줍니다.</p>
         </div>
       </div>
       <label>
@@ -130,8 +133,8 @@ export function ApprovalMonitorSettings({
                 </label>
                 <span className="approval-source-state">{statusText(status)}</span>
                 <small>{system === 'neis'
-                  ? '정기 확인: 업무포털 승인사항 → 미결/협조함 오른쪽 숫자'
-                  : '정기 확인: 업무포털 전자결재 현황 → 결재(긴급) 오른쪽 숫자'}</small>
+                  ? '정기 확인: 연결된 나이스 탭 → 미결/협조함 전역 건수'
+                  : '정기 확인: 연결된 K-에듀파인 탭 → 결재(긴급) 전역 건수'}</small>
                 {status?.lastCheckedAt !== undefined && (
                   <small>마지막 확인: {formatLastCheckedAt(status.lastCheckedAt)}</small>
                 )}
@@ -163,7 +166,7 @@ export function ApprovalMonitorSettings({
         })}
       </div>
       <p className="workflow-safety-note">
-        페이지 크기·페이지 번호·페이지당 숫자는 건수로 사용하지 않습니다. 증가하거나 지금 확인할 때만 실제 목록을 검증하며 문서 내용과 인증 정보는 저장하지 않습니다.
+        화면 이동 없이 전역 건수만 읽으며 페이지 크기·페이지 번호·페이지당 숫자는 사용하지 않습니다. 증가하거나 지금 확인할 때만 실제 목록을 검증하고 문서 내용과 인증 정보는 저장하지 않습니다.
       </p>
     </section>
   );

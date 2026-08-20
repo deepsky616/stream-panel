@@ -925,6 +925,11 @@
   background: rgb(45 166 91 / 14%);
 }
 
+.approval-source-retrying .approval-source-state {
+  color: var(--status-warning, #d97706);
+  background: rgb(245 158 11 / 14%);
+}
+
 .approval-source-login-required .approval-source-state,
 .approval-source-error .approval-source-state {
   color: var(--status-error);

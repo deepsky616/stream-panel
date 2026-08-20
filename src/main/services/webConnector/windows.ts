@@ -63,6 +63,10 @@ import {
   parsePortalApprovalCount,
   PORTAL_APPROVAL_SUMMARY_EXPRESSION,
 } from '../approvalMonitor/portalSummary';
+import {
+  parseSystemApprovalCount,
+  SYSTEM_APPROVAL_SUMMARY_EXPRESSION,
+} from '../approvalMonitor/systemSummary';
 
 export interface ResolveWindowsManagedBrowserOptions {
   env?: NodeJS.ProcessEnv;
@@ -3595,6 +3599,77 @@ export async function scanWindowsPortalApprovalCount(
   return count;
 }
 
+const SYSTEM_APPROVAL_SUMMARY_TIMEOUT_MS = 8_000;
+
+/**
+ * Reads the global approval badge from the already authenticated system tab.
+ * This path never reloads, navigates, clicks, activates, or creates a target,
+ * so a user's open request, draft, purchase, or approval screen is untouched.
+ */
+export async function scanWindowsSystemApprovalCount(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  signal?: AbortSignal,
+): Promise<number> {
+  throwIfApprovalCheckCancelled(signal);
+  const target = await findAuthenticatedConnectionTarget(session, system)
+    ?? await findAuthenticatedSystemTarget(session, system);
+  if (!target) {
+    throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭을 찾지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.`);
+  }
+  let attached: AttachedWindowsTarget | undefined;
+  let lastError: unknown;
+  let stableValue: number | undefined;
+  let stableCount = 0;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    const deadline = Date.now() + SYSTEM_APPROVAL_SUMMARY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      throwIfApprovalCheckCancelled(signal);
+      try {
+        const readiness = readPageReadinessState(
+          await evaluateValue(session, attached.sessionId, PAGE_READINESS_EXPRESSION),
+        );
+        if (!readiness || readiness.loginVisible) {
+          throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 로그인이 필요합니다. 업무용 브라우저에서 다시 연결해 주세요.`);
+        }
+        if (!systemTargetAllowed(
+          { ...target, url: readiness.href },
+          session.officeCode,
+          system,
+        )) {
+          throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭의 주소가 변경되었습니다. 다시 연결해 주세요.`);
+        }
+        const values: unknown[] = [await evaluateValue(
+          session,
+          attached.sessionId,
+          SYSTEM_APPROVAL_SUMMARY_EXPRESSION,
+        )];
+        values.push(...await evaluateValuesInChildFrames<unknown>(
+          session,
+          attached.sessionId,
+          SYSTEM_APPROVAL_SUMMARY_EXPRESSION,
+          `${system}-global-approval-summary`,
+        ));
+        const count = parseSystemApprovalCount(values, system);
+        stableCount = count === stableValue ? stableCount + 1 : 1;
+        stableValue = count;
+        if (stableCount >= 2) return count;
+      } catch (error) {
+        lastError = error;
+        stableValue = undefined;
+        stableCount = 0;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+    }
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 전역 결재 건수를 읽지 못했습니다.`);
+}
+
 export async function openCdpWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   workflowId: WebWorkflowId,
@@ -5255,39 +5330,39 @@ export function createWindowsManagedSessionManager(
                 ),
               }, abortController.signal);
               if (interactive) return scanList();
-              let portalCount: number;
+              let systemCount: number;
               try {
-                portalCount = await scanWindowsPortalApprovalCount(
+                systemCount = await scanWindowsSystemApprovalCount(
                   session,
                   input.system,
                   abortController.signal,
                 );
-              } catch (portalError) {
+              } catch (summaryError) {
                 try {
                   return await scanList();
                 } catch (listError) {
                   if (isApprovalCheckCancelled(listError)) throw listError;
-                  const portalMessage = portalError instanceof Error
-                    ? portalError.message
-                    : '업무포털 현황을 읽지 못했습니다.';
+                  const summaryMessage = summaryError instanceof Error
+                    ? summaryError.message
+                    : '연결된 업무 시스템의 전역 건수를 읽지 못했습니다.';
                   const listMessage = listError instanceof Error
                     ? listError.message
                     : '실제 결재 목록을 읽지 못했습니다.';
-                  throw new Error(`${portalMessage} 실제 목록 확인도 실패했습니다: ${listMessage}`);
+                  throw new Error(`${summaryMessage} 실제 목록 확인도 실패했습니다: ${listMessage}`);
                 }
               }
               const previous = input.previousPendingCount;
-              if (previous !== undefined && portalCount > previous) {
+              if (previous !== undefined && systemCount > previous) {
                 try {
                   return await scanList();
                 } catch (error) {
                   if (isApprovalCheckCancelled(error)) throw error;
-                  // The exact portal badge is still a safe positive signal. A
+                  // The exact system badge is still a safe positive signal. A
                   // deep-list failure must not hide a newly increased count.
-                  return portalCount;
+                  return systemCount;
                 }
               }
-              return portalCount;
+              return systemCount;
             },
           );
         } finally {
