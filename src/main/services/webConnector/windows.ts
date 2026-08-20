@@ -97,6 +97,8 @@ export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   portalTargetId?: string;
   /** Persistent background portal tab used only for approval summary refreshes. */
   approvalPortalTargetId?: string;
+  /** Persistent system tabs used only for background approval-list checks. */
+  approvalMonitorTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   approvalPortalSnapshot?: {
     checkedAt: number;
     counts: Partial<Record<WebWorkflowSystem, number>>;
@@ -338,6 +340,7 @@ export async function createWindowsManagedBrowserSession(
     bootstrapTargetId,
     systemTargetIds: {},
     connectionTargetIds: {},
+    approvalMonitorTargetIds: {},
     workflowResultTargetIds: {},
     maintenancePauseDepth: 0,
     cdpOperationTail: Promise.resolve(),
@@ -382,11 +385,13 @@ export async function createWindowsManagedBrowserSession(
       for (const system of ['neis', 'edufine'] as const) {
         const connectionTargets = connectionTargetMap(managedSession);
         const systemTargets = systemTargetMap(managedSession);
+        const monitorTargets = approvalMonitorTargetMap(managedSession);
         const resultTargets = workflowResultTargetMap(managedSession);
         const systemClosed = connectionTargets[system] === targetId ||
           systemTargets[system] === targetId;
         if (connectionTargets[system] === targetId) delete connectionTargets[system];
         if (systemTargets[system] === targetId) delete systemTargets[system];
+        if (monitorTargets[system] === targetId) delete monitorTargets[system];
         if (resultTargets[system] === targetId) delete resultTargets[system];
         if (systemClosed) onManagedTargetClosed?.('system', system);
       }
@@ -435,6 +440,13 @@ function connectionTargetMap(
 ): Partial<Record<WebWorkflowSystem, string>> {
   session.connectionTargetIds ??= {};
   return session.connectionTargetIds;
+}
+
+function approvalMonitorTargetMap(
+  session: WindowsManagedBrowserSession,
+): Partial<Record<WebWorkflowSystem, string>> {
+  session.approvalMonitorTargetIds ??= {};
+  return session.approvalMonitorTargetIds;
 }
 
 function workflowResultTargetMap(
@@ -2484,6 +2496,8 @@ interface WorkflowTargetOptions {
   forceNewTarget?: boolean;
   keepCreatedTargetOnFailure?: boolean;
   navigateExistingTarget?: boolean;
+  /** Use this exact owned tab instead of selecting the user's connected work tab. */
+  preferredTargetId?: string;
   /** Recreate an expired system session through the authenticated office portal. */
   recoverViaPortal?: boolean;
   signal?: AbortSignal;
@@ -3071,16 +3085,28 @@ async function acquireDirectWorkflowTarget(
       target.type === 'page' &&
       workflowTargetAllowed(target.url, session.officeCode, workflowId, workflowSpec),
     ));
-  const existingTarget = rememberedTarget ?? selectWindowsWorkflowTarget(
-    targets,
+  const monitorTargetIds = new Set(Object.values(approvalMonitorTargetMap(session)));
+  const preferredTarget = options.preferredTargetId
+    ? targets.find((target) => (
+        target.targetId === options.preferredTargetId &&
+        target.type === 'page'
+      )) ?? null
+    : null;
+  if (options.preferredTargetId && !preferredTarget) {
+    throw new Error('업무 알림 전용 탭이 닫혔습니다. 다음 확인에서 다시 준비해 주세요.');
+  }
+  const existingTarget = preferredTarget ?? rememberedTarget ?? selectWindowsWorkflowTarget(
+    targets.filter((target) => !monitorTargetIds.has(target.targetId)),
     session.officeCode,
     workflowId,
     workflowSpec,
   );
-  if (system && existingTarget) systemTargetMap(session)[system] = existingTarget.targetId;
-  let target = options.forceNewTarget
+  if (system && existingTarget && !preferredTarget) {
+    systemTargetMap(session)[system] = existingTarget.targetId;
+  }
+  let target = preferredTarget ?? (options.forceNewTarget
     ? null
-    : existingTarget;
+    : existingTarget);
   let shouldNavigate = Boolean(target && options.navigateExistingTarget);
   if (!target && !options.forceNewTarget) {
     target = targets.find((candidate) => (
@@ -3347,31 +3373,172 @@ function createWindowsWorkflowPage(
   };
 }
 
+function approvalMonitorTabName(system: WebWorkflowSystem): string {
+  return `stream-panel-${system}-approval-monitor`;
+}
+
+async function findOwnedApprovalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  targets: readonly WindowsTargetInfo[],
+): Promise<WindowsTargetInfo | null> {
+  const targetMap = approvalMonitorTargetMap(session);
+  const remembered = targets.find((target) => (
+    target.targetId === targetMap[system] &&
+    target.type === 'page' &&
+    systemTargetAllowed(target, session.officeCode, system)
+  ));
+  if (remembered) return remembered;
+  delete targetMap[system];
+
+  const expectedName = approvalMonitorTabName(system);
+  const connectionTargetId = connectionTargetMap(session)[system];
+  for (const target of targets) {
+    if (
+      target.type !== 'page' ||
+      target.targetId === connectionTargetId ||
+      !systemTargetAllowed(target, session.officeCode, system)
+    ) continue;
+    let attached: AttachedWindowsTarget | undefined;
+    try {
+      attached = await attachWindowsTarget(session, target);
+      const name = await evaluateValue<unknown>(
+        session,
+        attached.sessionId,
+        'String(window.name||\'\')',
+      );
+      if (name === expectedName) {
+        targetMap[system] = target.targetId;
+        return target;
+      }
+    } catch {
+      // A loading tab is not adopted unless Stream Panel ownership is verified.
+    } finally {
+      if (attached) await detachWindowsTarget(session, attached);
+    }
+  }
+  return null;
+}
+
+async function rememberApprovalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  target: WindowsTargetInfo,
+): Promise<WindowsTargetInfo> {
+  approvalMonitorTargetMap(session)[system] = target.targetId;
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    await evaluateValue(
+      session,
+      attached.sessionId,
+      `(()=>{window.name=${JSON.stringify(approvalMonitorTabName(system))};return window.name;})()`,
+    );
+  } catch {
+    // The exact target id is already owned. Readiness checks wait for its first document.
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+  return target;
+}
+
+async function acquireApprovalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  signal?: AbortSignal,
+): Promise<WindowsTargetInfo> {
+  throwIfApprovalCheckCancelled(signal);
+  const anchor = await findAuthenticatedConnectionTarget(session, system);
+  if (!anchor) {
+    throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭을 찾지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.`);
+  }
+  const protocol = session.connection.protocol;
+  const destination = systemConnectionLandingUrl(session.officeCode, system);
+  let targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
+  const existing = await findOwnedApprovalMonitorTarget(session, system, targets);
+  if (existing) return existing;
+
+  const before = new Set(targets.map(({ targetId }) => targetId));
+  let anchorAttachment: AttachedWindowsTarget | undefined;
+  let opened = false;
+  try {
+    anchorAttachment = await attachWindowsTarget(session, anchor);
+    opened = await evaluateValue<unknown>(
+      session,
+      anchorAttachment.sessionId,
+      `(()=>{const child=window.open(${JSON.stringify(destination)},${JSON.stringify(approvalMonitorTabName(system))});if(!child)return false;try{child.blur();window.focus();}catch{}return true;})()`,
+      true,
+    ) === true;
+  } catch {
+    // A hardened browser can block window.open; a same-profile background tab is the fallback.
+  } finally {
+    if (anchorAttachment) await detachWindowsTarget(session, anchorAttachment);
+  }
+
+  if (opened) {
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      throwIfApprovalCheckCancelled(signal);
+      targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
+      const named = await findOwnedApprovalMonitorTarget(session, system, targets);
+      if (named) return named;
+      const openedFromAnchor = targets.find((target) => (
+        target.type === 'page' &&
+        !before.has(target.targetId) &&
+        target.openerId === anchor.targetId &&
+        systemTargetAllowed(target, session.officeCode, system)
+      ));
+      if (openedFromAnchor) {
+        return rememberApprovalMonitorTarget(session, system, openedFromAnchor);
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  throwIfApprovalCheckCancelled(signal);
+  const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
+    url: destination,
+    background: true,
+  });
+  if (typeof created.targetId !== 'string') {
+    throw new Error('K-에듀파인 업무 알림 전용 탭을 준비하지 못했습니다. 업무용 브라우저를 다시 연결해 주세요.');
+  }
+  return rememberApprovalMonitorTarget(session, system, {
+    targetId: created.targetId,
+    type: 'page',
+    url: destination,
+    openerId: anchor.targetId,
+  });
+}
+
 export async function openCdpWindowsApprovalPage(
   session: WindowsManagedBrowserSession,
   input: ApprovalScanInput,
   signal?: AbortSignal,
 ): Promise<WindowsApprovalPage> {
   const scheduled = input.interactive !== true;
+  const monitorTarget = input.system === 'edufine'
+    ? await acquireApprovalMonitorTarget(session, input.system, signal)
+    : null;
   const page = await openCdpWindowsWorkflowPage(
     session,
     input.system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
     undefined,
     {
       background: scheduled,
-      // Scheduled scans use a clean disposable tab in the same browser profile.
-      // Authenticated cookies are shared, while the connected NEIS/Edufine tab
-      // remains exactly where the user is working.
-      forceNewTarget: scheduled,
-      closeCreatedTargetOnRelease: scheduled,
+      // NEIS keeps the disposable-tab path. Edufine reuses one tab derived from
+      // its authenticated connection because Nexacro can keep essential state
+      // in the opener browsing context rather than in cookies alone.
+      forceNewTarget: scheduled && input.system !== 'edufine',
+      closeCreatedTargetOnRelease: scheduled && input.system !== 'edufine',
       // A disposable monitoring-tab cleanup failure must never close all of the
       // user's active managed-browser tabs.
       closeSessionOnCleanupFailure: !scheduled,
       failFastOnLoginRequired: true,
-      // Manual checks remain on the connected application tab so the user can
-      // inspect the list. A scheduled scan starts at the workflow root in its
-      // disposable background tab.
+      // Edufine manual and scheduled checks share the owned monitor tab. NEIS
+      // manual checks keep their existing connected-tab behavior.
       navigateExistingTarget: false,
+      ...(monitorTarget ? { preferredTargetId: monitorTarget.targetId } : {}),
       keepCreatedTargetOnFailure: input.interactive === true,
       // The explicit Connect button owns SSO preparation. Approval scans share
       // that verified browser session and fail quickly instead of opening a new login flow.
@@ -5221,6 +5388,12 @@ export type WindowsManagedSessionController = ManagedBrowserSessionManager<
   ): WindowsConnectionPresence | undefined;
 };
 
+export function shouldScanApprovalListFirst(
+  input: Pick<ApprovalScanInput, 'system' | 'interactive'>,
+): boolean {
+  return input.interactive === true || input.system === 'edufine';
+}
+
 export function createWindowsManagedSessionManager(
   options: CreateWindowsManagedSessionManagerOptions,
 ): WindowsManagedSessionController {
@@ -5371,7 +5544,10 @@ export function createWindowsManagedSessionManager(
                   signal,
                 ),
               }, abortController.signal);
-              if (interactive) return scanList();
+              // Edufine's global badge varies by skin and can be rendered in a
+              // stale Nexacro frame. Its actual 결재대기 Dataset is the only
+              // authoritative source for both scheduled and manual checks.
+              if (shouldScanApprovalListFirst(input)) return scanList();
               let systemCount: number;
               try {
                 systemCount = await scanWindowsSystemApprovalCount(

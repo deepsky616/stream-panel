@@ -324,12 +324,23 @@ export async function scanWindowsApprovalCount(
     }
     if (!completed) throw routeError;
     let countError: unknown;
+    let stableEdufineCount: number | undefined;
+    let stableEdufineReads = 0;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       throwIfApprovalCheckCancelled(signal);
       await assertOrigin();
       try {
         const count = parseApprovalCounterValue(await page.readApprovalCount(input.system));
         await assertOrigin();
+        if (input.system === 'edufine') {
+          stableEdufineReads = count === stableEdufineCount ? stableEdufineReads + 1 : 1;
+          stableEdufineCount = count;
+          if (stableEdufineReads < 2) {
+            countError = new Error('에듀파인 결재대기 목록 건수가 아직 안정되지 않았습니다.');
+            if (attempt < 19) await page.wait(250);
+            continue;
+          }
+        }
         if (input.interactive) {
           try {
             await page.activate?.();

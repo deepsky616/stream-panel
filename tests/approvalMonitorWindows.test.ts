@@ -258,7 +258,7 @@ describe('Windows approval count reader', () => {
       { system: 'edufine', officeCode: 'goe', browserId: 'edge' },
       { openPage: async () => workflowPage },
     )).resolves.toBe(6);
-    expect({ reads, waits }).toEqual({ reads: 3, waits: 5 });
+    expect({ reads, waits }).toEqual({ reads: 4, waits: 6 });
   });
 
   it('accepts only a bounded non-negative integer returned by the page', () => {
