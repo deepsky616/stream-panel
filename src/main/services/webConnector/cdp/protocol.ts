@@ -17,6 +17,7 @@ export type AllowedCdpMethod =
   | 'Page.getFrameTree'
   | 'Page.createIsolatedWorld'
   | 'Page.navigate'
+  | 'Page.reload'
   | 'Page.bringToFront'
   | 'Page.close'
   | 'Page.handleJavaScriptDialog'
@@ -41,6 +42,7 @@ const ALLOWED_METHODS = new Set<AllowedCdpMethod>([
   'Page.getFrameTree',
   'Page.createIsolatedWorld',
   'Page.navigate',
+  'Page.reload',
   'Page.bringToFront',
   'Page.close',
   'Page.handleJavaScriptDialog',

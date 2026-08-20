@@ -11,6 +11,8 @@ export interface ApprovalScanInput {
   browserId: WebConnectorBrowserId;
   /** Show the connected system tab when a user-triggered check needs attention. */
   interactive?: boolean;
+  /** Last trusted value, used to verify only dashboard increases against the full list. */
+  previousPendingCount?: number;
 }
 
 const COMMON_CHECKS = {

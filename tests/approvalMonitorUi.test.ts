@@ -81,8 +81,9 @@ describe('approval monitor settings UI', () => {
     expect(html).not.toContain('브라우저 확인');
     expect(html).toContain('업무 알림');
     expect(html).not.toContain('결재함 키 추가');
-    expect(html).toContain('확인 위치: 미결/협조함 목록의 전체 건수');
-    expect(html).toContain('확인 위치: 문서관리 영역 → 결재대기 목록의 전체 건수');
+    expect(html).toContain('업무포털 승인사항 → 미결/협조함 오른쪽 숫자');
+    expect(html).toContain('업무포털 전자결재 현황 → 결재(긴급) 오른쪽 숫자');
+    expect(html).toContain('페이지 크기·페이지 번호·페이지당 숫자는 건수로 사용하지 않습니다');
   });
 
   it('shows read-only NEIS and Edufine monitor controls without approval actions', () => {

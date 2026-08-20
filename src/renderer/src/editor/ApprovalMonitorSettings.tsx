@@ -62,7 +62,7 @@ export function ApprovalMonitorSettings({
       <div className="web-work-heading">
         <div>
           <h3 id="approval-monitor-title">업무 알림</h3>
-          <p>결재함의 대기 건수만 읽고 새 결재가 늘면 윈도우 알림으로 알려줍니다.</p>
+          <p>업무포털 현황 숫자를 확인하고, 증가하면 실제 결재 목록으로 검증해 알려줍니다.</p>
         </div>
       </div>
       <label>
@@ -130,8 +130,8 @@ export function ApprovalMonitorSettings({
                 </label>
                 <span className="approval-source-state">{statusText(status)}</span>
                 <small>{system === 'neis'
-                  ? '확인 위치: 미결/협조함 목록의 전체 건수'
-                  : '확인 위치: 문서관리 영역 → 결재대기 목록의 전체 건수'}</small>
+                  ? '정기 확인: 업무포털 승인사항 → 미결/협조함 오른쪽 숫자'
+                  : '정기 확인: 업무포털 전자결재 현황 → 결재(긴급) 오른쪽 숫자'}</small>
                 {status?.lastCheckedAt !== undefined && (
                   <small>마지막 확인: {formatLastCheckedAt(status.lastCheckedAt)}</small>
                 )}
@@ -163,7 +163,7 @@ export function ApprovalMonitorSettings({
         })}
       </div>
       <p className="workflow-safety-note">
-        문서 제목과 작성자, 본문, 인증 정보는 저장하지 않습니다. 결재함 목록까지만 열며 승인, 반려, 서명과 결재 처리는 사용자가 직접 진행합니다.
+        페이지 크기·페이지 번호·페이지당 숫자는 건수로 사용하지 않습니다. 증가하거나 지금 확인할 때만 실제 목록을 검증하며 문서 내용과 인증 정보는 저장하지 않습니다.
       </p>
     </section>
   );

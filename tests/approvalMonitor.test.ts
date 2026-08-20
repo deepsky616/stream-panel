@@ -700,8 +700,14 @@ describe('approval monitor service', () => {
     await service.check({ system: 'neis' }, { interactive: true });
     expect(scans).toEqual([
       { system: 'neis', browserId: 'edge', officeCode: 'goe' },
-      { system: 'neis', browserId: 'edge', officeCode: 'goe' },
-      { system: 'neis', browserId: 'edge', officeCode: 'goe', interactive: true },
+      { system: 'neis', browserId: 'edge', officeCode: 'goe', previousPendingCount: 2 },
+      {
+        system: 'neis',
+        browserId: 'edge',
+        officeCode: 'goe',
+        previousPendingCount: 4,
+        interactive: true,
+      },
     ]);
     expect(notifications).toEqual([{ system: 'neis', count: 4 }]);
     expect(broadcasts.length).toBeGreaterThan(1);

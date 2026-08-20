@@ -56,8 +56,13 @@ import {
 } from '../approvalMonitor/definitions';
 import {
   createApprovalCheckCancelledError,
+  isApprovalCheckCancelled,
   throwIfApprovalCheckCancelled,
 } from '../approvalMonitor/cancellation';
+import {
+  parsePortalApprovalCount,
+  PORTAL_APPROVAL_SUMMARY_EXPRESSION,
+} from '../approvalMonitor/portalSummary';
 
 export interface ResolveWindowsManagedBrowserOptions {
   env?: NodeJS.ProcessEnv;
@@ -86,6 +91,12 @@ export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   readonly connection: ManagedBrowserConnection;
   bootstrapTargetId?: string;
   portalTargetId?: string;
+  /** Persistent background portal tab used only for approval summary refreshes. */
+  approvalPortalTargetId?: string;
+  approvalPortalSnapshot?: {
+    checkedAt: number;
+    counts: Partial<Record<WebWorkflowSystem, number>>;
+  };
   systemTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   /** Tabs explicitly acquired by the portal Connect action. */
   connectionTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
@@ -359,6 +370,10 @@ export async function createWindowsManagedBrowserSession(
       if (managedSession.portalTargetId === targetId) {
         managedSession.portalTargetId = undefined;
         onManagedTargetClosed?.('portal');
+      }
+      if (managedSession.approvalPortalTargetId === targetId) {
+        managedSession.approvalPortalTargetId = undefined;
+        managedSession.approvalPortalSnapshot = undefined;
       }
       for (const system of ['neis', 'edufine'] as const) {
         const connectionTargets = connectionTargetMap(managedSession);
@@ -3330,6 +3345,256 @@ export async function openCdpWindowsApprovalPage(
   return page as WindowsApprovalPage;
 }
 
+const PORTAL_APPROVAL_SNAPSHOT_TTL_MS = 120_000;
+
+function isPortalTargetForSession(
+  session: WindowsManagedBrowserSession,
+  target: WindowsTargetInfo,
+): boolean {
+  if (target.type !== 'page') return false;
+  try {
+    return new URL(target.url).origin === new URL(
+      getEducationOffice(session.officeCode).portalUrl,
+    ).origin;
+  } catch {
+    return false;
+  }
+}
+
+async function findAuthenticatedPortalAnchor(
+  session: WindowsManagedBrowserSession,
+  targets: readonly WindowsTargetInfo[],
+): Promise<WindowsTargetInfo | null> {
+  const portalOrigin = new URL(getEducationOffice(session.officeCode).portalUrl).origin;
+  const candidates = targets
+    .filter((target) => (
+      target.targetId !== session.approvalPortalTargetId &&
+      isPortalTargetForSession(session, target)
+    ))
+    .sort((left, right) => (
+      Number(right.targetId === session.portalTargetId) -
+      Number(left.targetId === session.portalTargetId)
+    ));
+  for (const candidate of candidates) {
+    let attached: AttachedWindowsTarget | undefined;
+    try {
+      attached = await attachWindowsTarget(session, candidate);
+      const state = readPageReadinessState(
+        await evaluateValue(session, attached.sessionId, PAGE_READINESS_EXPRESSION),
+      );
+      if (state && !state.loginVisible && state.origin === portalOrigin) {
+        session.portalTargetId = candidate.targetId;
+        return { ...candidate, url: state.href };
+      }
+    } catch {
+      // A portal target can be navigating while another authenticated one is ready.
+    } finally {
+      if (attached) await detachWindowsTarget(session, attached);
+    }
+  }
+  return null;
+}
+
+async function openDerivedPortalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  anchor: WindowsTargetInfo,
+  signal?: AbortSignal,
+): Promise<WindowsTargetInfo | null> {
+  const protocol = session.connection.protocol;
+  const before = new Set(readTargetInfos(
+    await protocol.send('Target.getTargets', {}),
+  ).map(({ targetId }) => targetId));
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, anchor);
+    const portalUrl = getEducationOffice(session.officeCode).portalUrl;
+    const name = `stream-panel-approval-${Date.now()}`;
+    await evaluateValue(
+      session,
+      attached.sessionId,
+      `(()=>Boolean(window.open(${JSON.stringify(portalUrl)},${JSON.stringify(name)})))()`,
+      true,
+    );
+  } catch {
+    return null;
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    throwIfApprovalCheckCancelled(signal);
+    const opened = readTargetInfos(
+      await protocol.send('Target.getTargets', {}),
+    ).find((target) => (
+      target.type === 'page' &&
+      !before.has(target.targetId) &&
+      (
+        target.openerId === anchor.targetId ||
+        isPortalTargetForSession(session, target)
+      )
+    ));
+    if (opened) return opened;
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+async function acquirePortalApprovalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  signal?: AbortSignal,
+): Promise<{ target: WindowsTargetInfo; createdDirectly: boolean; anchor: WindowsTargetInfo }> {
+  const protocol = session.connection.protocol;
+  const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
+  const existing = targets.find((target) => (
+    target.targetId === session.approvalPortalTargetId &&
+    isPortalTargetForSession(session, target)
+  ));
+  const anchor = await findAuthenticatedPortalAnchor(session, targets);
+  if (existing) {
+    if (!anchor) {
+      throw new Error('로그인된 업무포털 기준 탭이 닫혔습니다. 업무포털을 다시 연결해 주세요.');
+    }
+    return { target: existing, createdDirectly: false, anchor };
+  }
+  session.approvalPortalTargetId = undefined;
+  session.approvalPortalSnapshot = undefined;
+  if (!anchor) {
+    throw new Error('로그인된 업무포털 메인 탭을 찾지 못했습니다. 업무포털을 열고 로그인해 주세요.');
+  }
+  throwIfApprovalCheckCancelled(signal);
+  const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
+    url: getEducationOffice(session.officeCode).portalUrl,
+    background: true,
+  });
+  if (typeof created.targetId !== 'string') {
+    throw new Error('업무포털 알림 탭을 만들지 못했습니다. 업무용 브라우저를 다시 연결해 주세요.');
+  }
+  const target = {
+    targetId: created.targetId,
+    type: 'page',
+    url: getEducationOffice(session.officeCode).portalUrl,
+  };
+  session.approvalPortalTargetId = target.targetId;
+  return { target, createdDirectly: true, anchor };
+}
+
+async function readPortalApprovalCounts(
+  session: WindowsManagedBrowserSession,
+  attached: AttachedWindowsTarget,
+  requiredSystem: WebWorkflowSystem,
+  signal?: AbortSignal,
+): Promise<Partial<Record<WebWorkflowSystem, number>>> {
+  const deadline = Date.now() + 25_000;
+  let stableValue: number | undefined;
+  let stableCount = 0;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    throwIfApprovalCheckCancelled(signal);
+    try {
+      const values: unknown[] = [await evaluateValue(
+        session,
+        attached.sessionId,
+        PORTAL_APPROVAL_SUMMARY_EXPRESSION,
+      )];
+      values.push(...await evaluateValuesInChildFrames<unknown>(
+        session,
+        attached.sessionId,
+        PORTAL_APPROVAL_SUMMARY_EXPRESSION,
+        'portal-approval-summary',
+      ));
+      const counts: Partial<Record<WebWorkflowSystem, number>> = {};
+      for (const system of ['neis', 'edufine'] as const) {
+        try {
+          counts[system] = parsePortalApprovalCount(values, system);
+        } catch (error) {
+          if (system === requiredSystem) lastError = error;
+        }
+      }
+      const current = counts[requiredSystem];
+      if (current !== undefined) {
+        stableCount = current === stableValue ? stableCount + 1 : 1;
+        stableValue = current;
+        if (stableCount >= 2) return counts;
+      } else {
+        stableCount = 0;
+        stableValue = undefined;
+      }
+    } catch (error) {
+      lastError = error;
+      stableCount = 0;
+      stableValue = undefined;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 250));
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('업무포털 결재 현황 패널이 준비되는 시간이 지났습니다. 업무포털 메인을 확인해 주세요.');
+}
+
+export async function scanWindowsPortalApprovalCount(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  signal?: AbortSignal,
+): Promise<number> {
+  const cached = session.approvalPortalSnapshot;
+  if (
+    cached &&
+    Date.now() - cached.checkedAt <= PORTAL_APPROVAL_SNAPSHOT_TTL_MS &&
+    cached.counts[system] !== undefined
+  ) {
+    return cached.counts[system] as number;
+  }
+  let acquisition = await acquirePortalApprovalMonitorTarget(session, signal);
+  let attached: AttachedWindowsTarget | undefined;
+  const portalOrigin = new URL(getEducationOffice(session.officeCode).portalUrl).origin;
+  const openAndRead = async (): Promise<Partial<Record<WebWorkflowSystem, number>>> => {
+    attached = await attachWindowsTarget(session, acquisition.target);
+    await session.connection.protocol.send('Page.reload', { ignoreCache: true }, attached.sessionId);
+    await waitForReadyPage(
+      session,
+      attached.sessionId,
+      (state) => !state.loginVisible && state.origin === portalOrigin,
+      30_000,
+      (state) => state.loginVisible
+        ? new Error('업무포털 로그인 세션이 만료되었습니다. 업무포털에서 다시 로그인해 주세요.')
+        : null,
+      signal,
+    );
+    return readPortalApprovalCounts(session, attached, system, signal);
+  };
+  let counts: Partial<Record<WebWorkflowSystem, number>>;
+  try {
+    counts = await openAndRead();
+  } catch (error) {
+    if (!acquisition.createdDirectly) throw error;
+    if (attached) {
+      await detachWindowsTarget(session, attached);
+      attached = undefined;
+    }
+    try {
+      await session.connection.protocol.send('Target.closeTarget', {
+        targetId: acquisition.target.targetId,
+      });
+    } catch {
+      // Continue with a portal-derived tab when direct background creation failed.
+    }
+    session.approvalPortalTargetId = undefined;
+    const derived = await openDerivedPortalMonitorTarget(session, acquisition.anchor, signal);
+    if (!derived) throw error;
+    session.approvalPortalTargetId = derived.targetId;
+    acquisition = { target: derived, createdDirectly: false, anchor: acquisition.anchor };
+    counts = await openAndRead();
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+  session.approvalPortalSnapshot = { checkedAt: Date.now(), counts };
+  const count = counts[system];
+  if (count === undefined) {
+    throw new Error('업무포털 결재 현황 숫자를 안전하게 읽지 못했습니다. 해당 패널을 확인해 주세요.');
+  }
+  return count;
+}
+
 export async function openCdpWindowsWorkflowPage(
   session: WindowsManagedBrowserSession,
   workflowId: WebWorkflowId,
@@ -4981,13 +5246,49 @@ export function createWindowsManagedSessionManager(
         try {
           return await runSerializedCdpOperation(
             session,
-            () => scanWindowsApprovalCount(session, input, {
-              openPage: (managedSession, scanInput, signal) => openCdpWindowsApprovalPage(
-                managedSession as WindowsManagedBrowserSession,
-                scanInput,
-                signal,
-              ),
-            }, abortController.signal),
+            async () => {
+              const scanList = () => scanWindowsApprovalCount(session, input, {
+                openPage: (managedSession, scanInput, signal) => openCdpWindowsApprovalPage(
+                  managedSession as WindowsManagedBrowserSession,
+                  scanInput,
+                  signal,
+                ),
+              }, abortController.signal);
+              if (interactive) return scanList();
+              let portalCount: number;
+              try {
+                portalCount = await scanWindowsPortalApprovalCount(
+                  session,
+                  input.system,
+                  abortController.signal,
+                );
+              } catch (portalError) {
+                try {
+                  return await scanList();
+                } catch (listError) {
+                  if (isApprovalCheckCancelled(listError)) throw listError;
+                  const portalMessage = portalError instanceof Error
+                    ? portalError.message
+                    : '업무포털 현황을 읽지 못했습니다.';
+                  const listMessage = listError instanceof Error
+                    ? listError.message
+                    : '실제 결재 목록을 읽지 못했습니다.';
+                  throw new Error(`${portalMessage} 실제 목록 확인도 실패했습니다: ${listMessage}`);
+                }
+              }
+              const previous = input.previousPendingCount;
+              if (previous !== undefined && portalCount > previous) {
+                try {
+                  return await scanList();
+                } catch (error) {
+                  if (isApprovalCheckCancelled(error)) throw error;
+                  // The exact portal badge is still a safe positive signal. A
+                  // deep-list failure must not hide a newly increased count.
+                  return portalCount;
+                }
+              }
+              return portalCount;
+            },
           );
         } finally {
           session.maintenancePauseDepth = Math.max(0, session.maintenancePauseDepth - 1);

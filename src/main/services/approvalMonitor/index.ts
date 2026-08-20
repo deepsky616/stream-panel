@@ -349,6 +349,7 @@ export function createApprovalMonitorService({
               system,
               browserId: source.browserId,
               officeCode: config.educationOfficeCode,
+              ...(previous ? { previousPendingCount: previous.pendingCount } : {}),
               ...(interactive ? { interactive: true } : {}),
             });
             if (!started) return;
