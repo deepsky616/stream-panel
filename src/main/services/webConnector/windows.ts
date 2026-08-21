@@ -3467,6 +3467,12 @@ function approvalMonitorTabName(system: WebWorkflowSystem): string {
   return `stream-panel-${system}-approval-monitor`;
 }
 
+function approvalMonitorTitle(system: WebWorkflowSystem): string {
+  return system === 'edufine'
+    ? '🔔 Stream Panel 업무 알림 — 닫지 마세요'
+    : '🔔 Stream Panel 나이스 알림 — 닫지 마세요';
+}
+
 async function markApprovalMonitorTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
@@ -3479,7 +3485,20 @@ async function markApprovalMonitorTarget(
     await evaluateValue(
       session,
       attached.sessionId,
-      `(()=>{window.name=${JSON.stringify(approvalMonitorTabName(system))};return window.name;})()`,
+      `(()=>{
+        const tabName=${JSON.stringify(approvalMonitorTabName(system))};
+        const tabTitle=${JSON.stringify(approvalMonitorTitle(system))};
+        window.name=tabName;
+        const applyTitle=()=>{if(document.title!==tabTitle)document.title=tabTitle;};
+        applyTitle();
+        try{
+          window.__streamPanelApprovalTitleObserver?.disconnect?.();
+          const observer=new MutationObserver(applyTitle);
+          observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true});
+          window.__streamPanelApprovalTitleObserver=observer;
+        }catch{}
+        return window.name;
+      })()`,
     );
   } catch {
     // The exact target id is owned; readiness checks wait for its document.
@@ -3630,8 +3649,8 @@ async function acquireApprovalMonitorTarget(
     // Inspecting the monitor must never make it the user's workflow parent.
     systemTargetMap(session)[system] = anchor.targetId;
     if (inspected && !inspected.loginRequired) {
-      approvalMonitorTargetMap(session)[system] = inspected.target.targetId;
-      return { target: inspected.target, created: false };
+      const labelled = await markApprovalMonitorTarget(session, system, inspected.target);
+      return { target: labelled, created: false };
     }
     await discardApprovalMonitorTarget(session, system, monitor.targetId);
     monitor = null;
@@ -3649,8 +3668,8 @@ async function acquireApprovalMonitorTarget(
       signal,
     );
     systemTargetMap(session)[system] = anchor.targetId;
-    approvalMonitorTargetMap(session)[system] = normalized.targetId;
-    return { target: normalized, created: true };
+    const labelled = await markApprovalMonitorTarget(session, system, normalized);
+    return { target: labelled, created: true };
   } catch (error) {
     await discardApprovalMonitorTarget(session, system, created.targetId);
     systemTargetMap(session)[system] = anchor.targetId;
@@ -4064,6 +4083,7 @@ export async function scanWindowsPortalApprovalCount(
 }
 
 const SYSTEM_APPROVAL_SUMMARY_TIMEOUT_MS = 8_000;
+const EDUFINE_APPROVAL_SUMMARY_TIMEOUT_MS = 3_000;
 
 /**
  * Reads the global approval badge from the already authenticated system tab.
@@ -4087,7 +4107,11 @@ export async function scanWindowsSystemApprovalCount(
   let stableCount = 0;
   try {
     attached = await attachWindowsTarget(session, target);
-    const deadline = Date.now() + SYSTEM_APPROVAL_SUMMARY_TIMEOUT_MS;
+    const deadline = Date.now() + (
+      system === 'edufine'
+        ? EDUFINE_APPROVAL_SUMMARY_TIMEOUT_MS
+        : SYSTEM_APPROVAL_SUMMARY_TIMEOUT_MS
+    );
     while (Date.now() < deadline) {
       throwIfApprovalCheckCancelled(signal);
       try {
@@ -5699,7 +5723,11 @@ export type WindowsManagedSessionController = ManagedBrowserSessionManager<
 export function shouldScanApprovalListFirst(
   input: Pick<ApprovalScanInput, 'system' | 'interactive'>,
 ): boolean {
-  return input.interactive === true || input.system === 'edufine';
+  // NEIS manual checks intentionally show and verify its actual inbox. Edufine
+  // first reads the connected tab's exact global/Nexacro Dataset count without
+  // navigation; both manual and scheduled checks fall back to the dedicated
+  // approval tab only when that read-only signal is unavailable or ambiguous.
+  return input.system === 'neis' && input.interactive === true;
 }
 
 export function createWindowsManagedSessionManager(
@@ -5856,9 +5884,10 @@ export function createWindowsManagedSessionManager(
                   signal,
                 ),
               }, abortController.signal);
-              // Edufine's global badge varies by skin and can be rendered in a
-              // stale Nexacro frame. Its actual 결재대기 Dataset is the only
-              // authoritative source for both scheduled and manual checks.
+              // Prefer a read-only global/Dataset count so the user's current
+              // request, draft, or purchase screen is never navigated. An
+              // ambiguous or unavailable signal falls back to the persistent
+              // approval tab and its actual 결재대기 list.
               if (shouldScanApprovalListFirst(input)) return scanList();
               let systemCount: number;
               try {

@@ -105,9 +105,9 @@ describe('Windows connected system approval summary', () => {
                 system: 'edufine',
                 value: 1,
                 itemLabel: '결재(긴급)',
-                relation: 'nexacro',
-                confidence: 100,
-                controlContext: 'topframe urgent approval badge',
+                relation: 'dataset',
+                confidence: 97,
+                controlContext: 'dataset dsApproval approvalCnt 결재(긴급)',
               }] : [],
             } } };
           }

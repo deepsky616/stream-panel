@@ -134,7 +134,7 @@ export function ApprovalMonitorSettings({
                 <span className="approval-source-state">{statusText(status)}</span>
                 <small>{system === 'neis'
                   ? '정기 확인: 연결된 나이스 탭 → 미결/협조함 전역 건수'
-                  : '정기 확인: 연결된 K-에듀파인 탭 → 결재(긴급) 전역 건수'}</small>
+                  : '확인: 연결 탭의 결재(긴급)·Dataset 우선 → 실패 시 알림 전용 탭의 결재대기 목록'}</small>
                 {status?.lastCheckedAt !== undefined && (
                   <small>마지막 확인: {formatLastCheckedAt(status.lastCheckedAt)}</small>
                 )}

@@ -82,7 +82,7 @@ describe('approval monitor settings UI', () => {
     expect(html).toContain('업무 알림');
     expect(html).not.toContain('결재함 키 추가');
     expect(html).toContain('연결된 나이스 탭 → 미결/협조함 전역 건수');
-    expect(html).toContain('연결된 K-에듀파인 탭 → 결재(긴급) 전역 건수');
+    expect(html).toContain('연결 탭의 결재(긴급)·Dataset 우선 → 실패 시 알림 전용 탭의 결재대기 목록');
     expect(html).toContain('페이지 크기·페이지 번호·페이지당 숫자는 사용하지 않습니다');
   });
 

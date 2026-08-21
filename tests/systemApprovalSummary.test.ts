@@ -9,12 +9,13 @@ function candidate(
   value: number,
   confidence = 100,
   controlContext = 'global approval badge',
+  relation: 'inline' | 'same-control' | 'sibling' | 'nexacro' | 'dataset' = 'inline',
 ) {
   return {
     system,
     value,
     itemLabel: system === 'neis' ? '미결/협조함' : '결재(긴급)',
-    relation: 'inline',
+    relation,
     confidence,
     controlContext,
   };
@@ -41,8 +42,49 @@ describe('connected system approval summary', () => {
     ] }], 'neis')).toThrow(/서로 다른 전역 건수/);
   });
 
+  it('accepts an exact Edufine Dataset count and rejects weak nearby numbers', () => {
+    expect(parseSystemApprovalCount([{ candidates: [
+      candidate('edufine', 1, 97, 'dataset dsApproval approvalCnt 결재(긴급)', 'dataset'),
+    ] }], 'edufine')).toBe(1);
+    expect(() => parseSystemApprovalCount([{ candidates: [
+      candidate('edufine', 100, 88, 'nearby number', 'sibling'),
+    ] }], 'edufine')).toThrow(/전역 건수를 찾지 못했습니다/);
+  });
+
+  it('reads a label-anchored Edufine count directly from a Nexacro Dataset', () => {
+    const dataset = {
+      id: 'dsApprovalSummary',
+      getRowCount: () => 1,
+      getColCount: () => 2,
+      getColumnInfo: (index: number) => ({ id: index === 0 ? 'menuNm' : 'approvalCnt' }),
+      getColumn: (_row: number, column: string) => (
+        column === 'menuNm' ? '결재(긴급)' : '1'
+      ),
+    };
+    const mainframe = { objects: [dataset] };
+    const fakeDocument = { querySelectorAll: () => [] };
+    const fakeWindow = {
+      document: fakeDocument,
+      nexacro: { getApplication: () => ({ mainframe }) },
+    };
+    const value = new Function(
+      'window',
+      'document',
+      `return ${SYSTEM_APPROVAL_SUMMARY_EXPRESSION}`,
+    )(fakeWindow, fakeDocument);
+
+    expect(value).toMatchObject({ candidates: [expect.objectContaining({
+      system: 'edufine',
+      value: 1,
+      relation: 'dataset',
+    })] });
+    expect(parseSystemApprovalCount([value], 'edufine')).toBe(1);
+  });
+
   it('keeps the read-only DOM and Nexacro scanner syntactically valid', () => {
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain("relation:'nexacro'");
+    expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain("relation:'dataset'");
+    expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('dataset.getColumn');
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('data-count');
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).not.toContain('.click(');
     expect(() => new Function(`return ${SYSTEM_APPROVAL_SUMMARY_EXPRESSION}`)).not.toThrow();

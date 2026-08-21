@@ -565,9 +565,9 @@ describe('Windows managed web automation', () => {
     expect(managedSession.systemTargetIds.neis).toBe('user-work-target');
   });
 
-  it('uses the actual Edufine list for scheduled checks while NEIS keeps the global fast path', () => {
-    expect(shouldScanApprovalListFirst({ system: 'edufine' })).toBe(true);
-    expect(shouldScanApprovalListFirst({ system: 'edufine', interactive: true })).toBe(true);
+  it('uses the read-only Edufine summary first while manual NEIS opens its actual inbox', () => {
+    expect(shouldScanApprovalListFirst({ system: 'edufine' })).toBe(false);
+    expect(shouldScanApprovalListFirst({ system: 'edufine', interactive: true })).toBe(false);
     expect(shouldScanApprovalListFirst({ system: 'neis' })).toBe(false);
     expect(shouldScanApprovalListFirst({ system: 'neis', interactive: true })).toBe(true);
   });
@@ -665,6 +665,11 @@ describe('Windows managed web automation', () => {
       method === 'Runtime.evaluate' &&
       String(params.expression ?? '').includes('window.open(')
     ))).toBe(false);
+    expect(commands.some(({ method, params }) => (
+      method === 'Runtime.evaluate' &&
+      String(params.expression ?? '').includes('🔔 Stream Panel 업무 알림 — 닫지 마세요') &&
+      String(params.expression ?? '').includes('MutationObserver')
+    ))).toBe(true);
     expect(commands.some(({ method }) => (
       method === 'Target.activateTarget' ||
       method === 'Browser.getWindowForTarget' ||

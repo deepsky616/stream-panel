@@ -4,7 +4,7 @@ interface SystemApprovalCandidate {
   system: WebWorkflowSystem;
   value: number;
   itemLabel: string;
-  relation: 'inline' | 'same-control' | 'sibling' | 'nexacro';
+  relation: 'inline' | 'same-control' | 'sibling' | 'nexacro' | 'dataset';
   confidence: number;
   controlContext: string;
 }
@@ -27,7 +27,7 @@ function readCandidate(value: unknown): SystemApprovalCandidate | null {
   if (!Number.isSafeInteger(candidate.value) || Number(candidate.value) < 0 || Number(candidate.value) > 9_999) {
     return null;
   }
-  if (!['inline', 'same-control', 'sibling', 'nexacro'].includes(String(candidate.relation))) {
+  if (!['inline', 'same-control', 'sibling', 'nexacro', 'dataset'].includes(String(candidate.relation))) {
     return null;
   }
   if (
@@ -53,16 +53,22 @@ export function parseSystemApprovalCount(
   values: readonly unknown[],
   system: WebWorkflowSystem,
 ): number {
-  const candidates: SystemApprovalCandidate[] = [];
+  const discovered: SystemApprovalCandidate[] = [];
   for (const value of values) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
     const rawCandidates = (value as Record<string, unknown>).candidates;
     if (!Array.isArray(rawCandidates)) continue;
     for (const rawCandidate of rawCandidates) {
       const candidate = readCandidate(rawCandidate);
-      if (candidate?.system === system) candidates.push(candidate);
+      if (candidate?.system === system) discovered.push(candidate);
     }
   }
+  // Edufine pages contain many neighboring numeric controls. Only an exact
+  // inline/control, Nexacro component, or label-anchored Dataset signal may
+  // bypass the authoritative approval-list fallback.
+  const candidates = system === 'edufine'
+    ? discovered.filter(({ confidence }) => confidence >= 90)
+    : discovered;
   if (candidates.length === 0) {
     const label = system === 'neis' ? '미결/협조함' : '결재(긴급)';
     throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 탭에서 ${label}의 전역 건수를 찾지 못했습니다.`);
@@ -195,6 +201,7 @@ for(const definition of definitions){
     const application=view?.nexacro?.getApplication?.();
     const roots=[application?.mainframe,application?._mainframe,view?._application].filter(Boolean);
     const seen=new Set();
+    const seenDatasets=new Set();
     const collectionItems=(collection)=>{
       if(!collection)return [];
       const items=[];
@@ -220,10 +227,72 @@ for(const definition of definitions){
       }
       return null;
     };
+    const resolveDataset=(component,reference)=>{
+      if(reference&&typeof reference==='object'&&typeof reference.getRowCount==='function'&&typeof reference.getColumn==='function')return reference;
+      if(typeof reference!=='string'||!reference)return null;
+      for(const owner of [component,component?.parent,component?._parent,component?.form,component?.parent?.form]){
+        try{
+          const found=owner?._findDataset?.(reference)||owner?.lookup?.(reference)||owner?.[reference];
+          if(found&&typeof found.getRowCount==='function'&&typeof found.getColumn==='function')return found;
+        }catch{}
+      }
+      return null;
+    };
+    const inspectDataset=(dataset,owner)=>{
+      if(!dataset||seenDatasets.has(dataset)||typeof dataset.getRowCount!=='function'||typeof dataset.getColumn!=='function')return;
+      seenDatasets.add(dataset);
+      const rowCount=Math.min(Math.max(Number(dataset.getRowCount?.())||0,0),200);
+      const columnCount=Math.min(Math.max(Number(dataset.getColCount?.())||0,0),80);
+      if(rowCount===0||columnCount===0)return;
+      const columns=Array.from({length:columnCount},(_,index)=>{
+        let info;
+        try{info=dataset.getColumnInfo?.(index);}catch{}
+        const id=normalize(info?.id||info?.name||index);
+        return {index,id};
+      });
+      for(let row=0;row<rowCount;row+=1){
+        const cells=columns.map((column)=>{
+          let raw;
+          try{raw=dataset.getColumn(row,column.id||column.index);}catch{}
+          return {...column,raw,text:normalize(raw)};
+        });
+        const itemLabel=definition.items.find((label)=>cells.some(({text})=>compact(text)===compact(label)));
+        if(!itemLabel)continue;
+        const numericCells=cells.filter(({text})=>/^\\d{1,4}$/.test(text)).map((cell)=>({
+          ...cell,
+          value:Number(cell.text),
+          countColumn:/(?:^|_)(?:cnt|count|total|num|number)(?:$|_)|건수|결재.*수|approval.*(?:cnt|count)|urgent.*(?:cnt|count)/i.test(cell.id),
+        })).filter(({id})=>!pageControl.test(id));
+        const preferred=numericCells.filter(({countColumn})=>countColumn);
+        const selected=preferred.length>0?preferred:(numericCells.length===1?numericCells:[]);
+        for(const cell of selected){
+          const controlContext=normalize([
+            'dataset',dataset.id,dataset.name,cell.id,itemLabel,owner?.id,owner?.name,
+          ].filter(Boolean).join(' ')).slice(0,700);
+          if(pageControl.test(controlContext))continue;
+          candidates.push({
+            system:definition.system,
+            value:cell.value,
+            itemLabel,
+            relation:'dataset',
+            confidence:cell.countColumn?97:90,
+            controlContext,
+          });
+        }
+      }
+    };
     const visit=(component,depth=0)=>{
       if(!component||typeof component!=='object'||depth>24||seen.has(component))return;
       seen.add(component);
       if(component.visible===false||(typeof component._isVisible==='function'&&component._isVisible()===false))return;
+      inspectDataset(component,component);
+      const datasetReferences=[component._binddataset,component.binddataset,component._innerdataset,component.innerdataset];
+      for(const getter of ['getBindDataset','getInnerDataset']){
+        try{datasetReferences.push(component[getter]?.());}catch{}
+      }
+      for(const reference of datasetReferences){
+        inspectDataset(resolveDataset(component,reference),component);
+      }
       const texts=componentTexts(component);
       for(const text of texts){
         const match=text.match(definition.combined);
@@ -241,7 +310,7 @@ for(const definition of definitions){
           if(!pageControl.test(controlContext))candidates.push({system:definition.system,value,itemLabel,relation:'nexacro',confidence:92,controlContext});
         }
       }
-      for(const collection of [component.components,component.frames,component.all]){
+      for(const collection of [component.components,component.frames,component.all,component.objects,component.datasets]){
         for(const item of collectionItems(collection))visit(item,depth+1);
       }
       for(const child of [component.form,component.frame,component.mainframe,component.childframe])visit(child,depth+1);
