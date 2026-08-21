@@ -572,14 +572,12 @@ describe('Windows managed web automation', () => {
     expect(shouldScanApprovalListFirst({ system: 'neis', interactive: true })).toBe(true);
   });
 
-  it('creates and closes an invisible Edufine monitor tab for every scheduled check', async () => {
+  it('reuses one connected Edufine monitor tab for every scheduled check', async () => {
     const commands: Array<{
       method: string;
       params: Record<string, unknown>;
       sessionId?: string;
     }> = [];
-    let monitorSequence = 0;
-    let monitorTargetId: string | null = null;
     let workActive = false;
     const protocol = {
       isClosed: false,
@@ -592,27 +590,18 @@ describe('Windows managed web automation', () => {
               type: 'page',
               url: 'https://klef.goe.go.kr/purchase',
             },
-            ...(monitorTargetId ? [{
-              targetId: monitorTargetId,
+            {
+              targetId: 'edufine-monitor',
               type: 'page',
               url: 'https://klef.goe.go.kr/',
               openerId: 'edufine-work-form',
-            }] : []),
+            },
           ] };
         }
         if (method === 'Target.attachToTarget') {
           return { sessionId: params.targetId === 'edufine-work-form'
             ? 'edufine-work-session'
-            : `${String(params.targetId)}-session` };
-        }
-        if (method === 'Target.createTarget') {
-          monitorSequence += 1;
-          monitorTargetId = `edufine-monitor-${monitorSequence}`;
-          return { targetId: monitorTargetId };
-        }
-        if (method === 'Target.closeTarget') {
-          if (params.targetId === monitorTargetId) monitorTargetId = null;
-          return { success: true };
+            : 'edufine-monitor-session' };
         }
         if (method === 'Runtime.evaluate') {
           const expression = String(params.expression ?? '');
@@ -643,6 +632,7 @@ describe('Windows managed web automation', () => {
       browserId: 'edge' as const,
       systemTargetIds: { edufine: 'edufine-work-form' },
       connectionTargetIds: { edufine: 'edufine-work-form' },
+      approvalMonitorTargetIds: { edufine: 'edufine-monitor' },
       connection: {
         protocol,
         transportKind: 'pipe' as const,
@@ -669,10 +659,8 @@ describe('Windows managed web automation', () => {
     await secondPage.release?.();
 
     expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
-    expect(commands.filter(({ method, params }) => (
-      method === 'Target.createTarget' && params.background === true
-    ))).toHaveLength(2);
-    expect(commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(2);
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
     expect(commands.some(({ method, params }) => (
       method === 'Runtime.evaluate' &&
       String(params.expression ?? '').includes('window.open(')
@@ -683,35 +671,52 @@ describe('Windows managed web automation', () => {
       method === 'Browser.setWindowBounds'
     ))).toBe(false);
     expect(commands.filter(({ method, params }) => (
-      method === 'Target.attachToTarget' && String(params.targetId).startsWith('edufine-monitor-')
+      method === 'Target.attachToTarget' && params.targetId === 'edufine-monitor'
     )).length).toBeGreaterThanOrEqual(2);
     expect(managedSession).toMatchObject({
       systemTargetIds: { edufine: 'edufine-work-form' },
       connectionTargetIds: { edufine: 'edufine-work-form' },
+      approvalMonitorTargetIds: { edufine: 'edufine-monitor' },
     });
-    expect(monitorTargetId).toBeNull();
   });
 
-  it('defers a scheduled Edufine check before opening a tab when an Edufine work tab is active', async () => {
-    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+  it('defers a scheduled Edufine check when an Edufine work tab is active', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
     const protocol = {
       isClosed: false,
-      async send(method: string, params: Record<string, unknown>) {
-        commands.push({ method, params });
-        if (method === 'Target.getTargets') return { targetInfos: [{
-          targetId: 'edufine-work',
-          type: 'page',
-          url: 'https://klef.goe.go.kr/draft',
-        }] };
-        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-work-session' };
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') return { targetInfos: [
+          {
+            targetId: 'edufine-work',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/draft',
+          },
+          {
+            targetId: 'edufine-monitor',
+            type: 'page',
+            url: 'https://klef.goe.go.kr/',
+            openerId: 'edufine-work',
+          },
+        ] };
+        if (method === 'Target.attachToTarget') return {
+          sessionId: params.targetId === 'edufine-work'
+            ? 'edufine-work-session'
+            : 'edufine-monitor-session',
+        };
         if (method === 'Runtime.evaluate') {
           const expression = String(params.expression ?? '');
           if (expression.includes('visibilityState')) {
-            return { result: { value: { visible: true, focused: true } } };
+            return { result: { value: {
+              visible: sessionId === 'edufine-work-session',
+              focused: sessionId === 'edufine-work-session',
+            } } };
           }
           if (expression.includes('loginVisible')) {
             return { result: { value: {
-              href: 'https://klef.goe.go.kr/draft',
+              href: sessionId === 'edufine-work-session'
+                ? 'https://klef.goe.go.kr/draft'
+                : 'https://klef.goe.go.kr/',
               origin: 'https://klef.goe.go.kr',
               readyState: 'complete',
               loginVisible: false,
@@ -728,6 +733,7 @@ describe('Windows managed web automation', () => {
       browserId: 'edge' as const,
       connectionTargetIds: { edufine: 'edufine-work' },
       systemTargetIds: { edufine: 'edufine-work' },
+      approvalMonitorTargetIds: { edufine: 'edufine-monitor' },
       connection: {
         protocol,
         transportKind: 'pipe' as const,
@@ -737,11 +743,13 @@ describe('Windows managed web automation', () => {
       close: async () => undefined,
     };
 
-    await expect(openCdpWindowsApprovalPage(session as never, {
+    const page = await openCdpWindowsApprovalPage(session as never, {
       system: 'edufine',
       officeCode: 'goe',
       browserId: 'edge',
-    })).rejects.toMatchObject({ name: 'AbortError' });
+    });
+    await expect(page.currentOrigin()).rejects.toMatchObject({ name: 'AbortError' });
+    await page.release?.();
 
     expect(commands.some(({ method, params }) => (
       method === 'Runtime.evaluate' && String(params.expression ?? '').includes('window.open(')
@@ -808,7 +816,6 @@ describe('Windows managed web automation', () => {
 
   it('allows a scheduled Edufine check when its selected work tab is not browser-focused', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
-    let monitorOpened = false;
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>, sessionId?: string) {
@@ -819,21 +826,16 @@ describe('Windows managed web automation', () => {
             type: 'page',
             url: 'https://klef.goe.go.kr/draft',
           },
-          ...(monitorOpened ? [{
+          {
             targetId: 'edufine-monitor',
             type: 'page',
             url: 'https://klef.goe.go.kr/',
             openerId: 'edufine-work',
-          }] : []),
+          },
         ] };
         if (method === 'Target.attachToTarget') {
           return { sessionId: params.targetId === 'edufine-work' ? 'work-session' : 'monitor-session' };
         }
-        if (method === 'Target.createTarget') {
-          monitorOpened = true;
-          return { targetId: 'edufine-monitor' };
-        }
-        if (method === 'Target.closeTarget') return { success: true };
         if (method === 'Runtime.evaluate') {
           const expression = String(params.expression ?? '');
           if (expression.includes('visibilityState')) {
@@ -858,6 +860,7 @@ describe('Windows managed web automation', () => {
       browserId: 'edge' as const,
       connectionTargetIds: { edufine: 'edufine-work' },
       systemTargetIds: { edufine: 'edufine-work' },
+      approvalMonitorTargetIds: { edufine: 'edufine-monitor' },
       connection: {
         protocol,
         transportKind: 'pipe' as const,
@@ -877,16 +880,8 @@ describe('Windows managed web automation', () => {
     expect(commands.some(({ method, params }) => (
       method === 'Runtime.evaluate' && String(params.expression ?? '').includes('window.open(')
     ))).toBe(false);
-    expect(commands).toContainEqual({
-      method: 'Target.createTarget',
-      params: { url: 'https://klef.goe.go.kr/', background: true },
-      sessionId: undefined,
-    });
-    expect(commands).toContainEqual({
-      method: 'Target.closeTarget',
-      params: { targetId: 'edufine-monitor' },
-      sessionId: undefined,
-    });
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.some(({ method }) => method === 'Target.closeTarget')).toBe(false);
   });
 
   it('closes the derived Edufine tab when readiness validation fails', async () => {
@@ -1018,7 +1013,6 @@ describe('Windows managed web automation', () => {
 
   it('counts only the Edufine approval-list grid and ignores an unrelated 100-row selector', async () => {
     let countExpression = '';
-    let monitorCreated = false;
     const protocol = {
       isClosed: false,
       async send(method: string, params: Record<string, unknown>) {
@@ -1029,17 +1023,13 @@ describe('Windows managed web automation', () => {
               type: 'page',
               url: 'https://klef.goe.go.kr/main',
             },
-            ...(monitorCreated ? [{
+            {
               targetId: 'edufine-approval',
               type: 'page',
               url: 'https://klef.goe.go.kr/main',
               openerId: 'edufine-anchor',
-            }] : []),
+            },
           ] };
-        }
-        if (method === 'Target.createTarget') {
-          monitorCreated = true;
-          return { targetId: 'edufine-approval' };
         }
         if (method === 'Target.attachToTarget') return { sessionId: 'edufine-approval-session' };
         if (method === 'Runtime.evaluate') {
@@ -1085,6 +1075,7 @@ describe('Windows managed web automation', () => {
       browserId: 'edge' as const,
       connectionTargetIds: { edufine: 'edufine-anchor' },
       systemTargetIds: { edufine: 'edufine-anchor' },
+      approvalMonitorTargetIds: { edufine: 'edufine-approval' },
       connection: {
         protocol,
         transportKind: 'pipe' as const,
@@ -1457,9 +1448,11 @@ describe('Windows managed web automation', () => {
     let eventListener: ((event: { method: string; params?: unknown }) => void) | undefined;
     let listenerRemoved = false;
     const closed: Array<{ role: string; system?: string }> = [];
+    const commands: Array<{ method: string; params?: unknown }> = [];
     const protocol = {
       isClosed: false,
-      async send(method: string) {
+      async send(method: string, params?: unknown) {
+        commands.push({ method, params });
         if (method === 'Target.getTargets') return { targetInfos: [] };
         return {};
       },
@@ -1488,11 +1481,21 @@ describe('Windows managed web automation', () => {
     session.portalTargetId = 'portal';
     session.connectionTargetIds = { neis: 'neis', edufine: 'edufine' };
     session.systemTargetIds = { neis: 'neis', edufine: 'edufine' };
+    session.approvalMonitorTargetIds = { neis: 'neis-monitor', edufine: 'edufine-monitor' };
+    session.systemTargetIds.edufine = 'edufine-result';
+    eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'edufine-result' } });
+    expect(closed).toEqual([]);
+    expect(session.approvalMonitorTargetIds.edufine).toBe('edufine-monitor');
     eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'neis' } });
     expect(getWindowsConnectionPresence(session)).toEqual({
       portal: true,
       systems: { neis: false, edufine: true },
     });
+    expect(commands).toContainEqual({
+      method: 'Target.closeTarget',
+      params: { targetId: 'neis-monitor' },
+    });
+    expect(session.approvalMonitorTargetIds).toEqual({ edufine: 'edufine-monitor' });
     eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'portal' } });
     expect(getWindowsConnectionPresence(session).portal).toBe(false);
     expect(closed).toEqual([

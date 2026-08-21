@@ -104,6 +104,8 @@ export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   systemTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   /** Tabs explicitly acquired by the portal Connect action. */
   connectionTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
+  /** Background tabs prepared by Connect and reused only for approval checks. */
+  approvalMonitorTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   /** Result pages opened by Stream Panel from a connected system parent tab. */
   workflowResultTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   /** Prevents the periodic session sweep from interleaving with an active workflow. */
@@ -338,6 +340,7 @@ export async function createWindowsManagedBrowserSession(
     bootstrapTargetId,
     systemTargetIds: {},
     connectionTargetIds: {},
+    approvalMonitorTargetIds: {},
     workflowResultTargetIds: {},
     maintenancePauseDepth: 0,
     cdpOperationTail: Promise.resolve(),
@@ -382,12 +385,25 @@ export async function createWindowsManagedBrowserSession(
       for (const system of ['neis', 'edufine'] as const) {
         const connectionTargets = connectionTargetMap(managedSession);
         const systemTargets = systemTargetMap(managedSession);
+        const monitorTargets = approvalMonitorTargetMap(managedSession);
         const resultTargets = workflowResultTargetMap(managedSession);
-        const systemClosed = connectionTargets[system] === targetId ||
-          systemTargets[system] === targetId;
+        const connectionClosed = connectionTargets[system] === targetId;
+        const systemClosed = connectionClosed || (
+          !connectionTargets[system] && systemTargets[system] === targetId
+        );
         if (connectionTargets[system] === targetId) delete connectionTargets[system];
         if (systemTargets[system] === targetId) delete systemTargets[system];
+        if (monitorTargets[system] === targetId) delete monitorTargets[system];
         if (resultTargets[system] === targetId) delete resultTargets[system];
+        if (connectionClosed) {
+          const monitorTargetId: string | undefined = monitorTargets[system];
+          if (monitorTargetId && monitorTargetId !== targetId) {
+            delete monitorTargets[system];
+            void managedSession.connection.protocol.send('Target.closeTarget', {
+              targetId: monitorTargetId,
+            }).catch(() => undefined);
+          }
+        }
         if (systemClosed) onManagedTargetClosed?.('system', system);
       }
     });
@@ -435,6 +451,13 @@ function connectionTargetMap(
 ): Partial<Record<WebWorkflowSystem, string>> {
   session.connectionTargetIds ??= {};
   return session.connectionTargetIds;
+}
+
+function approvalMonitorTargetMap(
+  session: WindowsManagedBrowserSession,
+): Partial<Record<WebWorkflowSystem, string>> {
+  session.approvalMonitorTargetIds ??= {};
+  return session.approvalMonitorTargetIds;
 }
 
 function workflowResultTargetMap(
@@ -3440,70 +3463,104 @@ async function assertNoActiveEdufineWorkTarget(
   }
 }
 
-async function markEphemeralApprovalTarget(
+function approvalMonitorTabName(system: WebWorkflowSystem): string {
+  return `stream-panel-${system}-approval-monitor`;
+}
+
+async function markApprovalMonitorTarget(
   session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
   target: WindowsTargetInfo,
-  tabName: string,
 ): Promise<WindowsTargetInfo> {
+  approvalMonitorTargetMap(session)[system] = target.targetId;
   let attached: AttachedWindowsTarget | undefined;
   try {
     attached = await attachWindowsTarget(session, target);
     await evaluateValue(
       session,
       attached.sessionId,
-      `(()=>{window.name=${JSON.stringify(tabName)};return window.name;})()`,
+      `(()=>{window.name=${JSON.stringify(approvalMonitorTabName(system))};return window.name;})()`,
     );
   } catch {
-    // The exact target id is owned by this check; readiness waits for its document.
+    // The exact target id is owned; readiness checks wait for its document.
   } finally {
     if (attached) await detachWindowsTarget(session, attached);
   }
   return target;
 }
 
-async function createEphemeralApprovalTarget(
+async function findApprovalMonitorTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
-  interactive: boolean,
+  targets?: readonly WindowsTargetInfo[],
+): Promise<WindowsTargetInfo | null> {
+  const available = targets ?? readTargetInfos(
+    await session.connection.protocol.send('Target.getTargets', {}),
+  );
+  const targetMap = approvalMonitorTargetMap(session);
+  const remembered = available.find((target) => (
+    target.targetId === targetMap[system] &&
+    systemTargetAllowed(target, session.officeCode, system)
+  ));
+  if (remembered) return remembered;
+  delete targetMap[system];
+
+  const expectedName = approvalMonitorTabName(system);
+  const connectionTargetId = connectionTargetMap(session)[system];
+  for (const target of available) {
+    if (
+      target.type !== 'page' ||
+      target.targetId === connectionTargetId ||
+      !systemTargetAllowed(target, session.officeCode, system)
+    ) continue;
+    let attached: AttachedWindowsTarget | undefined;
+    try {
+      attached = await attachWindowsTarget(session, target);
+      const name = await evaluateValue<unknown>(
+        session,
+        attached.sessionId,
+        'String(window.name||\'\')',
+      );
+      if (name === expectedName) {
+        targetMap[system] = target.targetId;
+        return target;
+      }
+    } catch {
+      // Only a target with the exact Stream Panel name can be adopted.
+    } finally {
+      if (attached) await detachWindowsTarget(session, attached);
+    }
+  }
+  return null;
+}
+
+async function discardApprovalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  targetId?: string,
+): Promise<void> {
+  const targetMap = approvalMonitorTargetMap(session);
+  const ownedTargetId = targetId ?? targetMap[system];
+  delete targetMap[system];
+  if (!ownedTargetId) return;
+  try {
+    await session.connection.protocol.send('Target.closeTarget', { targetId: ownedTargetId });
+  } catch {
+    // The owned tab may already have closed.
+  }
+}
+
+async function createDerivedApprovalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  anchor: WindowsTargetInfo,
   signal?: AbortSignal,
 ): Promise<WindowsTargetInfo> {
   throwIfApprovalCheckCancelled(signal);
-  const anchor = interactive
-    ? await findAuthenticatedConnectionTarget(session, system)
-    : await inspectAuthenticatedConnectionTarget(session, system);
-  if (!anchor) {
-    if (!interactive) delete connectionTargetMap(session)[system];
-    throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭을 찾지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.`);
-  }
   const protocol = session.connection.protocol;
   const destination = systemConnectionLandingUrl(session.officeCode, system);
   let targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  if (!interactive && system === 'edufine') {
-    await assertNoActiveEdufineWorkTarget(session, undefined, signal);
-  }
-  const tabName = `stream-panel-${system}-approval-${Date.now()}`;
-
-  if (!interactive) {
-    // Scheduled checks must be invisible. A same-browser-context CDP target
-    // shares the authenticated profile but cannot restore or focus the Edge /
-    // Chrome window like window.open() can.
-    const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
-      url: destination,
-      background: true,
-    });
-    if (typeof created.targetId !== 'string') {
-      throw new Error('K-에듀파인 업무 알림 백그라운드 탭을 준비하지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.');
-    }
-    return markEphemeralApprovalTarget(session, {
-      targetId: created.targetId,
-      type: 'page',
-      url: destination,
-      openerId: anchor.targetId,
-    }, tabName);
-  }
-
   const previouslyFocused = await findFocusedPageTarget(session, targets);
-
   const before = new Set(targets.map(({ targetId }) => targetId));
   let anchorAttachment: AttachedWindowsTarget | undefined;
   let opened = false;
@@ -3512,53 +3569,138 @@ async function createEphemeralApprovalTarget(
     opened = await evaluateValue<unknown>(
       session,
       anchorAttachment.sessionId,
-      `(()=>{const child=window.open(${JSON.stringify(destination)},${JSON.stringify(tabName)});if(!child)return false;try{child.blur();window.focus();}catch{}return true;})()`,
+      `(()=>{const child=window.open(${JSON.stringify(destination)},${JSON.stringify(approvalMonitorTabName(system))});if(!child)return false;try{child.blur();window.focus();}catch{}return true;})()`,
       true,
     ) === true;
   } catch {
-    // A hardened browser can block window.open; a same-profile background tab is the fallback.
+    // The explicit Connect/manual action reports a clear popup error below.
   } finally {
     if (anchorAttachment) await detachWindowsTarget(session, anchorAttachment);
   }
+  if (!opened) {
+    throw new Error('K-에듀파인 업무 알림 전용 탭을 열지 못했습니다. 업무용 브라우저의 팝업 허용 후 나이스·에듀파인 연결을 다시 눌러 주세요.');
+  }
 
-  if (opened) {
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline) {
-      throwIfApprovalCheckCancelled(signal);
-      targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-      const openedFromAnchor = targets.find((target) => (
-        target.type === 'page' &&
-        !before.has(target.targetId) &&
-        target.openerId === anchor.targetId
-      ));
-      if (openedFromAnchor) {
-        if (previouslyFocused && previouslyFocused.targetId !== openedFromAnchor.targetId) {
-          try {
-            await protocol.send('Target.activateTarget', { targetId: previouslyFocused.targetId });
-          } catch {
-            // The previously active tab can close while the monitor tab opens.
-          }
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    throwIfApprovalCheckCancelled(signal);
+    targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
+    const openedFromAnchor = targets.find((target) => (
+      target.type === 'page' &&
+      !before.has(target.targetId) &&
+      target.openerId === anchor.targetId
+    ));
+    if (openedFromAnchor) {
+      if (previouslyFocused && previouslyFocused.targetId !== openedFromAnchor.targetId) {
+        try {
+          await protocol.send('Target.activateTarget', { targetId: previouslyFocused.targetId });
+        } catch {
+          // The previously active tab can close while the monitor opens.
         }
-        return markEphemeralApprovalTarget(session, openedFromAnchor, tabName);
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      return markApprovalMonitorTarget(session, system, openedFromAnchor);
     }
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('K-에듀파인 업무 알림 전용 탭을 확인하지 못했습니다. 나이스·에듀파인 연결을 다시 눌러 주세요.');
+}
+
+async function acquireApprovalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  allowCreate: boolean,
+  signal?: AbortSignal,
+): Promise<{ target: WindowsTargetInfo; created: boolean }> {
+  throwIfApprovalCheckCancelled(signal);
+  const anchor = allowCreate
+    ? await findAuthenticatedConnectionTarget(session, system)
+    : await inspectAuthenticatedConnectionTarget(session, system);
+  if (!anchor) {
+    if (!allowCreate) delete connectionTargetMap(session)[system];
+    throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭을 찾지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.`);
+  }
+  const targets = readTargetInfos(
+    await session.connection.protocol.send('Target.getTargets', {}),
+  );
+  let monitor = await findApprovalMonitorTarget(session, system, targets);
+  if (monitor) {
+    const inspected = await inspectSystemTarget(session, system, {
+      allowedTargetIds: new Set([monitor.targetId]),
+    });
+    // Inspecting the monitor must never make it the user's workflow parent.
+    systemTargetMap(session)[system] = anchor.targetId;
+    if (inspected && !inspected.loginRequired) {
+      approvalMonitorTargetMap(session)[system] = inspected.target.targetId;
+      return { target: inspected.target, created: false };
+    }
+    await discardApprovalMonitorTarget(session, system, monitor.targetId);
+    monitor = null;
+  }
+  if (!allowCreate) {
+    throw new Error('K-에듀파인 업무 알림 전용 탭이 없습니다. 업무용 브라우저에서 나이스·에듀파인 연결을 다시 눌러 주세요.');
   }
 
-  throwIfApprovalCheckCancelled(signal);
-  const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
-    url: destination,
-    background: true,
-  });
-  if (typeof created.targetId !== 'string') {
-    throw new Error('K-에듀파인 업무 알림 전용 탭을 준비하지 못했습니다. 업무용 브라우저를 다시 연결해 주세요.');
+  const created = await createDerivedApprovalMonitorTarget(session, system, anchor, signal);
+  try {
+    const normalized = await normalizeApprovalMonitorTarget(
+      session,
+      system,
+      created,
+      signal,
+    );
+    systemTargetMap(session)[system] = anchor.targetId;
+    approvalMonitorTargetMap(session)[system] = normalized.targetId;
+    return { target: normalized, created: true };
+  } catch (error) {
+    await discardApprovalMonitorTarget(session, system, created.targetId);
+    systemTargetMap(session)[system] = anchor.targetId;
+    throw error;
   }
-  return markEphemeralApprovalTarget(session, {
-    targetId: created.targetId,
-    type: 'page',
-    url: destination,
-    openerId: anchor.targetId,
-  }, tabName);
+}
+
+async function normalizeApprovalMonitorTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+  target: WindowsTargetInfo,
+  signal?: AbortSignal,
+): Promise<WindowsTargetInfo> {
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    let loginHref = '';
+    let stableLoginChecks = 0;
+    const readyState = await waitForReadyPage(
+      session,
+      attached.sessionId,
+      (state) => !state.loginVisible &&
+        (system === 'neis' ? state.neisReady !== false : state.edufineReady !== false) &&
+        systemTargetAllowed(
+          { ...target, url: state.href },
+          session.officeCode,
+          system,
+        ),
+      20_000,
+      (state) => {
+        if (!state.loginVisible) {
+          loginHref = '';
+          stableLoginChecks = 0;
+          return null;
+        }
+        stableLoginChecks = state.href === loginHref ? stableLoginChecks + 1 : 1;
+        loginHref = state.href;
+        // A portal SSO child can briefly render the login shell. Eight stable
+        // checks still allow that redirect, but fail quickly on an expired
+        // session instead of leaving Connect/Now Check spinning for 30 seconds.
+        return stableLoginChecks >= 8
+          ? new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 추가 로그인이 필요합니다.`)
+          : null;
+      },
+      signal,
+    );
+    return { ...target, url: readyState.href };
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
 }
 
 function guardScheduledEdufineApprovalPage(
@@ -3571,6 +3713,17 @@ function guardScheduledEdufineApprovalPage(
   const guard = async (force = false): Promise<void> => {
     const now = Date.now();
     if (!force && now - lastGuardAt < 300) return;
+    const monitorTarget = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    ).find((target) => target.targetId === monitorTargetId);
+    const monitorActivity = monitorTarget
+      ? await pageActivityState(session, monitorTarget)
+      : null;
+    if (!monitorActivity || monitorActivity.focused) {
+      const error = new Error('K-에듀파인 알림 전용 탭이 사용 중이거나 닫혀 있어 정기 확인을 연기했습니다.');
+      error.name = 'AbortError';
+      throw error;
+    }
     await assertNoActiveEdufineWorkTarget(session, monitorTargetId, signal);
     lastGuardAt = now;
   };
@@ -3616,36 +3769,43 @@ export async function openCdpWindowsApprovalPage(
   signal?: AbortSignal,
 ): Promise<WindowsApprovalPage> {
   const scheduled = input.interactive !== true;
-  const monitorTarget = input.system === 'edufine'
-    ? await createEphemeralApprovalTarget(session, input.system, !scheduled, signal)
+  const monitorAcquisition = input.system === 'edufine'
+    ? await acquireApprovalMonitorTarget(session, input.system, !scheduled, signal)
     : null;
-  const page = await openCdpWindowsWorkflowPage(
-    session,
-    input.system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
-    undefined,
-    {
-      background: scheduled || input.system === 'edufine',
-      // NEIS keeps its existing temporary path. Edufine derives a fresh child
-      // from the authenticated tab so opener/session state is retained.
-      forceNewTarget: scheduled && input.system !== 'edufine',
-      closeCreatedTargetOnRelease: scheduled && input.system !== 'edufine',
-      closePreferredTargetOnRelease: input.system === 'edufine',
-      // A disposable monitoring-tab cleanup failure must never close all of the
-      // user's active managed-browser tabs.
-      closeSessionOnCleanupFailure: input.system === 'edufine' ? false : !scheduled,
-      failFastOnLoginRequired: true,
-      // Edufine checks never navigate the connected work tab.
-      navigateExistingTarget: false,
-      ...(monitorTarget ? { preferredTargetId: monitorTarget.targetId } : {}),
-      keepCreatedTargetOnFailure: input.interactive === true && input.system !== 'edufine',
-      // The explicit Connect button owns SSO preparation. Approval scans share
-      // that verified browser session and fail quickly instead of opening a new login flow.
-      recoverViaPortal: false,
-      signal,
-    },
-  );
-  if (!page.readApprovalCount) {
-    throw new Error('결재 대기 수 읽기 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
+  const monitorTarget = monitorAcquisition?.target ?? null;
+  let page: WindowsWorkflowPage;
+  try {
+    page = await openCdpWindowsWorkflowPage(
+      session,
+      input.system === 'neis' ? 'neis-approval-inbox' : 'edufine-approval-inbox',
+      undefined,
+      {
+        background: scheduled || input.system === 'edufine',
+        // NEIS keeps its disposable-tab path. Edufine reuses the dedicated tab
+        // prepared from its authenticated connection by an explicit user action.
+        forceNewTarget: scheduled && input.system !== 'edufine',
+        closeCreatedTargetOnRelease: scheduled && input.system !== 'edufine',
+        // Approval-tab cleanup must never close the user's managed browser.
+        closeSessionOnCleanupFailure: input.system === 'edufine' ? false : !scheduled,
+        failFastOnLoginRequired: true,
+        navigateExistingTarget: false,
+        ...(monitorTarget ? { preferredTargetId: monitorTarget.targetId } : {}),
+        keepCreatedTargetOnFailure: input.interactive === true && input.system !== 'edufine',
+        // The explicit Connect button owns SSO preparation. Scheduled scans
+        // never open or focus a replacement connection.
+        recoverViaPortal: false,
+        signal,
+      },
+    );
+    if (!page.readApprovalCount) {
+      await page.release?.();
+      throw new Error('결재 대기 수 읽기 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
+    }
+  } catch (error) {
+    if (input.system === 'edufine' && monitorTarget) {
+      await discardApprovalMonitorTarget(session, input.system, monitorTarget.targetId);
+    }
+    throw error;
   }
   const approvalPage = page as WindowsApprovalPage;
   return scheduled && input.system === 'edufine' && monitorTarget
@@ -5296,6 +5456,44 @@ export async function connectWindowsOfficeSystems(
         });
       } finally {
         await page?.release?.();
+      }
+    }
+    if (foreground && systems.includes('edufine')) {
+      const monitorStartedAt = Date.now();
+      try {
+        const monitor = await acquireApprovalMonitorTarget(
+          session,
+          'edufine',
+          true,
+          signal,
+        );
+        await recordConnectionDiagnostic(diagnose, {
+          system: 'edufine',
+          stepId: 'connection-approval-monitor',
+          outcome: 'success',
+          durationMs: Math.max(0, Date.now() - monitorStartedAt),
+          currentUrl: monitor.target.url,
+        });
+        report({ system: 'edufine', state: 'connected', checkedAt: Date.now() });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        const message = error instanceof Error
+          ? error.message
+          : 'K-에듀파인 업무 알림 전용 탭을 준비하지 못했습니다.';
+        await recordConnectionDiagnostic(diagnose, {
+          system: 'edufine',
+          stepId: 'connection-approval-monitor',
+          outcome: 'failed',
+          durationMs: Math.max(0, Date.now() - monitorStartedAt),
+          failureCode: /로그인|인증/.test(message)
+            ? 'login-required'
+            : 'approval-monitor-unavailable',
+        });
+        report({
+          system: 'edufine',
+          state: /로그인|인증/.test(message) ? 'login-required' : 'error',
+          message,
+        });
       }
     }
   } finally {
