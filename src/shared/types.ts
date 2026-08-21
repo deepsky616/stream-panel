@@ -135,6 +135,7 @@ export type WebAutoConnectTarget = WebWorkflowSystem | 'both';
 export interface WebConnectionConfig {
   autoConnectAfterPortalLogin: boolean;
   autoConnectTarget: WebAutoConnectTarget;
+  sessionKeepAlive: Record<WebWorkflowSystem, boolean>;
 }
 
 export interface WebSystemConnectionStatus {

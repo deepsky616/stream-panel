@@ -477,7 +477,10 @@ export function validateAppConfig(config: AppConfig): void {
   if (
     !config.webConnection ||
     typeof config.webConnection.autoConnectAfterPortalLogin !== 'boolean' ||
-    !['neis', 'edufine', 'both'].includes(config.webConnection.autoConnectTarget)
+    !['neis', 'edufine', 'both'].includes(config.webConnection.autoConnectTarget) ||
+    !config.webConnection.sessionKeepAlive ||
+    typeof config.webConnection.sessionKeepAlive.neis !== 'boolean' ||
+    typeof config.webConnection.sessionKeepAlive.edufine !== 'boolean'
   ) {
     throw new ValidationError('업무 시스템 직접 연결 설정에서 나이스, 에듀파인 또는 둘 다를 선택해 주세요.');
   }

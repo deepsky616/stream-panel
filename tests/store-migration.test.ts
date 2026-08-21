@@ -72,6 +72,7 @@ describe('store migration', () => {
     expect(result.config.webConnection).toEqual({
       autoConnectAfterPortalLogin: true,
       autoConnectTarget: 'both',
+      sessionKeepAlive: { neis: true, edufine: true },
     });
     expect(result.config.approvalMonitor).toMatchObject({
       sources: {

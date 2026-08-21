@@ -141,11 +141,20 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
       Object.keys(connection).some((key) => ![
         'autoConnectAfterPortalLogin',
         'autoConnectTarget',
+        'sessionKeepAlive',
       ].includes(key)) ||
       typeof connection.autoConnectAfterPortalLogin !== 'boolean' ||
       !['neis', 'edufine', 'both'].includes(String(connection.autoConnectTarget))
     ) {
       throw new TypeError('업무 시스템 직접 연결 설정이 올바르지 않습니다. 연결할 시스템을 다시 선택해 주세요.');
+    }
+    assertRecord(connection.sessionKeepAlive, '업무 시스템 세션 자동 연장');
+    if (
+      Object.keys(connection.sessionKeepAlive).some((key) => key !== 'neis' && key !== 'edufine') ||
+      typeof connection.sessionKeepAlive.neis !== 'boolean' ||
+      typeof connection.sessionKeepAlive.edufine !== 'boolean'
+    ) {
+      throw new TypeError('세션 자동 연장 설정이 올바르지 않습니다. 나이스와 에듀파인 설정을 다시 선택해 주세요.');
     }
   }
   if ('approvalMonitor' in value) {

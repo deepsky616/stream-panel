@@ -372,10 +372,18 @@ describe('security validation', () => {
       /교육청/,
     );
     expect(() => inputValidation.assertConfigPatch({
-      webConnection: { autoConnectAfterPortalLogin: true, autoConnectTarget: 'both' },
+      webConnection: {
+        autoConnectAfterPortalLogin: true,
+        autoConnectTarget: 'both',
+        sessionKeepAlive: { neis: true, edufine: true },
+      },
     })).not.toThrow();
     expect(() => inputValidation.assertConfigPatch({
-      webConnection: { autoConnectAfterPortalLogin: true, autoConnectTarget: 'all' },
+      webConnection: {
+        autoConnectAfterPortalLogin: true,
+        autoConnectTarget: 'all',
+        sessionKeepAlive: { neis: true, edufine: true },
+      },
     })).toThrow(/직접 연결/);
   });
 

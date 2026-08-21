@@ -57,6 +57,10 @@ export const DEFAULT_APPROVAL_MONITOR = {
 export const DEFAULT_WEB_CONNECTION = {
   autoConnectAfterPortalLogin: true,
   autoConnectTarget: 'both',
+  sessionKeepAlive: {
+    neis: true,
+    edufine: true,
+  },
 } as const;
 
 function getRuntimePlatform(): string {
@@ -126,7 +130,7 @@ export function createDefaultConfig(
       ...DEFAULT_KEYBOARD,
       globalNumberModifier: configPlatform === 'darwin' ? 'Control+Alt' : 'Alt+Shift',
     },
-    webConnection: { ...DEFAULT_WEB_CONNECTION },
+    webConnection: structuredClone(DEFAULT_WEB_CONNECTION),
     approvalMonitor: structuredClone(DEFAULT_APPROVAL_MONITOR),
     theme: 'system',
     hotkey: 'CommandOrControl+Alt+D',

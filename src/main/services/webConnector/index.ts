@@ -222,6 +222,9 @@ export function createWebConnectorService({
     platform === 'win32'
       ? createWindowsManagedSessionManager({
         userDataPath,
+        isSessionKeepAliveEnabled: (system) => (
+          getConfig().webConnection.sessionKeepAlive[system]
+        ),
         workflowDependencies: {
           confirmStep: async (request, _step, candidate) => {
             const spec = request.workflowSpec;

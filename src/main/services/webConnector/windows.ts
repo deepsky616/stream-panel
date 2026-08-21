@@ -104,6 +104,11 @@ export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   systemTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   /** Tabs explicitly acquired by the portal Connect action. */
   connectionTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
+  /** Keeps a short connected-state grace period while Chromium replaces a tab target. */
+  connectionRecoveryPending?: {
+    portal: boolean;
+    systems: Record<WebWorkflowSystem, boolean>;
+  };
   /** Background tabs prepared by Connect and reused only for approval checks. */
   approvalMonitorTargetIds?: Partial<Record<WebWorkflowSystem, string>>;
   /** Result pages opened by Stream Panel from a connected system parent tab. */
@@ -112,6 +117,8 @@ export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   maintenancePauseDepth: number;
   /** Serializes all CDP work, including periodic session maintenance. */
   cdpOperationTail: Promise<void>;
+  /** Reads the current user setting without restarting the managed browser. */
+  isSessionKeepAliveEnabled?: (system: WebWorkflowSystem) => boolean;
   workflowState: WindowsWorkflowExecutionState;
 }
 
@@ -130,6 +137,7 @@ export interface CreateWindowsManagedBrowserSessionOptions {
     role: 'portal' | 'system',
     system?: WebWorkflowSystem,
   ) => void;
+  isSessionKeepAliveEnabled?: (system: WebWorkflowSystem) => boolean;
 }
 
 export interface WindowsConnectionPresence {
@@ -306,6 +314,7 @@ export async function createWindowsManagedBrowserSession(
     makeDirectory = (path, options) => mkdir(path, options),
     connectBrowser = (options) => connectManagedBrowser(options),
     onManagedTargetClosed,
+    isSessionKeepAliveEnabled,
   }: CreateWindowsManagedBrowserSessionOptions,
 ): Promise<WindowsManagedBrowserSession> {
   const executable = resolveWindowsManagedBrowserExecutable(browserId, { env, exists });
@@ -333,6 +342,7 @@ export async function createWindowsManagedBrowserSession(
   let closed = false;
   let extensionSweepRunning = false;
   let removeTargetEventListener = (): void => undefined;
+  const recoveryGeneration = { portal: 0, neis: 0, edufine: 0 };
   const managedSession: WindowsManagedBrowserSession = {
     officeCode,
     browserId,
@@ -340,10 +350,15 @@ export async function createWindowsManagedBrowserSession(
     bootstrapTargetId,
     systemTargetIds: {},
     connectionTargetIds: {},
+    connectionRecoveryPending: {
+      portal: false,
+      systems: { neis: false, edufine: false },
+    },
     approvalMonitorTargetIds: {},
     workflowResultTargetIds: {},
     maintenancePauseDepth: 0,
     cdpOperationTail: Promise.resolve(),
+    isSessionKeepAliveEnabled: (system) => isSessionKeepAliveEnabled?.(system) ?? true,
     workflowState: 'IDLE',
     isAlive() {
       return !closed && !connection.process.exited && !connection.protocol.isClosed;
@@ -351,6 +366,9 @@ export async function createWindowsManagedBrowserSession(
     async close() {
       if (closed) return;
       closed = true;
+      recoveryGeneration.portal += 1;
+      recoveryGeneration.neis += 1;
+      recoveryGeneration.edufine += 1;
       removeTargetEventListener();
       clearInterval(keepAliveTimer);
       await managedSession.cdpOperationTail;
@@ -368,6 +386,54 @@ export async function createWindowsManagedBrowserSession(
       }
     },
   };
+  const waitForRecoveryDelay = (delayMs: number): Promise<void> => new Promise((resolve) => {
+    const timer = setTimeout(resolve, delayMs);
+    timer.unref();
+  });
+  const finishSystemConnectionLoss = (system: WebWorkflowSystem): void => {
+    const monitorTargets = approvalMonitorTargetMap(managedSession);
+    const monitorTargetId = monitorTargets[system];
+    if (monitorTargetId) {
+      delete monitorTargets[system];
+      void managedSession.connection.protocol.send('Target.closeTarget', {
+        targetId: monitorTargetId,
+      }).catch(() => undefined);
+    }
+    onManagedTargetClosed?.('system', system);
+  };
+  const scheduleTargetRecovery = (
+    role: 'portal' | 'system',
+    system?: WebWorkflowSystem,
+  ): void => {
+    const key = role === 'portal' ? 'portal' : system;
+    if (!key) return;
+    const generation = recoveryGeneration[key] + 1;
+    recoveryGeneration[key] = generation;
+    if (role === 'portal') managedSession.connectionRecoveryPending!.portal = true;
+    else managedSession.connectionRecoveryPending!.systems[system!] = true;
+    void (async () => {
+      const delays = [100, 400, 900, 1_600, 2_500];
+      for (const delay of delays) {
+        await waitForRecoveryDelay(delay);
+        if (closed || recoveryGeneration[key] !== generation) return;
+        const recovered = await runSerializedCdpOperation(managedSession, async () => (
+          recoverManagedConnectionTarget(managedSession, role, system)
+        )).catch(() => false);
+        if (!recovered) continue;
+        if (role === 'portal') managedSession.connectionRecoveryPending!.portal = false;
+        else managedSession.connectionRecoveryPending!.systems[system!] = false;
+        return;
+      }
+      if (closed || recoveryGeneration[key] !== generation) return;
+      if (role === 'portal') {
+        managedSession.connectionRecoveryPending!.portal = false;
+        onManagedTargetClosed?.('portal');
+      } else {
+        managedSession.connectionRecoveryPending!.systems[system!] = false;
+        finishSystemConnectionLoss(system!);
+      }
+    })();
+  };
   if (typeof connection.protocol.onEvent === 'function') {
     removeTargetEventListener = connection.protocol.onEvent((event) => {
       if (event.method !== 'Target.targetDestroyed') return;
@@ -376,7 +442,7 @@ export async function createWindowsManagedBrowserSession(
       if (typeof targetId !== 'string') return;
       if (managedSession.portalTargetId === targetId) {
         managedSession.portalTargetId = undefined;
-        onManagedTargetClosed?.('portal');
+        scheduleTargetRecovery('portal');
       }
       if (managedSession.approvalPortalTargetId === targetId) {
         managedSession.approvalPortalTargetId = undefined;
@@ -395,16 +461,8 @@ export async function createWindowsManagedBrowserSession(
         if (systemTargets[system] === targetId) delete systemTargets[system];
         if (monitorTargets[system] === targetId) delete monitorTargets[system];
         if (resultTargets[system] === targetId) delete resultTargets[system];
-        if (connectionClosed) {
-          const monitorTargetId: string | undefined = monitorTargets[system];
-          if (monitorTargetId && monitorTargetId !== targetId) {
-            delete monitorTargets[system];
-            void managedSession.connection.protocol.send('Target.closeTarget', {
-              targetId: monitorTargetId,
-            }).catch(() => undefined);
-          }
-        }
-        if (systemClosed) onManagedTargetClosed?.('system', system);
+        if (connectionClosed) scheduleTargetRecovery('system', system);
+        else if (systemClosed) onManagedTargetClosed?.('system', system);
       }
     });
   }
@@ -633,16 +691,61 @@ async function closeNeisRequestTarget(
   return waitForTargetToClose(session, target.targetId, 5_000);
 }
 
+async function recoverManagedConnectionTarget(
+  session: WindowsManagedBrowserSession,
+  role: 'portal' | 'system',
+  system?: WebWorkflowSystem,
+): Promise<boolean> {
+  if (!session.isAlive()) return false;
+  if (role === 'portal') {
+    const targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    );
+    return Boolean(await findAuthenticatedPortalAnchor(session, targets));
+  }
+  if (!system) return false;
+
+  const dedicated = await findAuthenticatedConnectionTarget(session, system);
+  if (dedicated) return true;
+
+  const monitorTargetId = approvalMonitorTargetMap(session)[system];
+  const resultTargetId = workflowResultTargetMap(session)[system];
+  const candidates = readTargetInfos(
+    await session.connection.protocol.send('Target.getTargets', {}),
+  ).filter((target) => (
+    target.targetId !== monitorTargetId &&
+    target.targetId !== resultTargetId &&
+    systemTargetAllowed(target, session.officeCode, system)
+  ));
+  const authenticated: WindowsTargetInfo[] = [];
+  for (const candidate of candidates) {
+    const inspected = await inspectSystemTarget(session, system, {
+      allowedTargetIds: new Set([candidate.targetId]),
+    });
+    if (inspected && !inspected.loginRequired) authenticated.push(inspected.target);
+  }
+  if (authenticated.length !== 1) return false;
+  await claimDedicatedConnectionTarget(session, system, authenticated[0]);
+  return true;
+}
+
 export function getWindowsConnectionPresence(
   session: WindowsManagedBrowserSession,
 ): WindowsConnectionPresence {
   const alive = session.isAlive();
   const targets = connectionTargetMap(session);
+  const recovery = session.connectionRecoveryPending;
   return {
-    portal: alive && typeof session.portalTargetId === 'string',
+    portal: alive && (
+      typeof session.portalTargetId === 'string' || recovery?.portal === true
+    ),
     systems: {
-      neis: alive && typeof targets.neis === 'string',
-      edufine: alive && typeof targets.edufine === 'string',
+      neis: alive && (
+        typeof targets.neis === 'string' || recovery?.systems.neis === true
+      ),
+      edufine: alive && (
+        typeof targets.edufine === 'string' || recovery?.systems.edufine === true
+      ),
     },
   };
 }
@@ -2353,17 +2456,28 @@ async function extendManagedSystemSessions(
 ): Promise<void> {
   if (!session.isAlive()) return;
   const office = getEducationOffice(session.officeCode);
+  const enabledSystems = (['neis', 'edufine'] as const).filter(
+    (system) => session.isSessionKeepAliveEnabled?.(system) ?? true,
+  );
+  if (enabledSystems.length === 0) return;
+  const connectionTargets = connectionTargetMap(session);
+  const eligibleTargetIds = new Set([
+    session.portalTargetId,
+    ...enabledSystems.map((system) => connectionTargets[system]),
+  ].filter((targetId): targetId is string => typeof targetId === 'string'));
+  if (eligibleTargetIds.size === 0) return;
   const allowedOrigins = new Set([
     new URL(office.portalUrl).origin,
-    new URL(office.neisUrl).origin,
-    new URL(office.edufineUrl).origin,
+    ...enabledSystems.map((system) => new URL(
+      system === 'neis' ? office.neisUrl : office.edufineUrl,
+    ).origin),
   ]);
   let targets: WindowsTargetInfo[];
   try {
     targets = readTargetInfos(
       await session.connection.protocol.send('Target.getTargets', {}),
     ).filter((target) => {
-      if (target.type !== 'page') return false;
+      if (target.type !== 'page' || !eligibleTargetIds.has(target.targetId)) return false;
       try {
         return allowedOrigins.has(new URL(target.url).origin);
       } catch {

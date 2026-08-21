@@ -254,6 +254,18 @@ export function SettingsModal({
   ) => {
     setConfig((current) => ({ approvalMonitor: update(current.approvalMonitor) }));
   };
+  const setSessionKeepAlive = (system: WebWorkflowSystem, enabled: boolean) => {
+    setConfig((current) => ({
+      webConnection: {
+        ...current.webConnection,
+        sessionKeepAlive: {
+          ...current.webConnection.sessionKeepAlive,
+          [system]: enabled,
+        },
+      },
+    }));
+    setMessage(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 세션 자동 연장을 ${enabled ? '사용합니다' : '중지합니다'}.`);
+  };
   const updateGrid = (patch: Partial<AppConfig['grid']>) => {
     const next = { ...config.grid, ...patch };
     const nextCapacity = next.cols * next.rows;
@@ -551,6 +563,29 @@ export function SettingsModal({
                       </article>
                   ))}
                 </div>
+                <section className="session-keep-alive-settings" aria-labelledby="session-keep-alive-title">
+                  <div>
+                    <h3 id="session-keep-alive-title">세션 자동 연장</h3>
+                    <p>연결된 전용 탭에서 공식 남은 시간과 연장 버튼을 확인합니다. 현재 업무 화면을 이동하거나 창을 앞으로 띄우지 않습니다.</p>
+                  </div>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={config.webConnection.sessionKeepAlive.neis}
+                      onChange={(event) => setSessionKeepAlive('neis', event.target.checked)}
+                    />
+                    나이스
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={config.webConnection.sessionKeepAlive.edufine}
+                      onChange={(event) => setSessionKeepAlive('edufine', event.target.checked)}
+                    />
+                    K-에듀파인
+                  </label>
+                  <small>Stream Panel과 업무용 브라우저가 실행 중일 때 1분마다 안전하게 확인합니다. 서버가 세션을 강제로 만료하거나 컴퓨터가 절전되면 다시 로그인이 필요할 수 있습니다.</small>
+                </section>
                 <div className="connector-guide">
                   <h3>사용 순서</h3>
                   <ol>

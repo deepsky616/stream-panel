@@ -83,6 +83,9 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
   const keyboard = partialObject<KeyboardConfig>(parsed.keyboard);
   const approvalMonitor = partialObject<ApprovalMonitorConfig>(parsed.approvalMonitor);
   const webConnection = partialObject<WebConnectionConfig>(parsed.webConnection);
+  const sessionKeepAlive = partialObject<WebConnectionConfig['sessionKeepAlive']>(
+    webConnection.sessionKeepAlive,
+  );
   const approvalSources = partialObject<ApprovalMonitorConfig['sources']>(approvalMonitor.sources);
   const approvalWorkHours = partialObject<ApprovalMonitorConfig['workHours']>(approvalMonitor.workHours);
   const grid = partialObject<GridConfig>(parsed.grid);
@@ -146,6 +149,14 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
       )
         ? webConnection.autoConnectTarget as WebConnectionConfig['autoConnectTarget']
         : defaultConfig.webConnection.autoConnectTarget,
+      sessionKeepAlive: {
+        neis: typeof sessionKeepAlive.neis === 'boolean'
+          ? sessionKeepAlive.neis
+          : defaultConfig.webConnection.sessionKeepAlive.neis,
+        edufine: typeof sessionKeepAlive.edufine === 'boolean'
+          ? sessionKeepAlive.edufine
+          : defaultConfig.webConnection.sessionKeepAlive.edufine,
+      },
     },
     approvalMonitor: {
       ...defaultConfig.approvalMonitor,

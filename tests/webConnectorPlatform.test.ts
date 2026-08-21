@@ -263,7 +263,7 @@ describe('Windows managed web automation', () => {
     ]);
   });
 
-  it('extends sessions only on the selected office system origins', async () => {
+  it('extends only enabled connected-system sessions and their portal session', async () => {
     vi.useFakeTimers();
     const commands: Array<{
       method: string;
@@ -307,7 +307,10 @@ describe('Windows managed web automation', () => {
             close: async () => undefined,
           } as never,
         }),
+        isSessionKeepAliveEnabled: (system) => system === 'neis',
       });
+      session.portalTargetId = 'portal';
+      session.connectionTargetIds = { neis: 'neis', edufine: 'edufine' };
 
       session.maintenancePauseDepth = 1;
       await vi.advanceTimersByTimeAsync(60_000);
@@ -318,8 +321,8 @@ describe('Windows managed web automation', () => {
       const attachedTargets = commands
         .filter(({ method }) => method === 'Target.attachToTarget')
         .map(({ params }) => params.targetId);
-      expect(attachedTargets).toEqual(['neis', 'edufine', 'portal']);
-      expect(commands.filter(({ method }) => method === 'Runtime.evaluate')).toHaveLength(3);
+      expect(attachedTargets).toEqual(['neis', 'portal']);
+      expect(commands.filter(({ method }) => method === 'Runtime.evaluate')).toHaveLength(2);
       expect(commands.some(({ method, params }) => (
         method === 'Target.setDiscoverTargets' && params.discover === true
       ))).toBe(true);
@@ -1449,7 +1452,8 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
-  it('invalidates live connection targets as soon as their managed tabs close', async () => {
+  it('keeps connection presence during recovery and invalidates only after the grace period', async () => {
+    vi.useFakeTimers();
     let eventListener: ((event: { method: string; params?: unknown }) => void) | undefined;
     let listenerRemoved = false;
     const closed: Array<{ role: string; system?: string }> = [];
@@ -1483,33 +1487,119 @@ describe('Windows managed web automation', () => {
       }),
       onManagedTargetClosed: (role, system) => { closed.push({ role, system }); },
     });
-    session.portalTargetId = 'portal';
-    session.connectionTargetIds = { neis: 'neis', edufine: 'edufine' };
-    session.systemTargetIds = { neis: 'neis', edufine: 'edufine' };
-    session.approvalMonitorTargetIds = { neis: 'neis-monitor', edufine: 'edufine-monitor' };
-    session.systemTargetIds.edufine = 'edufine-result';
-    eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'edufine-result' } });
-    expect(closed).toEqual([]);
-    expect(session.approvalMonitorTargetIds.edufine).toBe('edufine-monitor');
-    eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'neis' } });
-    expect(getWindowsConnectionPresence(session)).toEqual({
-      portal: true,
-      systems: { neis: false, edufine: true },
-    });
-    expect(commands).toContainEqual({
-      method: 'Target.closeTarget',
-      params: { targetId: 'neis-monitor' },
-    });
-    expect(session.approvalMonitorTargetIds).toEqual({ edufine: 'edufine-monitor' });
-    eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'portal' } });
-    expect(getWindowsConnectionPresence(session).portal).toBe(false);
-    expect(closed).toEqual([
-      { role: 'system', system: 'neis' },
-      { role: 'portal', system: undefined },
-    ]);
-
-    await session.close();
+    try {
+      session.portalTargetId = 'portal';
+      session.connectionTargetIds = { neis: 'neis', edufine: 'edufine' };
+      session.systemTargetIds = { neis: 'neis', edufine: 'edufine' };
+      session.approvalMonitorTargetIds = { neis: 'neis-monitor', edufine: 'edufine-monitor' };
+      session.systemTargetIds.edufine = 'edufine-result';
+      eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'edufine-result' } });
+      expect(closed).toEqual([]);
+      expect(session.approvalMonitorTargetIds.edufine).toBe('edufine-monitor');
+      eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'neis' } });
+      expect(getWindowsConnectionPresence(session)).toEqual({
+        portal: true,
+        systems: { neis: true, edufine: true },
+      });
+      await vi.advanceTimersByTimeAsync(5_600);
+      expect(getWindowsConnectionPresence(session).systems.neis).toBe(false);
+      expect(commands).toContainEqual({
+        method: 'Target.closeTarget',
+        params: { targetId: 'neis-monitor' },
+      });
+      expect(session.approvalMonitorTargetIds).toEqual({ edufine: 'edufine-monitor' });
+      eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'portal' } });
+      expect(getWindowsConnectionPresence(session).portal).toBe(true);
+      await vi.advanceTimersByTimeAsync(5_600);
+      expect(getWindowsConnectionPresence(session).portal).toBe(false);
+      expect(closed).toEqual([
+        { role: 'system', system: 'neis' },
+        { role: 'portal', system: undefined },
+      ]);
+    } finally {
+      await session.close();
+      vi.useRealTimers();
+    }
     expect(listenerRemoved).toBe(true);
+  });
+
+  it('rebinds a replaced authenticated system tab without reporting a disconnect', async () => {
+    vi.useFakeTimers();
+    let eventListener: ((event: { method: string; params?: unknown }) => void) | undefined;
+    let replacementVisible = false;
+    const closed: Array<{ role: string; system?: string }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params?: Record<string, unknown>) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: replacementVisible ? [{
+            targetId: 'neis-replacement',
+            type: 'page',
+            url: 'https://goe.neis.go.kr/jsp/main.jsp',
+          }] : [] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params?.targetId)}-session` };
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params?.expression ?? '');
+          if (expression.includes("String(window.name||''")) {
+            return { result: { value: 'stream-panel-neis' } };
+          }
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://goe.neis.go.kr/jsp/main.jsp',
+              origin: 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+              neisReady: true,
+              marker: 'neis-application-menu',
+            } } };
+          }
+          if (expression.includes('window.name=')) {
+            return { result: { value: 'stream-panel-neis' } };
+          }
+        }
+        if (method === 'Target.detachFromTarget') return {};
+        return {};
+      },
+      onEvent(listener: (event: { method: string; params?: unknown }) => void) {
+        eventListener = listener;
+        return () => undefined;
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = await createWindowsManagedBrowserSession('goe', 'edge', {
+      userDataPath: 'C:\\StreamPanel',
+      env: { 'ProgramFiles(x86)': 'C:\\Program Files (x86)' },
+      exists: (path) => path.endsWith('Microsoft\\Edge\\Application\\msedge.exe'),
+      makeDirectory: async () => undefined,
+      connectBrowser: async () => ({
+        transportKind: 'pipe',
+        protocol: protocol as never,
+        process: {
+          pid: 42,
+          exited: false,
+          close: async (graceful?: () => Promise<void>) => { await graceful?.(); },
+        } as never,
+      }),
+      onManagedTargetClosed: (role, system) => { closed.push({ role, system }); },
+    });
+    try {
+      session.connectionTargetIds = { neis: 'neis-old' };
+      session.systemTargetIds = { neis: 'neis-old' };
+      replacementVisible = true;
+      eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'neis-old' } });
+      expect(getWindowsConnectionPresence(session).systems.neis).toBe(true);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(session.connectionTargetIds.neis).toBe('neis-replacement');
+      expect(session.systemTargetIds.neis).toBe('neis-replacement');
+      expect(getWindowsConnectionPresence(session).systems.neis).toBe(true);
+      expect(closed).toEqual([]);
+    } finally {
+      await session.close();
+      vi.useRealTimers();
+    }
   });
 
   it.each([
