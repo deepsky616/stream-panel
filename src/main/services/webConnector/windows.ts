@@ -3468,8 +3468,11 @@ async function createEphemeralApprovalTarget(
   signal?: AbortSignal,
 ): Promise<WindowsTargetInfo> {
   throwIfApprovalCheckCancelled(signal);
-  const anchor = await findAuthenticatedConnectionTarget(session, system);
+  const anchor = interactive
+    ? await findAuthenticatedConnectionTarget(session, system)
+    : await inspectAuthenticatedConnectionTarget(session, system);
   if (!anchor) {
+    if (!interactive) delete connectionTargetMap(session)[system];
     throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭을 찾지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.`);
   }
   const protocol = session.connection.protocol;
@@ -3478,8 +3481,28 @@ async function createEphemeralApprovalTarget(
   if (!interactive && system === 'edufine') {
     await assertNoActiveEdufineWorkTarget(session, undefined, signal);
   }
-  const previouslyFocused = await findFocusedPageTarget(session, targets);
   const tabName = `stream-panel-${system}-approval-${Date.now()}`;
+
+  if (!interactive) {
+    // Scheduled checks must be invisible. A same-browser-context CDP target
+    // shares the authenticated profile but cannot restore or focus the Edge /
+    // Chrome window like window.open() can.
+    const created = await protocol.send<{ targetId?: unknown }>('Target.createTarget', {
+      url: destination,
+      background: true,
+    });
+    if (typeof created.targetId !== 'string') {
+      throw new Error('K-에듀파인 업무 알림 백그라운드 탭을 준비하지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.');
+    }
+    return markEphemeralApprovalTarget(session, {
+      targetId: created.targetId,
+      type: 'page',
+      url: destination,
+      openerId: anchor.targetId,
+    }, tabName);
+  }
+
+  const previouslyFocused = await findFocusedPageTarget(session, targets);
 
   const before = new Set(targets.map(({ targetId }) => targetId));
   let anchorAttachment: AttachedWindowsTarget | undefined;
@@ -4643,13 +4666,22 @@ async function findAuthenticatedConnectionTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
 ): Promise<WindowsTargetInfo | null> {
+  const target = await inspectAuthenticatedConnectionTarget(session, system);
+  if (!target) return null;
+  await claimDedicatedConnectionTarget(session, system, target);
+  return target;
+}
+
+async function inspectAuthenticatedConnectionTarget(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<WindowsTargetInfo | null> {
   const dedicated = await findDedicatedConnectionTarget(session, system);
   if (!dedicated) return null;
   const inspected = await inspectSystemTarget(session, system, {
     allowedTargetIds: new Set([dedicated.targetId]),
   });
   if (!inspected || inspected.loginRequired) return null;
-  await claimDedicatedConnectionTarget(session, system, inspected.target);
   return inspected.target;
 }
 
@@ -5605,7 +5637,7 @@ export function createWindowsManagedSessionManager(
       approvalChecks.get(key)?.abort();
       const abortController = new AbortController();
       approvalChecks.set(key, abortController);
-      const check = manager.use(input.officeCode, input.browserId, async (session) => {
+      const runCheck = async (session: WindowsManagedBrowserSession): Promise<number> => {
         throwIfApprovalCheckCancelled(abortController.signal);
         if (!interactive && (interactiveWork.get(key) ?? 0) > 0) {
           throw createApprovalCheckCancelledError();
@@ -5615,6 +5647,10 @@ export function createWindowsManagedSessionManager(
           return await runSerializedCdpOperation(
             session,
             async () => {
+              if (!interactive && !await inspectAuthenticatedConnectionTarget(session, input.system)) {
+                delete connectionTargetMap(session)[input.system];
+                throw new Error(`${input.system === 'neis' ? '나이스' : 'K-에듀파인'}이 업무용 브라우저에 연결되어 있지 않습니다. 업무용 브라우저에서 다시 연결해 주세요.`);
+              }
               const scanList = () => scanWindowsApprovalCount(session, input, {
                 openPage: (managedSession, scanInput, signal) => openCdpWindowsApprovalPage(
                   managedSession as WindowsManagedBrowserSession,
@@ -5664,7 +5700,15 @@ export function createWindowsManagedSessionManager(
         } finally {
           session.maintenancePauseDepth = Math.max(0, session.maintenancePauseDepth - 1);
         }
-      });
+      };
+      const check = interactive
+        ? manager.use(input.officeCode, input.browserId, runCheck)
+        : manager.useExisting(input.officeCode, input.browserId, runCheck).then((count) => {
+            if (count === undefined) {
+              throw new Error('업무용 브라우저가 열려 있지 않습니다. 업무포털을 열고 나이스·에듀파인을 다시 연결해 주세요.');
+            }
+            return count;
+          });
       return check.finally(() => {
         if (approvalChecks.get(key) === abortController) approvalChecks.delete(key);
       });

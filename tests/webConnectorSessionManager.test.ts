@@ -25,6 +25,58 @@ function request(
 }
 
 describe('managed browser session manager', () => {
+  it('does not create a browser for an existing-session-only operation', async () => {
+    let creations = 0;
+    const manager = new ManagedBrowserSessionManager<FakeSession, string>({
+      createSession: async (officeCode, browserId) => {
+        creations += 1;
+        const session: FakeSession = {
+          id: creations,
+          officeCode,
+          browserId,
+          alive: true,
+          closeCount: 0,
+          isAlive() { return this.alive; },
+          async close() { this.closeCount += 1; this.alive = false; },
+        };
+        return session;
+      },
+      executeWorkflow: async () => 'done',
+    });
+
+    await expect(manager.useExisting('goe', 'edge', async () => 5)).resolves.toBeUndefined();
+    expect(creations).toBe(0);
+
+    await manager.prepare('goe', 'edge');
+    await expect(manager.useExisting('goe', 'edge', async (session) => session.id)).resolves.toBe(1);
+    expect(creations).toBe(1);
+  });
+
+  it('does not replace a closed browser for an existing-session-only operation', async () => {
+    const sessions: FakeSession[] = [];
+    const manager = new ManagedBrowserSessionManager<FakeSession, string>({
+      createSession: async (officeCode, browserId) => {
+        const session: FakeSession = {
+          id: sessions.length + 1,
+          officeCode,
+          browserId,
+          alive: true,
+          closeCount: 0,
+          isAlive() { return this.alive; },
+          async close() { this.closeCount += 1; this.alive = false; },
+        };
+        sessions.push(session);
+        return session;
+      },
+      executeWorkflow: async () => 'done',
+    });
+
+    const prepared = await manager.prepare('goe', 'edge');
+    prepared.alive = false;
+    await expect(manager.useExisting('goe', 'edge', async () => 'unexpected')).resolves.toBeUndefined();
+    expect(sessions).toHaveLength(1);
+  });
+
   it('runs a read-only session operation in the same queue as workflow execution', async () => {
     let releaseRead!: () => void;
     const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });

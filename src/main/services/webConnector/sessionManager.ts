@@ -86,6 +86,25 @@ export class ManagedBrowserSessionManager<
     });
   }
 
+  /**
+   * Runs an operation only when the user has already prepared a live managed
+   * browser session. Unlike `use`, this never launches or replaces a browser.
+   */
+  useExisting<Value>(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+    operation: (session: Session) => Promise<Value>,
+  ): Promise<Value | undefined> {
+    const entry = this.entries.get(sessionKey(officeCode, browserId));
+    if (!entry) return Promise.resolve(undefined);
+    const result = entry.tail.then(
+      () => entry.session?.isAlive() ? operation(entry.session) : undefined,
+      () => entry.session?.isAlive() ? operation(entry.session) : undefined,
+    );
+    entry.tail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   getSession(
     officeCode: EducationOfficeCode,
     browserId: WebConnectorBrowserId,

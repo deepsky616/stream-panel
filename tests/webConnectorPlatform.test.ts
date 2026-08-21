@@ -4,6 +4,7 @@ import type { WindowsWorkflowPage } from '../src/main/services/webConnector/wind
 import {
   connectWindowsOfficeSystems,
   createWindowsManagedBrowserSession,
+  createWindowsManagedSessionManager,
   executeWindowsWorkflow,
   getWindowsConnectionPresence,
   openCdpWindowsApprovalPage,
@@ -49,6 +50,29 @@ function page(origin: string): WindowsWorkflowPage {
 }
 
 describe('Windows managed web automation', () => {
+  it('does not launch a managed browser for a scheduled check without a live connection', async () => {
+    let browserLaunches = 0;
+    const controller = createWindowsManagedSessionManager({
+      userDataPath: 'C:\\StreamPanel',
+      env: {
+        'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      },
+      exists: (path) => path.endsWith('Microsoft\\Edge\\Application\\msedge.exe'),
+      makeDirectory: async () => undefined,
+      connectBrowser: async () => {
+        browserLaunches += 1;
+        throw new Error('A scheduled check must not launch the browser');
+      },
+    });
+
+    await expect(controller.checkApproval({
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+    })).rejects.toThrow(/업무용 브라우저.*열려 있지|다시 연결/);
+    expect(browserLaunches).toBe(0);
+  });
+
   it('selects only the requested office and system page target', () => {
     const targets = [
       { targetId: 'personal', type: 'page', url: 'https://mail.example.com/' },
@@ -548,7 +572,7 @@ describe('Windows managed web automation', () => {
     expect(shouldScanApprovalListFirst({ system: 'neis', interactive: true })).toBe(true);
   });
 
-  it('derives and closes an Edufine monitor tab for every check without navigating the work tab', async () => {
+  it('creates and closes an invisible Edufine monitor tab for every scheduled check', async () => {
     const commands: Array<{
       method: string;
       params: Record<string, unknown>;
@@ -581,6 +605,11 @@ describe('Windows managed web automation', () => {
             ? 'edufine-work-session'
             : `${String(params.targetId)}-session` };
         }
+        if (method === 'Target.createTarget') {
+          monitorSequence += 1;
+          monitorTargetId = `edufine-monitor-${monitorSequence}`;
+          return { targetId: monitorTargetId };
+        }
         if (method === 'Target.closeTarget') {
           if (params.targetId === monitorTargetId) monitorTargetId = null;
           return { success: true };
@@ -592,11 +621,6 @@ describe('Windows managed web automation', () => {
               visible: sessionId === 'edufine-work-session' && workActive,
               focused: sessionId === 'edufine-work-session' && workActive,
             } } };
-          }
-          if (expression.includes('stream-panel-edufine-approval-') && expression.includes('window.open(')) {
-            monitorSequence += 1;
-            monitorTargetId = `edufine-monitor-${monitorSequence}`;
-            return { result: { value: true } };
           }
           if (String(params.expression ?? '').includes('loginVisible')) {
             return { result: { value: {
@@ -645,13 +669,19 @@ describe('Windows managed web automation', () => {
     await secondPage.release?.();
 
     expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
-    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
-    expect(commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(2);
     expect(commands.filter(({ method, params }) => (
-      method === 'Runtime.evaluate' &&
-      String(params.expression ?? '').includes('stream-panel-edufine-approval-') &&
-      String(params.expression ?? '').includes('window.open(')
+      method === 'Target.createTarget' && params.background === true
     ))).toHaveLength(2);
+    expect(commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(2);
+    expect(commands.some(({ method, params }) => (
+      method === 'Runtime.evaluate' &&
+      String(params.expression ?? '').includes('window.open(')
+    ))).toBe(false);
+    expect(commands.some(({ method }) => (
+      method === 'Target.activateTarget' ||
+      method === 'Browser.getWindowForTarget' ||
+      method === 'Browser.setWindowBounds'
+    ))).toBe(false);
     expect(commands.filter(({ method, params }) => (
       method === 'Target.attachToTarget' && String(params.targetId).startsWith('edufine-monitor-')
     )).length).toBeGreaterThanOrEqual(2);
@@ -719,6 +749,63 @@ describe('Windows managed web automation', () => {
     expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
   });
 
+  it('does not open a scheduled Edufine tab when the remembered connection requires login', async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        commands.push({ method, params });
+        if (method === 'Target.getTargets') return { targetInfos: [{
+          targetId: 'edufine-login',
+          type: 'page',
+          url: 'https://klef.goe.go.kr/login',
+        }] };
+        if (method === 'Target.attachToTarget') return { sessionId: 'edufine-login-session' };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression === "String(window.name||'')") {
+            return { result: { value: 'stream-panel-edufine' } };
+          }
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://klef.goe.go.kr/login',
+              origin: 'https://klef.goe.go.kr',
+              readyState: 'complete',
+              loginVisible: true,
+            } } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connectionTargetIds: { edufine: 'edufine-login' as string | undefined },
+      systemTargetIds: { edufine: 'edufine-login' as string | undefined },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await expect(openCdpWindowsApprovalPage(session as never, {
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+    })).rejects.toThrow(/연결 탭|다시 연결/);
+
+    expect(commands.some(({ method }) => method === 'Target.createTarget')).toBe(false);
+    expect(commands.some(({ method, params }) => (
+      method === 'Runtime.evaluate' && String(params.expression ?? '').includes('window.open(')
+    ))).toBe(false);
+    expect(session.connectionTargetIds.edufine).toBeUndefined();
+  });
+
   it('allows a scheduled Edufine check when its selected work tab is not browser-focused', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
     let monitorOpened = false;
@@ -742,15 +829,15 @@ describe('Windows managed web automation', () => {
         if (method === 'Target.attachToTarget') {
           return { sessionId: params.targetId === 'edufine-work' ? 'work-session' : 'monitor-session' };
         }
+        if (method === 'Target.createTarget') {
+          monitorOpened = true;
+          return { targetId: 'edufine-monitor' };
+        }
         if (method === 'Target.closeTarget') return { success: true };
         if (method === 'Runtime.evaluate') {
           const expression = String(params.expression ?? '');
           if (expression.includes('visibilityState')) {
             return { result: { value: { visible: sessionId === 'work-session', focused: false } } };
-          }
-          if (expression.includes('window.open(')) {
-            monitorOpened = true;
-            return { result: { value: true } };
           }
           if (expression.includes('loginVisible')) {
             return { result: { value: {
@@ -789,7 +876,12 @@ describe('Windows managed web automation', () => {
 
     expect(commands.some(({ method, params }) => (
       method === 'Runtime.evaluate' && String(params.expression ?? '').includes('window.open(')
-    ))).toBe(true);
+    ))).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://klef.goe.go.kr/', background: true },
+      sessionId: undefined,
+    });
     expect(commands).toContainEqual({
       method: 'Target.closeTarget',
       params: { targetId: 'edufine-monitor' },
@@ -3399,7 +3491,12 @@ describe('Windows managed web automation', () => {
       close: async () => undefined,
     };
 
-    const workflowPage = await openCdpWindowsWorkflowPage(session as never, 'neis-leave');
+    const workflowPage = await openCdpWindowsWorkflowPage(
+      session as never,
+      'neis-leave',
+      undefined,
+      { failFastOnLoginRequired: true },
+    );
 
     expect(authenticated).toBe(true);
     expect(commands.filter(({ method, sessionId }) => (
