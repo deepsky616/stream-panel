@@ -621,7 +621,7 @@ export function SettingsModal({
                 <p>Stream Panel v{info?.version ?? '1.0.0'}</p><p>개발자: 청계초등학교 교사 조영석</p><p>공개 저장소: github.com/deepsky616/stream-panel</p><p>라이선스: MIT</p>
                 {config.platform === 'darwin' && <p className="settings-note">맥에서는 자동 업데이트를 지원하지 않습니다. 새 버전 알림이 오면 메뉴 막대의 릴리즈 페이지에서 직접 내려받아 설치해 주세요.</p>}
                 {updateReady && <p className="update-ready">앱을 다시 시작하면 v{updateReady} 업데이트가 적용됩니다.</p>}
-                <button type="button" onClick={() => void window.api.update.check().then((result) => setMessage(result.status)).catch(() => setMessage('개발 모드에서는 새 버전을 확인하지 않습니다.'))}>{config.platform === 'darwin' ? '새 버전 확인' : '업데이트 확인'}</button>
+                <button type="button" onClick={() => void window.api.update.check().then((result) => setMessage(result.status)).catch(() => setMessage('업데이트 확인 요청을 처리하지 못했습니다. 앱을 다시 시작한 뒤 시도해 주세요.'))}>{config.platform === 'darwin' ? '새 버전 확인' : '업데이트 확인'}</button>
               </>
             )}
             {message && <p className="settings-message" role="status">{message}</p>}

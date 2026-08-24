@@ -6,7 +6,7 @@ import { registerIpcHandlers } from './ipc';
 import { ConfigStore } from './store';
 import { applyPanelLayout, createPanelWindow, showPanel } from './windows/panelWindow';
 import { cleanupOrphanIcons } from './services/iconCleanup';
-import { createTray } from './tray';
+import { createTray, destroyTray } from './tray';
 import { registerShortcuts } from './shortcuts';
 import { setAutoLaunch } from './services/autoLaunch';
 import { configureUpdater } from './services/updater';
@@ -31,6 +31,7 @@ let webConnectorService: WebConnectorService | null = null;
 let approvalMonitorService: ApprovalMonitorService | null = null;
 let serviceShutdownStarted = false;
 let serviceShutdownComplete = false;
+const FORCED_SHUTDOWN_TIMEOUT_MS = 7_000;
 if (!gotLock) {
   console.error('다른 Stream Panel 실행 과정이 이미 단일 실행 잠금을 사용하고 있습니다.');
   app.quit();
@@ -168,10 +169,20 @@ app.on('before-quit', (event) => {
   if (serviceShutdownStarted) return;
   serviceShutdownStarted = true;
   setActiveWebConnectorService(null);
-  void (async () => {
-    await approvalMonitorService?.stop();
-    await webConnectorService?.stop();
-  })().finally(() => {
+  // Remove the notification-area icon immediately while bounded background
+  // cleanup continues. Otherwise Explorer keeps showing an apparently live app.
+  destroyTray();
+  const forceExitTimer = setTimeout(() => {
+    console.error('서비스 종료 제한 시간을 초과하여 Stream Panel을 강제 종료합니다.');
+    serviceShutdownComplete = true;
+    app.exit(0);
+  }, FORCED_SHUTDOWN_TIMEOUT_MS);
+  void Promise.allSettled([
+    // Web connector shutdown aborts any scan awaited by the approval monitor.
+    webConnectorService?.stop() ?? Promise.resolve(),
+    approvalMonitorService?.stop() ?? Promise.resolve(),
+  ]).finally(() => {
+    clearTimeout(forceExitTimer);
     serviceShutdownComplete = true;
     app.quit();
   });

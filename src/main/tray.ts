@@ -74,6 +74,12 @@ export function createTray(): Tray {
   return tray;
 }
 
+export function destroyTray(): void {
+  if (!tray) return;
+  tray.destroy();
+  tray = null;
+}
+
 export function setTrayUpdateVersion(version: string): void {
   updateVersion = version;
   tray?.setToolTip(`Stream Panel v${app.getVersion()} · 다시 시작하면 v${version} 적용`);

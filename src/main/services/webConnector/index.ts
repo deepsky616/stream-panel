@@ -60,6 +60,8 @@ export interface WebConnectorSessionController {
   ): ManagedBrowserSession | undefined;
   closeOtherOffices(officeCode: EducationOfficeCode): Promise<void>;
   closeAll(): Promise<void>;
+  /** Cancels connection, workflow, and approval work before shutdown waits. */
+  cancelAllOperations?(): void;
   checkApproval?(input: ApprovalScanInput): Promise<number>;
   cancelApprovalChecks?(
     officeCode: EducationOfficeCode,
@@ -441,6 +443,7 @@ export function createWebConnectorService({
       started = false;
       if (connectionMonitor) clearInterval(connectionMonitor);
       connectionMonitor = undefined;
+      controller.cancelAllOperations?.();
       await Promise.allSettled([...pending]);
       await controller.closeAll();
       await persistTail;

@@ -2689,6 +2689,14 @@ const loginControl=documents.some(({document})=>
 );
 const loginPath=location.pathname.toLowerCase().split(/[^a-z]+/)
   .some(part=>['login','certlogin','signin'].includes(part));
+const expiredSession=documents.some(({document})=>{
+  const text=normalize((document.body?.innerText||document.body?.textContent||'').slice(0,12000));
+  return [
+    '세션이 만료되었습니다','세션이 종료되었습니다','로그인 시간이 만료되었습니다',
+    '사용 시간이 만료되었습니다','로그아웃되었습니다','로그아웃 되었습니다',
+    '다시 로그인해 주세요','다시 로그인하여 주십시오'
+  ].some(label=>text.includes(label));
+});
 const neisReady=documents.some(({document})=>{
   const menu=Array.from(document.querySelectorAll('.cl-text,a.cl-sidenavigation-item,[title="기본메뉴 및 승인사항"],.btn-asd.mymenu'))
     .some(element=>visible(element)&&['복무','나이스'].some(label=>textOf(element)===label||textOf(element).startsWith(label+' ')));
@@ -2722,7 +2730,7 @@ for(const {document} of documents){
 }
 return {
   href:location.href,origin:location.origin,readyState:document.readyState,
-  loginVisible:password||loginControl||loginPath,
+  loginVisible:password||loginControl||loginPath||expiredSession,
   neisReady,edufineReady,jobNames,selectedJob,
   marker:edufineReady?'edufine-job-list':neisReady?'neis-application-menu':'unready'
 };
@@ -5023,6 +5031,59 @@ async function inspectDedicatedConnectionState(
     : { state: 'authenticated', target: inspected.target };
 }
 
+interface ExpiredConnectionResetResult {
+  reset: boolean;
+  currentUrl?: string;
+  closedTargetIds: readonly string[];
+}
+
+/**
+ * Drops only targets that Stream Panel previously recorded for one system.
+ * Clearing the maps before closing is intentional: Target.targetDestroyed must
+ * not schedule recovery for a tab that an explicit reconnect is replacing.
+ */
+async function resetExpiredDedicatedConnectionTargets(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<ExpiredConnectionResetResult> {
+  const inspection = await inspectDedicatedConnectionState(session, system);
+  if (inspection.state !== 'login-required') {
+    return { reset: false, closedTargetIds: [] };
+  }
+
+  const connectionTargets = connectionTargetMap(session);
+  const systemTargets = systemTargetMap(session);
+  const monitorTargets = approvalMonitorTargetMap(session);
+  const resultTargets = workflowResultTargetMap(session);
+  const ownedTargetIds = new Set<string>([
+    inspection.target.targetId,
+    monitorTargets[system],
+    resultTargets[system],
+  ].filter((targetId): targetId is string => typeof targetId === 'string'));
+
+  delete connectionTargets[system];
+  delete systemTargets[system];
+  delete monitorTargets[system];
+  delete resultTargets[system];
+  if (session.connectionRecoveryPending) {
+    session.connectionRecoveryPending.systems[system] = false;
+  }
+
+  const closedTargetIds = (await Promise.all([...ownedTargetIds].map(async (targetId) => {
+    try {
+      await session.connection.protocol.send('Target.closeTarget', { targetId });
+    } catch {
+      // A target can finish its logout redirect and disappear before the close.
+    }
+    return await waitForTargetToClose(session, targetId, 2_000) ? targetId : null;
+  }))).filter((targetId): targetId is string => targetId !== null);
+  return {
+    reset: true,
+    currentUrl: inspection.target.url,
+    closedTargetIds,
+  };
+}
+
 async function findAuthenticatedSystemTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
@@ -5059,14 +5120,15 @@ async function acquireLoggedInPortalTarget(
   const office = getEducationOffice(session.officeCode);
   const portalOrigin = new URL(office.portalUrl).origin;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  const portalTargets = targets.filter((candidate) => {
-    if (candidate.type !== 'page') return false;
-    try {
-      return new URL(candidate.url).origin === portalOrigin;
-    } catch {
-      return false;
-    }
-  });
+  const portalTargets = targets
+    .filter((candidate) => (
+      candidate.targetId !== session.approvalPortalTargetId &&
+      isPortalTargetForSession(session, candidate)
+    ))
+    .sort((left, right) => (
+      Number(right.targetId === session.portalTargetId) -
+      Number(left.targetId === session.portalTargetId)
+    ));
   // A previous attempt can leave both a portal login page and the authenticated
   // main page open. Selecting the first target made Connect wait on the stale
   // login page even though the user had already logged in in another tab.
@@ -5139,17 +5201,15 @@ async function focusExistingPortalTarget(
   session: WindowsManagedBrowserSession,
 ): Promise<void> {
   const protocol = session.connection.protocol;
-  const portalOrigin = new URL(getEducationOffice(session.officeCode).portalUrl).origin;
   const target = readTargetInfos(
     await protocol.send('Target.getTargets', {}),
-  ).find((candidate) => {
-    if (candidate.type !== 'page') return false;
-    try {
-      return new URL(candidate.url).origin === portalOrigin;
-    } catch {
-      return false;
-    }
-  });
+  ).filter((candidate) => (
+    candidate.targetId !== session.approvalPortalTargetId &&
+    isPortalTargetForSession(session, candidate)
+  )).sort((left, right) => (
+    Number(right.targetId === session.portalTargetId) -
+    Number(left.targetId === session.portalTargetId)
+  ))[0];
   if (!target) return;
   session.portalTargetId = target.targetId;
   let attached: AttachedWindowsTarget | undefined;
@@ -5230,6 +5290,7 @@ async function prepareOfficeSystemsViaPortal(
   signal?: AbortSignal,
   foreground = true,
   diagnose?: WindowsConnectionDiagnosticReporter,
+  resetExpiredTargets = false,
 ): Promise<Map<WebWorkflowSystem, PortalSystemPreparation>> {
   const results = new Map<WebWorkflowSystem, PortalSystemPreparation>();
   const orderedSystems = orderedConnectionSystems(systems);
@@ -5276,6 +5337,20 @@ async function prepareOfficeSystemsViaPortal(
     for (const system of orderedSystems) {
       throwIfApprovalCheckCancelled(signal);
       const label = system === 'neis' ? '나이스' : 'K-에듀파인';
+      if (resetExpiredTargets) {
+        const expiredResetStartedAt = Date.now();
+        const expiredReset = await resetExpiredDedicatedConnectionTargets(session, system);
+        if (expiredReset.reset) {
+          await recordConnectionDiagnostic(diagnose, {
+            system,
+            stepId: 'connection-expired-target-reset',
+            outcome: 'success',
+            durationMs: Math.max(0, Date.now() - expiredResetStartedAt),
+            currentUrl: expiredReset.currentUrl,
+            failureCode: 'expired-session-reset',
+          });
+        }
+      }
       const reuseStartedAt = Date.now();
       const authenticatedTarget = await findAuthenticatedConnectionTarget(session, system);
       if (authenticatedTarget) {
@@ -5594,7 +5669,15 @@ export async function connectWindowsOfficeSystems(
   diagnose?: WindowsConnectionDiagnosticReporter,
 ): Promise<void> {
   const portalPreparations = foreground
-    ? await prepareOfficeSystemsViaPortal(session, systems, report, signal, true, diagnose)
+    ? await prepareOfficeSystemsViaPortal(
+        session,
+        systems,
+        report,
+        signal,
+        true,
+        diagnose,
+        true,
+      )
     : null;
   try {
     for (const system of orderedConnectionSystems(systems)) {
@@ -5700,16 +5783,14 @@ export async function openWindowsOfficePortal(
 ): Promise<void> {
   const protocol = session.connection.protocol;
   const office = getEducationOffice(session.officeCode);
-  const portalOrigin = new URL(office.portalUrl).origin;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  let target = targets.find((candidate) => {
-    if (candidate.type !== 'page') return false;
-    try {
-      return new URL(candidate.url).origin === portalOrigin;
-    } catch {
-      return false;
-    }
-  });
+  let target: WindowsTargetInfo | undefined = targets.filter((candidate) => (
+    candidate.targetId !== session.approvalPortalTargetId &&
+    isPortalTargetForSession(session, candidate)
+  )).sort((left, right) => (
+    Number(right.targetId === session.portalTargetId) -
+    Number(left.targetId === session.portalTargetId)
+  ))[0];
   let shouldNavigate = false;
   if (!target) {
     target = targets.find((candidate) => (
@@ -5727,6 +5808,7 @@ export async function openWindowsOfficePortal(
     }
   }
   session.portalTargetId = target.targetId;
+  session.approvalPortalSnapshot = undefined;
   const attached = await attachWindowsTarget(session, target);
   try {
     if (shouldNavigate) await navigateAttachedTarget(session, attached, office.portalUrl);
@@ -5864,6 +5946,7 @@ export type WindowsManagedSessionController = ManagedBrowserSessionManager<
     officeCode: EducationOfficeCode,
     browserId: WebConnectorBrowserId,
   ): void;
+  cancelAllOperations(): void;
   connectSystems(
     input: WindowsSystemConnectionRequest,
     report?: WindowsSystemConnectionReporter,
@@ -5971,6 +6054,14 @@ export function createWindowsManagedSessionManager(
     ),
   });
   return Object.assign(manager, {
+    cancelAllOperations() {
+      for (const controller of connectionRuns.values()) controller.abort();
+      for (const controller of workflowRuns.values()) controller.abort();
+      for (const controller of approvalChecks.values()) controller.abort();
+      connectionRuns.clear();
+      workflowRuns.clear();
+      approvalChecks.clear();
+    },
     connectSystems(
       input: WindowsSystemConnectionRequest,
       report?: WindowsSystemConnectionReporter,

@@ -50,7 +50,7 @@ jobs:
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-      - name: Download verified Windows release asset
+      - name: Download verified Windows release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,12 +59,22 @@ jobs:
           mkdir -p mirror-input
           gh release download "$TAG" \
             --pattern 'StreamPanel-*-Setup.exe' \
+            --pattern 'StreamPanel-*-Setup.exe.blockmap' \
+            --pattern 'latest.yml' \
             --dir mirror-input
           INSTALLERS=(mirror-input/StreamPanel-*-Setup.exe)
           if [ "${#INSTALLERS[@]}" -ne 1 ] || [ ! -f "${INSTALLERS[0]}" ]; then
             echo "::error::Expected exactly one Windows installer for $TAG"
             exit 1
           fi
+          test -s "${INSTALLERS[0]}.blockmap" || {
+            echo "::error::Missing Windows blockmap for $TAG"
+            exit 1
+          }
+          test -s mirror-input/latest.yml || {
+            echo "::error::Missing latest.yml for $TAG"
+            exit 1
+          }
       - name: Build resilient download page
         shell: bash
         run: |

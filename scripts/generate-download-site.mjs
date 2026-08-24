@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 const [, , installerArgument, outputArgument] = process.argv
 
@@ -10,6 +10,7 @@ if (!installerArgument || !outputArgument) {
 }
 
 const installerPath = resolve(installerArgument)
+const metadataDirectory = dirname(installerPath)
 const outputDir = resolve(outputArgument)
 const installerName = basename(installerPath)
 const match = /^StreamPanel-(\d+\.\d+\.\d+)-Setup\.exe$/.exec(installerName)
@@ -32,6 +33,8 @@ const releaseDownloadUrl = `${releaseUrl.replace('/tag/', '/download/')}/${insta
 
 await mkdir(outputDir, { recursive: true })
 await copyFile(installerPath, join(outputDir, installerName))
+await copyFile(`${installerPath}.blockmap`, join(outputDir, `${installerName}.blockmap`))
+await copyFile(join(metadataDirectory, 'latest.yml'), join(outputDir, 'latest.yml'))
 await writeFile(
   join(outputDir, 'checksums.txt'),
   `${sha256}  ${installerName}\n`,

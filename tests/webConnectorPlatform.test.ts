@@ -9,6 +9,7 @@ import {
   getWindowsConnectionPresence,
   openCdpWindowsApprovalPage,
   openCdpWindowsWorkflowPage,
+  openWindowsOfficePortal,
   restoreAndActivateTarget,
   resetWindowsWorkflowTargets,
   selectWindowsWorkflowTarget,
@@ -128,6 +129,77 @@ describe('Windows managed web automation', () => {
     expect(session.workflowState).toBe('IDLE');
     await session.close();
     expect(protocol.isClosed).toBe(true);
+  });
+
+  it('opens a fresh interactive portal tab instead of the hidden approval portal tab', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    let portalCreated = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            {
+              targetId: 'approval-portal',
+              type: 'page',
+              url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do',
+            },
+            ...(portalCreated ? [{
+              targetId: 'interactive-portal',
+              type: 'page',
+              url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do',
+            }] : []),
+          ] };
+        }
+        if (method === 'Target.createTarget') {
+          portalCreated = true;
+          return { targetId: 'interactive-portal' };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Browser.getWindowForTarget') return { windowId: 17 };
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      approvalPortalTargetId: 'approval-portal',
+      approvalPortalSnapshot: { checkedAt: Date.now(), counts: { neis: 2 } },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await openWindowsOfficePortal(session as never);
+
+    expect(commands).toContainEqual({
+      method: 'Target.createTarget',
+      params: { url: 'https://goe.eduptl.kr/' },
+      sessionId: undefined,
+    });
+    expect(commands).toContainEqual({
+      method: 'Target.activateTarget',
+      params: { targetId: 'interactive-portal' },
+      sessionId: undefined,
+    });
+    expect(commands.some(({ method, params }) => (
+      method === 'Target.activateTarget' && params.targetId === 'approval-portal'
+    ))).toBe(false);
+    expect((session as typeof session & { portalTargetId?: string }).portalTargetId)
+      .toBe('interactive-portal');
+    expect(session.approvalPortalSnapshot).toBeUndefined();
   });
 
   it('keeps every existing tab and remembers the authenticated NEIS tab for an in-place restart', async () => {
@@ -2980,6 +3052,134 @@ describe('Windows managed web automation', () => {
       method: 'Target.activateTarget',
       params: { targetId: 'neis-ready' },
     });
+  });
+
+  it('replaces expired owned targets before reconnecting through portal SSO', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const diagnostics: Array<{ stepId: string; outcome: string }> = [];
+    const closedTargets = new Set<string>();
+    let freshTargetOpened = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            {
+              targetId: 'portal',
+              type: 'page',
+              url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do',
+            },
+            {
+              targetId: 'expired-neis',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/login',
+            },
+            {
+              targetId: 'expired-neis-monitor',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/approval',
+            },
+            {
+              targetId: 'expired-neis-result',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/leave/request',
+            },
+            ...(freshTargetOpened ? [{
+              targetId: 'fresh-neis',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/jsp/main.jsp',
+              openerId: 'portal',
+            }] : []),
+          ].filter(({ targetId }) => !closedTargets.has(targetId)) };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Target.closeTarget') {
+          closedTargets.add(String(params.targetId));
+          return { success: true };
+        }
+        if (method === 'Browser.getWindowForTarget') return { windowId: 17 };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes('const ssoLabels=')) {
+            return { result: { value: { clicked: true, count: 1, x: 120, y: 80 } } };
+          }
+          if (expression.includes('loginVisible')) {
+            const portal = sessionId === 'portal-session';
+            const fresh = sessionId === 'fresh-neis-session';
+            return { result: { value: {
+              href: portal
+                ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
+                : fresh
+                  ? 'https://goe.neis.go.kr/jsp/main.jsp'
+                  : 'https://goe.neis.go.kr/login',
+              origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: !portal && !fresh,
+              neisReady: fresh,
+              marker: fresh ? 'neis-application-menu' : 'unready',
+            } } };
+          }
+        }
+        if (
+          method === 'Input.dispatchMouseEvent' &&
+          sessionId === 'portal-session' &&
+          params.type === 'mouseReleased'
+        ) freshTargetOpened = true;
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connectionTargetIds: { neis: 'expired-neis' },
+      systemTargetIds: { neis: 'expired-neis' },
+      approvalMonitorTargetIds: { neis: 'expired-neis-monitor' },
+      workflowResultTargetIds: { neis: 'expired-neis-result' },
+      connectionRecoveryPending: {
+        portal: false,
+        systems: { neis: true, edufine: false },
+      },
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(
+      session as never,
+      ['neis'],
+      undefined,
+      undefined,
+      true,
+      (event) => { diagnostics.push(event); },
+    );
+
+    expect([...closedTargets]).toEqual([
+      'expired-neis',
+      'expired-neis-monitor',
+      'expired-neis-result',
+    ]);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      stepId: 'connection-expired-target-reset',
+      outcome: 'success',
+    }));
+    expect(session.connectionTargetIds.neis).toBe('fresh-neis');
+    expect(session.systemTargetIds.neis).toBe('fresh-neis');
+    expect(session.approvalMonitorTargetIds.neis).toBeUndefined();
+    expect(session.workflowResultTargetIds.neis).toBeUndefined();
+    expect(session.connectionRecoveryPending.systems.neis).toBe(false);
+    expect(commands.some(({ method }) => method === 'Page.navigate')).toBe(false);
   });
 
   it('keeps one Stream Panel system tab and closes only an owned duplicate', async () => {

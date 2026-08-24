@@ -380,6 +380,48 @@ describe('managed web connector service', () => {
     await service.stop();
   });
 
+  it('cancels in-flight browser work before waiting for shutdown', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    const events: string[] = [];
+    let rejectRun: ((error: Error) => void) | undefined;
+    controller.run = async () => new Promise((_resolve, reject) => {
+      rejectRun = reject;
+      events.push('workflow-started');
+    });
+    controller.cancelAllOperations = () => {
+      events.push('operations-cancelled');
+      rejectRun?.(createApprovalCheckCancelledError());
+    };
+    controller.closeAll = async () => { events.push('sessions-closed'); };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async () => undefined,
+      },
+    });
+    await service.start();
+    expect(service.queue(workflowAction())).toEqual({ queued: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await service.stop();
+
+    expect(events).toEqual([
+      'workflow-started',
+      'operations-cancelled',
+      'sessions-closed',
+    ]);
+  });
+
   it('heals stale UI state from live dedicated system targets', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
