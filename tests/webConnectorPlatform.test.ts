@@ -1452,6 +1452,73 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
+  it('promotes a rediscovered authenticated workflow tab back to the Settings connection', async () => {
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params?: Record<string, unknown>) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'neis-work',
+            type: 'page',
+            url: 'https://goe.neis.go.kr/jsp/main.jsp',
+          }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'neis-session' };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params?.expression ?? '');
+          if (expression.includes("String(window.name||''")) {
+            return { result: { value: '' } };
+          }
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://goe.neis.go.kr/jsp/main.jsp',
+              origin: 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+              neisReady: true,
+              marker: 'neis-application-menu',
+            } } };
+          }
+          if (expression.includes('window.name=')) {
+            return { result: { value: 'stream-panel-neis' } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const controller = createWindowsManagedSessionManager({
+      userDataPath: 'C:\\StreamPanel',
+      env: { 'ProgramFiles(x86)': 'C:\\Program Files (x86)' },
+      exists: (path) => path.endsWith('Microsoft\\Edge\\Application\\msedge.exe'),
+      makeDirectory: async () => undefined,
+      connectBrowser: async () => ({
+        transportKind: 'pipe',
+        protocol: protocol as never,
+        process: {
+          pid: 42,
+          exited: false,
+          close: async (graceful?: () => Promise<void>) => { await graceful?.(); },
+        } as never,
+      }),
+      workflowDependencies: {
+        openWorkflowPage: async () => page('https://goe.neis.go.kr'),
+      },
+    });
+    const session = await controller.prepare('goe', 'edge');
+    session.systemTargetIds = { neis: 'neis-work' };
+
+    await expect(controller.run({
+      officeCode: 'goe',
+      browserId: 'edge',
+      workflowId: 'neis-leave',
+    })).resolves.toMatchObject({ workflowId: 'neis-leave' });
+
+    expect(session.connectionTargetIds?.neis).toBe('neis-work');
+    expect(getWindowsConnectionPresence(session).systems.neis).toBe(true);
+    await controller.closeAll();
+  });
+
   it('keeps connection presence during recovery and invalidates only after the grace period', async () => {
     vi.useFakeTimers();
     let eventListener: ((event: { method: string; params?: unknown }) => void) | undefined;

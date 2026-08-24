@@ -708,8 +708,27 @@ async function recoverManagedConnectionTarget(
   const dedicated = await findAuthenticatedConnectionTarget(session, system);
   if (dedicated) return true;
 
+  // A workflow may have rediscovered a valid authenticated system tab after
+  // the old dedicated target id was lost. Prefer that exact remembered parent
+  // before considering other same-system tabs, then promote it back to the
+  // dedicated connection target used by Settings and session maintenance.
   const monitorTargetId = approvalMonitorTargetMap(session)[system];
   const resultTargetId = workflowResultTargetMap(session)[system];
+  const workflowTargetId = systemTargetMap(session)[system];
+  if (
+    workflowTargetId &&
+    workflowTargetId !== monitorTargetId &&
+    workflowTargetId !== resultTargetId
+  ) {
+    const inspected = await inspectSystemTarget(session, system, {
+      allowedTargetIds: new Set([workflowTargetId]),
+    });
+    if (inspected && !inspected.loginRequired) {
+      await claimDedicatedConnectionTarget(session, system, inspected.target);
+      return true;
+    }
+  }
+
   const candidates = readTargetInfos(
     await session.connection.protocol.send('Target.getTargets', {}),
   ).filter((target) => (
@@ -3745,11 +3764,17 @@ async function acquireApprovalMonitorTarget(
   signal?: AbortSignal,
 ): Promise<{ target: WindowsTargetInfo; created: boolean }> {
   throwIfApprovalCheckCancelled(signal);
-  const anchor = allowCreate
-    ? await findAuthenticatedConnectionTarget(session, system)
-    : await inspectAuthenticatedConnectionTarget(session, system);
+  let anchor: WindowsTargetInfo | null;
+  if (allowCreate) {
+    anchor = await findAuthenticatedConnectionTarget(session, system);
+  } else {
+    const inspection = await inspectDedicatedConnectionState(session, system);
+    if (inspection.state === 'login-required') {
+      delete connectionTargetMap(session)[system];
+    }
+    anchor = inspection.state === 'authenticated' ? inspection.target : null;
+  }
   if (!anchor) {
-    if (!allowCreate) delete connectionTargetMap(session)[system];
     throw new Error(`${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 탭을 찾지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.`);
   }
   const targets = readTargetInfos(
@@ -4974,13 +4999,28 @@ async function inspectAuthenticatedConnectionTarget(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
 ): Promise<WindowsTargetInfo | null> {
+  const inspected = await inspectDedicatedConnectionState(session, system);
+  return inspected.state === 'authenticated' ? inspected.target : null;
+}
+
+type DedicatedConnectionInspection =
+  | { state: 'authenticated'; target: WindowsTargetInfo }
+  | { state: 'login-required'; target: WindowsTargetInfo }
+  | { state: 'unavailable' };
+
+async function inspectDedicatedConnectionState(
+  session: WindowsManagedBrowserSession,
+  system: WebWorkflowSystem,
+): Promise<DedicatedConnectionInspection> {
   const dedicated = await findDedicatedConnectionTarget(session, system);
-  if (!dedicated) return null;
+  if (!dedicated) return { state: 'unavailable' };
   const inspected = await inspectSystemTarget(session, system, {
     allowedTargetIds: new Set([dedicated.targetId]),
   });
-  if (!inspected || inspected.loginRequired) return null;
-  return inspected.target;
+  if (!inspected) return { state: 'unavailable' };
+  return inspected.loginRequired
+    ? { state: 'login-required', target: inspected.target }
+    : { state: 'authenticated', target: inspected.target };
 }
 
 async function findAuthenticatedSystemTarget(
@@ -5905,12 +5945,22 @@ export function createWindowsManagedSessionManager(
       workflowRuns.set(key, abortController);
       return runSerializedCdpOperation(
         session,
-        () => executeWindowsWorkflow(
-          session,
-          request,
-          workflowDependencies,
-          abortController.signal,
-        ),
+        async () => {
+          const result = await executeWindowsWorkflow(
+            session,
+            request,
+            workflowDependencies,
+            abortController.signal,
+          );
+          const spec = requestWorkflowSpec(request.workflowId, request.workflowSpec);
+          if (spec) {
+            const system = getWebWorkflowSystem(spec);
+            // Workflow success proves that an authenticated system page was
+            // usable. Reclaim it so Settings immediately reflects reality.
+            await recoverManagedConnectionTarget(session, 'system', system).catch(() => false);
+          }
+          return result;
+        },
       ).finally(() => {
         if (workflowRuns.get(key) === abortController) workflowRuns.delete(key);
       });
@@ -5987,9 +6037,15 @@ export function createWindowsManagedSessionManager(
           return await runSerializedCdpOperation(
             session,
             async () => {
-              if (!interactive && !await inspectAuthenticatedConnectionTarget(session, input.system)) {
-                delete connectionTargetMap(session)[input.system];
-                throw new Error(`${input.system === 'neis' ? '나이스' : 'K-에듀파인'}이 업무용 브라우저에 연결되어 있지 않습니다. 업무용 브라우저에서 다시 연결해 주세요.`);
+              if (!interactive) {
+                const inspection = await inspectDedicatedConnectionState(session, input.system);
+                if (inspection.state !== 'authenticated') {
+                  if (inspection.state === 'login-required') {
+                    delete connectionTargetMap(session)[input.system];
+                    throw new Error(`${input.system === 'neis' ? '나이스' : 'K-에듀파인'} 로그인이 만료되었습니다. 업무용 브라우저에서 다시 로그인한 뒤 연결해 주세요.`);
+                  }
+                  throw new Error(`${input.system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 화면을 일시적으로 확인하지 못했습니다. 로그인된 탭은 유지하며 다음 확인에서 다시 시도합니다.`);
+                }
               }
               const scanList = () => scanWindowsApprovalCount(session, input, {
                 openPage: (managedSession, scanInput, signal) => openCdpWindowsApprovalPage(

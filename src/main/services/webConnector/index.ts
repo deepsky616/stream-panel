@@ -278,22 +278,38 @@ export function createWebConnectorService({
       systems: Record<WebWorkflowSystem, boolean>;
     },
   ): WebSystemConnectionStatus[] => {
-    const stored = connectionStates.get(connectionKey(officeCode, browserId));
+    const key = connectionKey(officeCode, browserId);
+    const stored = connectionStates.get(key) ?? new Map<
+      WebWorkflowSystem,
+      WebSystemConnectionStatus
+    >();
     return (['neis', 'edufine'] as const).map((system) => {
       const status = stored?.get(system) ?? { system, state: 'idle' as const };
+      // The connected system tab is authoritative. A workflow can safely
+      // rediscover and reclaim an authenticated tab after Chromium replaces
+      // its target id, even when the older UI state said reconnect was needed.
+      if (
+        sessionAlive &&
+        presence?.systems[system] &&
+        status.state !== 'login-required' &&
+        status.state !== 'connecting' &&
+        status.state !== 'error'
+      ) {
+        const connected = status.state === 'connected'
+          ? { ...status }
+          : { system, state: 'connected' as const, checkedAt: now() };
+        if (status.state !== 'connected') {
+          stored.set(system, connected);
+          connectionStates.set(key, stored);
+        }
+        return connected;
+      }
       if (status.state !== 'connected') return { ...status };
       if (!sessionAlive) {
         return {
           system,
           state: 'disconnected' as const,
           message: '업무용 브라우저가 닫혔습니다. 업무포털을 다시 열고 나이스·에듀파인 연결을 눌러 주세요.',
-        };
-      }
-      if (presence && !presence.portal) {
-        return {
-          system,
-          state: 'disconnected' as const,
-          message: '업무포털 창이 닫혔습니다. 업무포털을 다시 열고 나이스·에듀파인 연결을 눌러 주세요.',
         };
       }
       if (presence && !presence.systems[system]) {
@@ -317,7 +333,10 @@ export function createWebConnectorService({
       return {
         browserId,
         paired: Boolean(handshake),
-        connected: sessionAlive && (presence?.portal ?? true),
+        // The portal is only the SSO entry point. Once NEIS/Edufine has an
+        // authenticated tab, closing or replacing the portal tab must not make
+        // the managed browser transport appear disconnected.
+        connected: sessionAlive,
         systems: systemStatuses(officeCode, browserId, sessionAlive, presence),
         ...(handshake ? { lastSeenAt: handshake.lastSeenAt } : {}),
       };
@@ -496,6 +515,15 @@ export function createWebConnectorService({
             await persist();
           }
           await controller.run(request);
+          const system = getWebWorkflowSystem(workflowSpec);
+          const presence = controller.getConnectionPresence?.(officeCode, request.browserId);
+          if (presence?.systems[system]) {
+            setSystemStatus(officeCode, request.browserId, {
+              system,
+              state: 'connected',
+              checkedAt: now(),
+            });
+          }
           notify(workflowSuccessMessage(workflowSpec), 'info');
           await diagnostics.record({
             at: now(),

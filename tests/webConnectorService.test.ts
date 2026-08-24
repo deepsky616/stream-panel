@@ -327,7 +327,7 @@ describe('managed web connector service', () => {
     ]);
   });
 
-  it('reports closed portal and system tabs as requiring a new connection', async () => {
+  it('keeps authenticated systems connected when only the SSO portal tab closes', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
@@ -371,12 +371,50 @@ describe('managed web connector service', () => {
 
     presence.portal = false;
     expect(service.getStatuses()[0]).toMatchObject({
-      connected: false,
+      connected: true,
       systems: [
         { system: 'neis', state: 'disconnected' },
-        { system: 'edufine', state: 'disconnected' },
+        { system: 'edufine', state: 'connected' },
       ],
     });
+    await service.stop();
+  });
+
+  it('heals stale UI state from live dedicated system targets', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    const presence = {
+      portal: false,
+      systems: { neis: true, edufine: false },
+    };
+    controller.getConnectionPresence = () => presence;
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+    });
+    await service.start();
+    await expect(service.test('edge')).resolves.toEqual({ ok: true });
+
+    expect(service.getStatuses()[0]).toMatchObject({
+      connected: true,
+      systems: [
+        { system: 'neis', state: 'connected' },
+        { system: 'edufine', state: 'idle' },
+      ],
+    });
+
+    presence.systems.neis = false;
+    expect(service.getStatuses()[0].systems).toContainEqual(expect.objectContaining({
+      system: 'neis',
+      state: 'disconnected',
+    }));
     await service.stop();
   });
 
