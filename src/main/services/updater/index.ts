@@ -5,6 +5,10 @@ import type { UpdaterService } from './types';
 function createNullUpdater(): UpdaterService {
   return {
     check: async () => ({ status: '이 운영체제에서는 새 버전 확인을 지원하지 않습니다.' }),
+    restartAndInstall: async () => ({
+      ok: false,
+      message: '이 운영체제에서는 앱 안에서 업데이트를 설치할 수 없습니다.',
+    }),
     dispose: () => undefined,
   };
 }
@@ -21,6 +25,7 @@ export function configureUpdater(
   );
   return {
     check: async () => (await service).check(),
+    restartAndInstall: async () => (await service).restartAndInstall(),
     dispose: () => {
       void service.then((updater) => updater.dispose());
     },

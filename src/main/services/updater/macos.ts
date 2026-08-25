@@ -75,5 +75,12 @@ export function createMacosUpdater(configStore: ConfigStore): UpdaterService {
   };
   app.once('will-quit', dispose);
   startSchedule();
-  return { check, dispose };
+  return {
+    check,
+    restartAndInstall: async () => ({
+      ok: false,
+      message: '맥에서는 릴리즈 페이지에서 새 버전을 직접 설치해 주세요.',
+    }),
+    dispose,
+  };
 }

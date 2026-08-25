@@ -15,14 +15,34 @@ export function createWindowsUpdater(configStore: ConfigStore): UpdaterService {
   autoUpdater.setFeedURL({ provider: 'generic', url: UPDATE_MIRROR_URL });
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoRunAppAfterInstall = true;
   let startupTimer: ReturnType<typeof setTimeout> | null = null;
   let interval: ReturnType<typeof setInterval> | null = null;
-  let activeCheck: Promise<{ status: string; version?: string }> | null = null;
+  let activeCheck: Promise<{
+    status: string;
+    version?: string;
+    readyToInstall?: boolean;
+  }> | null = null;
   let checking = false;
+  let downloadedVersion: string | null = null;
+  let installing = false;
 
   const runCheck = async () => {
     if (!app.isPackaged) {
       return { status: '개발 모드에서는 업데이트를 확인하지 않습니다.' };
+    }
+    if (downloadedVersion) {
+      const message = `v${downloadedVersion} 업데이트 준비가 완료되었습니다. 재시작하여 적용해 주세요.`;
+      broadcastUpdateStatus({
+        state: 'downloaded',
+        version: downloadedVersion,
+        message,
+      });
+      return {
+        status: message,
+        version: downloadedVersion,
+        readyToInstall: true,
+      };
     }
     checking = true;
     try {
@@ -78,6 +98,45 @@ export function createWindowsUpdater(configStore: ConfigStore): UpdaterService {
     return activeCheck;
   };
 
+  const restartAndInstall: UpdaterService['restartAndInstall'] = async () => {
+    if (!app.isPackaged) {
+      return {
+        ok: false,
+        message: '개발 모드에서는 업데이트를 설치할 수 없습니다.',
+      };
+    }
+    if (!downloadedVersion) {
+      return {
+        ok: false,
+        message: '설치할 업데이트가 아직 준비되지 않았습니다. 업데이트 확인 후 다운로드가 끝날 때까지 기다려 주세요.',
+      };
+    }
+    if (installing) {
+      return {
+        ok: true,
+        version: downloadedVersion,
+        message: '업데이트 설치를 위해 Stream Panel을 종료하고 있습니다.',
+      };
+    }
+
+    const version = downloadedVersion;
+    installing = true;
+    const message = `v${version} 업데이트를 적용하기 위해 Stream Panel을 다시 시작합니다.`;
+    broadcastUpdateStatus({ state: 'installing', version, message });
+    try {
+      // Silent mode with force-run guarantees that the updated executable is
+      // launched again after NSIS finishes replacing the current version.
+      autoUpdater.quitAndInstall(true, true);
+      return { ok: true, version, message };
+    } catch (error) {
+      installing = false;
+      const code = await recordUpdaterFailure('install', error);
+      const failureMessage = `업데이트 설치를 시작하지 못했습니다. 다시 시도해 주세요. (오류 코드: ${code})`;
+      broadcastUpdateStatus({ state: 'error', version, message: failureMessage });
+      return { ok: false, version, message: failureMessage };
+    }
+  };
+
   const stopSchedule = (): void => {
     if (startupTimer) clearTimeout(startupTimer);
     if (interval) clearInterval(interval);
@@ -112,11 +171,13 @@ export function createWindowsUpdater(configStore: ConfigStore): UpdaterService {
     broadcastUpdateStatus({ state: 'downloading', progress: progress.percent }),
   );
   autoUpdater.on('update-downloaded', (info) => {
-    setTrayUpdateVersion(info.version);
+    downloadedVersion = normalizeVersion(info.version) ?? info.version;
+    installing = false;
+    setTrayUpdateVersion(downloadedVersion);
     broadcastUpdateStatus({
       state: 'downloaded',
-      version: info.version,
-      message: `앱을 다시 시작하면 v${info.version} 업데이트가 적용됩니다.`,
+      version: downloadedVersion,
+      message: `v${downloadedVersion} 업데이트 준비가 완료되었습니다. 재시작하여 적용해 주세요.`,
     });
   });
   autoUpdater.on('error', (error) => {
@@ -124,11 +185,16 @@ export function createWindowsUpdater(configStore: ConfigStore): UpdaterService {
     // attempts the independent metadata route without briefly painting a
     // misleading network error over the successful fallback result.
     if (checking) return;
-    void recordUpdaterFailure('download', error).then((code) => {
-      console.warn(`윈도우 업데이트 다운로드 중 문제가 생겼습니다. (${code})`, error);
+    const phase = installing ? 'install' : 'download';
+    installing = false;
+    void recordUpdaterFailure(phase, error).then((code) => {
+      console.warn(`윈도우 업데이트 ${phase === 'install' ? '설치' : '다운로드'} 중 문제가 생겼습니다. (${code})`, error);
       broadcastUpdateStatus({
         state: 'error',
-        message: `업데이트를 내려받지 못했습니다. 다운로드 미러를 이용해 주세요. (오류 코드: ${code})`,
+        ...(downloadedVersion ? { version: downloadedVersion } : {}),
+        message: phase === 'install'
+          ? `업데이트 설치를 시작하지 못했습니다. 다시 시도해 주세요. (오류 코드: ${code})`
+          : `업데이트를 내려받지 못했습니다. 다운로드 미러를 이용해 주세요. (오류 코드: ${code})`,
       });
     });
   });
@@ -146,5 +212,5 @@ export function createWindowsUpdater(configStore: ConfigStore): UpdaterService {
   };
   app.once('will-quit', dispose);
   startSchedule();
-  return { check, dispose };
+  return { check, restartAndInstall, dispose };
 }

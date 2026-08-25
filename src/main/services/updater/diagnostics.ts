@@ -4,7 +4,7 @@ import { app } from 'electron';
 import { safeUpdaterErrorMessage, updaterFailureCode } from './releaseLookup';
 
 export async function recordUpdaterFailure(
-  stage: 'automatic-check' | 'fallback-check' | 'download',
+  stage: 'automatic-check' | 'fallback-check' | 'download' | 'install',
   error: unknown,
 ): Promise<string> {
   const code = updaterFailureCode(error);

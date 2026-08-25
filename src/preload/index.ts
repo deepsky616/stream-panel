@@ -90,6 +90,7 @@ const api = {
   },
   update: {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
+    restartAndInstall: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_INSTALL),
   },
   app: {
     info: () => ipcRenderer.invoke(IPC_CHANNELS.APP_INFO),

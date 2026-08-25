@@ -90,7 +90,10 @@ interface StreamPanelApi {
     close(): Promise<void>;
     resize(input: { height: number }): Promise<void>;
   };
-  update: { check(): Promise<{ status: string; version?: string }> };
+  update: {
+    check(): Promise<{ status: string; version?: string; readyToInstall?: boolean }>;
+    restartAndInstall(): Promise<{ ok: boolean; message: string; version?: string }>;
+  };
   app: { info(): Promise<{ version: string; platform: string; isPackaged: boolean }> };
   shell: { reveal(path: string): Promise<void> };
   on(channel: RendererEvent, callback: (payload: unknown) => void): () => void;

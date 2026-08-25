@@ -42,6 +42,48 @@ interface HotkeyRow {
   item: Extract<DeckItem, { kind: 'action' }>;
 }
 
+interface UpdateActionButtonsProps {
+  platform: AppConfig['platform'];
+  updateReady: string | null;
+  checking: boolean;
+  applying: boolean;
+  onCheck: () => void;
+  onRestart: () => void;
+}
+
+export function UpdateActionButtons({
+  platform,
+  updateReady,
+  checking,
+  applying,
+  onCheck,
+  onRestart,
+}: UpdateActionButtonsProps) {
+  return (
+    <div className="update-actions">
+      <button
+        type="button"
+        disabled={checking || applying}
+        aria-busy={checking}
+        onClick={onCheck}
+      >
+        {checking ? '확인 중…' : platform === 'darwin' ? '새 버전 확인' : '업데이트 확인'}
+      </button>
+      {platform === 'win32' && updateReady && (
+        <button
+          type="button"
+          className="primary-action"
+          disabled={applying}
+          aria-busy={applying}
+          onClick={onRestart}
+        >
+          {applying ? '재시작 중…' : '재시작하여 업데이트 적용'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function collectHotkeys(items: readonly DeckItem[], path: readonly string[] = []): HotkeyRow[] {
   const rows: HotkeyRow[] = [];
   for (const item of items) {
@@ -65,6 +107,8 @@ export function SettingsModal({
   const [info, setInfo] = useState<{ version: string; platform: string; isPackaged: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [updateReady, setUpdateReady] = useState<string | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateApplying, setUpdateApplying] = useState(false);
   const [failedNumbers, setFailedNumbers] = useState<string[]>([]);
   const [hotkeyStatuses, setHotkeyStatuses] = useState<Record<string, string>>({});
   const [connectorStatuses, setConnectorStatuses] = useState<WebConnectorStatus[]>([]);
@@ -218,7 +262,14 @@ export function SettingsModal({
           message?: string;
           progress?: number;
         };
-        if (status.state === 'downloaded' && status.version) setUpdateReady(status.version);
+        if (status.state === 'downloaded' && status.version) {
+          setUpdateReady(status.version);
+          setUpdateApplying(false);
+        } else if (status.state === 'installing') {
+          setUpdateApplying(true);
+        } else if (status.state === 'error') {
+          setUpdateApplying(false);
+        }
         if (status.message) setMessage(status.message);
         else if (status.state === 'downloading' && status.progress !== undefined) {
           setMessage(`업데이트를 ${Math.round(status.progress)}퍼센트 내려받았습니다.`);
@@ -226,6 +277,33 @@ export function SettingsModal({
       }),
     [],
   );
+
+  const checkForUpdates = async (): Promise<void> => {
+    if (updateChecking || updateApplying) return;
+    setUpdateChecking(true);
+    try {
+      const result = await window.api.update.check();
+      if (result.readyToInstall && result.version) setUpdateReady(result.version);
+      setMessage(result.status);
+    } catch {
+      setMessage('업데이트 확인 요청을 처리하지 못했습니다. 앱을 다시 시작한 뒤 시도해 주세요.');
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const restartAndInstallUpdate = async (): Promise<void> => {
+    if (!updateReady || updateApplying) return;
+    setUpdateApplying(true);
+    try {
+      const result = await window.api.update.restartAndInstall();
+      setMessage(result.message);
+      if (!result.ok) setUpdateApplying(false);
+    } catch {
+      setUpdateApplying(false);
+      setMessage('업데이트 재시작 요청을 처리하지 못했습니다. 업데이트 확인을 다시 시도해 주세요.');
+    }
+  };
 
   if (!open) return null;
   const setConfig = (createPatch: ConfigPatchFactory) => {
@@ -620,8 +698,15 @@ export function SettingsModal({
               <>
                 <p>Stream Panel v{info?.version ?? '1.0.0'}</p><p>개발자: 청계초등학교 교사 조영석</p><p>공개 저장소: github.com/deepsky616/stream-panel</p><p>라이선스: MIT</p>
                 {config.platform === 'darwin' && <p className="settings-note">맥에서는 자동 업데이트를 지원하지 않습니다. 새 버전 알림이 오면 메뉴 막대의 릴리즈 페이지에서 직접 내려받아 설치해 주세요.</p>}
-                {updateReady && <p className="update-ready">앱을 다시 시작하면 v{updateReady} 업데이트가 적용됩니다.</p>}
-                <button type="button" onClick={() => void window.api.update.check().then((result) => setMessage(result.status)).catch(() => setMessage('업데이트 확인 요청을 처리하지 못했습니다. 앱을 다시 시작한 뒤 시도해 주세요.'))}>{config.platform === 'darwin' ? '새 버전 확인' : '업데이트 확인'}</button>
+                {updateReady && <p className="update-ready">v{updateReady} 업데이트 준비가 완료되었습니다. 재시작하면 새 버전이 적용됩니다.</p>}
+                <UpdateActionButtons
+                  platform={config.platform}
+                  updateReady={updateReady}
+                  checking={updateChecking}
+                  applying={updateApplying}
+                  onCheck={() => void checkForUpdates()}
+                  onRestart={() => void restartAndInstallUpdate()}
+                />
               </>
             )}
             {message && <p className="settings-message" role="status">{message}</p>}

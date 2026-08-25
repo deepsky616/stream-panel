@@ -6,7 +6,10 @@ import type { ActionItem } from '../src/shared/types';
 import { createApprovalInboxTemplate } from '../src/shared/webWorkflows';
 import { ApprovalMonitorSettings } from '../src/renderer/src/editor/ApprovalMonitorSettings';
 import { getApprovalBadgeForItem } from '../src/renderer/src/panel/approvalBadge';
-import { SettingsModal } from '../src/renderer/src/editor/SettingsModal';
+import {
+  SettingsModal,
+  UpdateActionButtons,
+} from '../src/renderer/src/editor/SettingsModal';
 import { createConfigWriteQueue } from '../src/renderer/src/editor/configWriteQueue';
 import { KeyTile } from '../src/renderer/src/common/KeyTile';
 import { TitleBar } from '../src/renderer/src/panel/TitleBar';
@@ -28,6 +31,30 @@ function approvalAction(id: 'neis-approval-inbox' | 'edufine-approval-inbox'): A
 }
 
 describe('approval monitor settings UI', () => {
+  it('shows restart installation only when a Windows update is ready', () => {
+    const readyHtml = renderToStaticMarkup(createElement(UpdateActionButtons, {
+      platform: 'win32',
+      updateReady: '1.5.51',
+      checking: false,
+      applying: false,
+      onCheck: () => undefined,
+      onRestart: () => undefined,
+    }));
+    expect(readyHtml).toContain('업데이트 확인');
+    expect(readyHtml).toContain('재시작하여 업데이트 적용');
+    expect(readyHtml).toContain('primary-action');
+
+    const currentHtml = renderToStaticMarkup(createElement(UpdateActionButtons, {
+      platform: 'win32',
+      updateReady: null,
+      checking: false,
+      applying: false,
+      onCheck: () => undefined,
+      onRestart: () => undefined,
+    }));
+    expect(currentHtml).not.toContain('재시작하여 업데이트 적용');
+  });
+
   it('serializes rapid settings writes against the latest saved config', async () => {
     expect(createConfigWriteQueue).toBeTypeOf('function');
     let persisted = createDefaultConfig(

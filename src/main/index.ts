@@ -133,6 +133,7 @@ app.whenReady().then(async () => {
   registerShortcuts(configStore);
   const updater = configureUpdater(configStore);
   ipcMain.handle(IPC_CHANNELS.UPDATE_CHECK, () => updater.check());
+  ipcMain.handle(IPC_CHANNELS.UPDATE_INSTALL, () => updater.restartAndInstall());
   let launchAtLogin = configStore.get().launchAtLogin;
   let quickLauncherEnabled = configStore.get().keyboard.quickLauncher;
   setAutoLaunch(launchAtLogin);

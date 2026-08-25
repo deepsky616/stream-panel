@@ -1051,6 +1051,12 @@
   font-weight: 600;
 }
 
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .web-work-heading {
   display: flex;
   align-items: flex-start;

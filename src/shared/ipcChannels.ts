@@ -34,6 +34,7 @@ export const IPC_CHANNELS = {
   LAUNCHER_CLOSE: 'launcher:close',
   LAUNCHER_RESIZE: 'launcher:resize',
   UPDATE_CHECK: 'update:check',
+  UPDATE_INSTALL: 'update:install',
   APP_INFO: 'app:info',
   SHELL_REVEAL: 'shell:reveal',
   CONFIG_CHANGED: 'config:changed',
