@@ -4032,20 +4032,55 @@ function isPortalTargetForSession(
   }
 }
 
+function portalTargetPriority(
+  session: WindowsManagedBrowserSession,
+  target: WindowsTargetInfo,
+): number {
+  let score = target.targetId === session.portalTargetId ? 1_000 : 0;
+  try {
+    const candidate = new URL(target.url);
+    const configured = new URL(getEducationOffice(session.officeCode).portalUrl);
+    const path = candidate.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    const configuredPath = configured.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    const title = (target.title ?? '').toLowerCase().replace(/\s+/g, '');
+    const popupSignal = `${path} ${candidate.search.toLowerCase()} ${title}`;
+
+    if (path === configuredPath) score += 300;
+    if (/bpm_man_mn00_001(?:\.do)?$/.test(path)) score += 700;
+    if (/\/(?:main|index|home)(?:\.[a-z0-9]+)?$/.test(path)) score += 250;
+    if (/popup|pop[_-]?up|notice|ntt|banner|event|survey|공지|알림창/.test(popupSignal)) {
+      score -= 1_500;
+    }
+  } catch {
+    score -= 2_000;
+  }
+  // Portal notices normally have the authenticated main page as their opener.
+  // Prefer the opener-free anchor even when CDP publishes the popup first.
+  score += target.openerId ? -600 : 200;
+  return score;
+}
+
+function orderPortalTargets(
+  session: WindowsManagedBrowserSession,
+  targets: readonly WindowsTargetInfo[],
+): WindowsTargetInfo[] {
+  return [...targets].sort((left, right) => (
+    portalTargetPriority(session, right) - portalTargetPriority(session, left)
+  ));
+}
+
 async function findAuthenticatedPortalAnchor(
   session: WindowsManagedBrowserSession,
   targets: readonly WindowsTargetInfo[],
 ): Promise<WindowsTargetInfo | null> {
   const portalOrigin = new URL(getEducationOffice(session.officeCode).portalUrl).origin;
-  const candidates = targets
-    .filter((target) => (
+  const candidates = orderPortalTargets(
+    session,
+    targets.filter((target) => (
       target.targetId !== session.approvalPortalTargetId &&
       isPortalTargetForSession(session, target)
-    ))
-    .sort((left, right) => (
-      Number(right.targetId === session.portalTargetId) -
-      Number(left.targetId === session.portalTargetId)
-    ));
+    )),
+  );
   for (const candidate of candidates) {
     let attached: AttachedWindowsTarget | undefined;
     try {
@@ -4634,6 +4669,74 @@ return returnElement?winner.element:{
 })()`;
 }
 
+function portalPopupCloseExpression(returnElement = false): string {
+  return `(()=>{
+${PAGE_ELEMENT_HELPERS}
+const returnElement=${JSON.stringify(returnElement)};
+const closeLabels=new Set(['닫기','창닫기','창 닫기','팝업닫기','팝업 닫기','close','x','×'].map(value=>normalize(value).toLowerCase()));
+const popupSignalOf=(element)=>normalize([
+  element?.id,
+  element?.className,
+  element?.getAttribute?.('role'),
+  element?.getAttribute?.('aria-modal'),
+  element?.getAttribute?.('aria-label'),
+  element?.getAttribute?.('title')
+].join(' ')).toLowerCase();
+const isPopupContainer=(element)=>{
+  if(!element||!visible(element))return false;
+  const role=normalize(element.getAttribute?.('role')).toLowerCase();
+  if(role==='dialog'||element.tagName==='DIALOG'||element.getAttribute?.('aria-modal')==='true')return true;
+  return /popup|pop[_-]?up|modal|dialog|layerpop|notice|알림창/.test(popupSignalOf(element));
+};
+const isCloseCandidate=(element)=>{
+  if(!visible(element)||!enabled(element))return false;
+  const texts=surfaceTextsOf(element).map(value=>normalize(value).toLowerCase());
+  const signal=popupSignalOf(element);
+  return texts.some(text=>closeLabels.has(text))||
+    /(?:^|[\\s_:-])(?:btn)?close(?:button)?(?:$|[\\s_:-])|popupclose|popclose|창\\s*닫기|팝업\\s*닫기/.test(signal);
+};
+const matches=[];
+let popupFrameCount=0;
+for(const {document,offsetX,offsetY} of documents){
+  popupFrameCount+=Array.from(document.querySelectorAll('iframe,frame')).filter(frame=>
+    isPopupContainer(frame)||isPopupContainer(frame.parentElement)
+  ).length;
+  const containers=Array.from(new Set(Array.from(document.querySelectorAll(
+    '[role="dialog"],dialog,[aria-modal="true"],[id],[class]'
+  )).filter(isPopupContainer)));
+  let framePopup=false;
+  try{
+    const frame=document.defaultView?.frameElement;
+    framePopup=Boolean(frame&&(isPopupContainer(frame)||isPopupContainer(frame.parentElement)));
+  }catch{}
+  if(containers.length===0&&framePopup)containers.push(document.body);
+  for(const container of containers){
+    const candidates=Array.from(container.querySelectorAll(
+      'button,a,[role="button"],input[type="button"],[onclick],[title],[aria-label],'+
+      '[id*="close" i],[class*="close" i]'
+    )).filter(isCloseCandidate);
+    for(const element of candidates){
+      const rect=element.getBoundingClientRect();
+      const style=element.ownerDocument?.defaultView?.getComputedStyle(container);
+      const score=(container.getAttribute?.('aria-modal')==='true'?300:0)+
+        (normalize(container.getAttribute?.('role')).toLowerCase()==='dialog'?250:0)+
+        (style?.position==='fixed'?180:0)+
+        (/btnclose|popupclose|popclose/.test(popupSignalOf(element))?150:0)+
+        (surfaceTextsOf(element).some(text=>closeLabels.has(normalize(text).toLowerCase()))?100:0)-
+        Math.min(80,Math.max(0,rect.width*rect.height)/500);
+      matches.push({element,offsetX,offsetY,score});
+    }
+  }
+}
+matches.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
+const match=matches[0];
+if(!match)return returnElement?null:{found:false,count:0,popupFrameCount};
+if(returnElement)return match.element;
+const rect=match.element.getBoundingClientRect();
+return {found:true,count:matches.length,x:match.offsetX+rect.left+rect.width/2,y:match.offsetY+rect.top+rect.height/2};
+})()`;
+}
+
 interface PortalSystemPreparation {
   ready: boolean;
   targetId?: string;
@@ -4642,6 +4745,13 @@ interface PortalSystemPreparation {
 
 interface PortalSsoCandidate {
   clicked: true;
+  count: number;
+  x: number;
+  y: number;
+}
+
+interface PortalPopupCloseCandidate {
+  found: true;
   count: number;
   x: number;
   y: number;
@@ -4934,6 +5044,122 @@ async function findDedicatedConnectionTarget(
   return null;
 }
 
+async function findPortalPopupCloseAcrossFrames(
+  session: WindowsManagedBrowserSession,
+  portalSessionId: string,
+): Promise<PortalPopupCloseCandidate | null> {
+  const protocol = session.connection.protocol;
+  let frameIds: string[];
+  try {
+    frameIds = portalFrameIds(await protocol.send('Page.getFrameTree', {}, portalSessionId));
+  } catch {
+    return null;
+  }
+  for (const frameId of frameIds) {
+    let objectId: string | undefined;
+    try {
+      const world = await protocol.send<{ executionContextId?: unknown }>(
+        'Page.createIsolatedWorld',
+        {
+          frameId,
+          worldName: 'stream-panel-portal-popup-close',
+          grantUniveralAccess: false,
+        },
+        portalSessionId,
+      );
+      if (!Number.isInteger(world.executionContextId)) continue;
+      const response = await protocol.send<CdpEvaluationResponse>(
+        'Runtime.evaluate',
+        {
+          expression: portalPopupCloseExpression(true),
+          contextId: Number(world.executionContextId),
+          returnByValue: false,
+          awaitPromise: false,
+          userGesture: true,
+          objectGroup: 'stream-panel-portal-popup-close',
+        },
+        portalSessionId,
+      );
+      if (response.exceptionDetails || typeof response.result?.objectId !== 'string') continue;
+      objectId = response.result.objectId;
+      const center = portalQuadCenter(await protocol.send(
+        'DOM.getContentQuads',
+        { objectId },
+        portalSessionId,
+      ));
+      if (center) return { found: true, count: 1, ...center };
+    } catch {
+      // Cross-origin frames can navigate or disappear as a notice closes.
+    } finally {
+      if (objectId) {
+        try {
+          await protocol.send('Runtime.releaseObject', { objectId }, portalSessionId);
+        } catch {
+          // The popup frame can be destroyed before the object is released.
+        }
+      }
+    }
+  }
+  return null;
+}
+
+async function dismissPortalBlockingPopups(
+  session: WindowsManagedBrowserSession,
+  portalSessionId: string,
+  signal?: AbortSignal,
+): Promise<number> {
+  let dismissed = 0;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    throwIfApprovalCheckCancelled(signal);
+    let result: {
+      found?: unknown;
+      count?: unknown;
+      popupFrameCount?: unknown;
+      x?: unknown;
+      y?: unknown;
+    } | null = null;
+    try {
+      result = await evaluateValue(
+        session,
+        portalSessionId,
+        portalPopupCloseExpression(),
+        true,
+      );
+    } catch (error) {
+      // A native alert blocks Runtime.evaluate. Dismiss it as Cancel so a
+      // confirmation popup can never approve an unrelated portal action.
+      const message = error instanceof Error ? error.message : '';
+      if (!/dialog|javascript.*open|대화상자|modal/i.test(message)) break;
+      try {
+        await session.connection.protocol.send('Page.handleJavaScriptDialog', {
+          accept: false,
+        }, portalSessionId);
+        dismissed += 1;
+        await new Promise<void>((resolve) => setTimeout(resolve, 120));
+        continue;
+      } catch {
+        break;
+      }
+    }
+    if (
+      result?.found !== true &&
+      typeof result?.popupFrameCount === 'number' &&
+      result.popupFrameCount > 0
+    ) {
+      result = await findPortalPopupCloseAcrossFrames(session, portalSessionId) ?? result;
+    }
+    if (
+      result?.found !== true ||
+      typeof result.x !== 'number' ||
+      typeof result.y !== 'number'
+    ) break;
+    await dispatchCdpMouseClick(session, portalSessionId, result.x, result.y);
+    dismissed += 1;
+    await new Promise<void>((resolve) => setTimeout(resolve, 180));
+  }
+  return dismissed;
+}
+
 async function closeDuplicateDedicatedConnectionTargets(
   session: WindowsManagedBrowserSession,
   system: WebWorkflowSystem,
@@ -5157,15 +5383,13 @@ async function acquireLoggedInPortalTarget(
   const office = getEducationOffice(session.officeCode);
   const portalOrigin = new URL(office.portalUrl).origin;
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  const portalTargets = targets
-    .filter((candidate) => (
+  const portalTargets = orderPortalTargets(
+    session,
+    targets.filter((candidate) => (
       candidate.targetId !== session.approvalPortalTargetId &&
       isPortalTargetForSession(session, candidate)
-    ))
-    .sort((left, right) => (
-      Number(right.targetId === session.portalTargetId) -
-      Number(left.targetId === session.portalTargetId)
-    ));
+    )),
+  );
   // A previous attempt can leave both a portal login page and the authenticated
   // main page open. Selecting the first target made Connect wait on the stale
   // login page even though the user had already logged in in another tab.
@@ -5238,15 +5462,13 @@ async function focusExistingPortalTarget(
   session: WindowsManagedBrowserSession,
 ): Promise<void> {
   const protocol = session.connection.protocol;
-  const target = readTargetInfos(
-    await protocol.send('Target.getTargets', {}),
-  ).filter((candidate) => (
-    candidate.targetId !== session.approvalPortalTargetId &&
-    isPortalTargetForSession(session, candidate)
-  )).sort((left, right) => (
-    Number(right.targetId === session.portalTargetId) -
-    Number(left.targetId === session.portalTargetId)
-  ))[0];
+  const target = orderPortalTargets(
+    session,
+    readTargetInfos(await protocol.send('Target.getTargets', {})).filter((candidate) => (
+      candidate.targetId !== session.approvalPortalTargetId &&
+      isPortalTargetForSession(session, candidate)
+    )),
+  )[0];
   if (!target) return;
   session.portalTargetId = target.targetId;
   let attached: AttachedWindowsTarget | undefined;
@@ -5452,6 +5674,27 @@ async function prepareOfficeSystemsViaPortal(
       let clickFailureMessage: string | undefined;
       try {
         await restoreAndActivateTarget(session, portal.target.targetId, portal.sessionId);
+        const popupStartedAt = Date.now();
+        try {
+          const dismissedPopups = await dismissPortalBlockingPopups(
+            session,
+            portal.sessionId,
+            signal,
+          );
+          if (dismissedPopups > 0) {
+            await recordConnectionDiagnostic(diagnose, {
+              system,
+              stepId: 'connection-portal-popup-dismissed',
+              outcome: 'success',
+              durationMs: Math.max(0, Date.now() - popupStartedAt),
+              currentUrl: portal.target.url,
+              screenMarker: `dismissed-${dismissedPopups}`,
+            });
+          }
+        } catch {
+          // Popup cleanup is best effort. The official SSO button may still be
+          // available in the main target or a cross-origin child frame.
+        }
         const clickDeadline = Date.now() + 30_000;
         let consecutiveEvaluationFailures = 0;
         while (Date.now() < clickDeadline) {
@@ -5821,13 +6064,13 @@ export async function openWindowsOfficePortal(
   const protocol = session.connection.protocol;
   const office = getEducationOffice(session.officeCode);
   const targets = readTargetInfos(await protocol.send('Target.getTargets', {}));
-  let target: WindowsTargetInfo | undefined = targets.filter((candidate) => (
-    candidate.targetId !== session.approvalPortalTargetId &&
-    isPortalTargetForSession(session, candidate)
-  )).sort((left, right) => (
-    Number(right.targetId === session.portalTargetId) -
-    Number(left.targetId === session.portalTargetId)
-  ))[0];
+  let target: WindowsTargetInfo | undefined = orderPortalTargets(
+    session,
+    targets.filter((candidate) => (
+      candidate.targetId !== session.approvalPortalTargetId &&
+      isPortalTargetForSession(session, candidate)
+    )),
+  )[0];
   let shouldNavigate = false;
   if (!target) {
     target = targets.find((candidate) => (

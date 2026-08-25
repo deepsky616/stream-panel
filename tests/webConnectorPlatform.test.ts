@@ -3730,6 +3730,136 @@ describe('Windows managed web automation', () => {
     });
   });
 
+  it('connects from the portal main tab after dismissing a blocking notice popup', async () => {
+    const commands: Array<{
+      method: string;
+      params: Record<string, unknown>;
+      sessionId?: string;
+    }> = [];
+    const reports: Array<{ system: string; state: string }> = [];
+    const diagnostics: Array<{ stepId: string; outcome: string; screenMarker?: string }> = [];
+    let noticeVisible = true;
+    let neisOpened = false;
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        commands.push({ method, params, sessionId });
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            {
+              targetId: 'portal-notice',
+              type: 'page',
+              title: '공지사항 팝업',
+              url: 'https://goe.eduptl.kr/popup/notice.do',
+              openerId: 'portal-main',
+            },
+            {
+              targetId: 'portal-main',
+              type: 'page',
+              url: 'https://goe.eduptl.kr/bpm_man_mn00_001.do',
+            },
+            ...(neisOpened ? [{
+              targetId: 'neis',
+              type: 'page',
+              url: 'https://goe.neis.go.kr/jsp/main.jsp',
+              openerId: 'portal-main',
+            }] : []),
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Browser.getWindowForTarget') return { windowId: 37 };
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          if (expression.includes("const closeLabels=new Set(['닫기'")) {
+            return { result: { value: noticeVisible
+              ? { found: true, count: 1, x: 40, y: 30 }
+              : { found: false, count: 0 } } };
+          }
+          if (expression.includes('const ssoLabels=')) {
+            return { result: { value: sessionId === 'portal-main-session'
+              ? { clicked: true, count: 1, x: 150, y: 90 }
+              : { clicked: false, count: 0 } } };
+          }
+          if (expression.includes('loginVisible')) {
+            const portal = sessionId === 'portal-main-session' || sessionId === 'portal-notice-session';
+            return { result: { value: {
+              href: sessionId === 'portal-main-session'
+                ? 'https://goe.eduptl.kr/bpm_man_mn00_001.do'
+                : sessionId === 'portal-notice-session'
+                  ? 'https://goe.eduptl.kr/popup/notice.do'
+                  : 'https://goe.neis.go.kr/jsp/main.jsp',
+              origin: portal ? 'https://goe.eduptl.kr' : 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+              neisReady: !portal,
+              marker: portal ? 'unready' : 'neis-application-menu',
+            } } };
+          }
+          if (expression.includes("String(window.name||'')")) {
+            return { result: { value: '' } };
+          }
+          if (expression.includes('window.name=')) {
+            return { result: { value: 'stream-panel-neis' } };
+          }
+        }
+        if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+          if (sessionId === 'portal-main-session' && params.x === 40 && params.y === 30) {
+            noticeVisible = false;
+          }
+          if (sessionId === 'portal-main-session' && params.x === 150 && params.y === 90) {
+            neisOpened = true;
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      portalTargetId: 'portal-notice',
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await connectWindowsOfficeSystems(
+      session as never,
+      ['neis'],
+      ({ system, state }) => reports.push({ system, state }),
+      undefined,
+      true,
+      (event) => { diagnostics.push(event); },
+    );
+
+    expect((session as typeof session & { portalTargetId?: string }).portalTargetId).toBe('portal-main');
+    expect(reports.at(-1)).toEqual({ system: 'neis', state: 'connected' });
+    expect(commands.some(({ method, sessionId }) => (
+      method === 'Input.dispatchMouseEvent' && sessionId === 'portal-notice-session'
+    ))).toBe(false);
+    expect(commands).toContainEqual({
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseReleased', x: 40, y: 30, button: 'left', clickCount: 1 },
+      sessionId: 'portal-main-session',
+    });
+    expect(commands).toContainEqual({
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseReleased', x: 150, y: 90, button: 'left', clickCount: 1 },
+      sessionId: 'portal-main-session',
+    });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      stepId: 'connection-portal-popup-dismissed',
+      outcome: 'success',
+      screenMarker: 'dismissed-1',
+    }));
+  });
+
   it('finds a portal SSO item inside a cross-origin child frame before opening the system', async () => {
     const commands: Array<{
       method: string;
