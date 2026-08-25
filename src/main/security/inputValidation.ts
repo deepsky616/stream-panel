@@ -30,7 +30,7 @@ export function assertConfigPatch(value: unknown): asserts value is Partial<AppC
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new TypeError('허용되지 않은 설정 항목입니다.');
   }
-  if ('version' in value && value.version !== 3) throw new TypeError('지원하지 않는 설정 버전입니다.');
+  if ('version' in value && value.version !== 4) throw new TypeError('지원하지 않는 설정 버전입니다.');
   if ('platform' in value && !['win32', 'darwin'].includes(String(value.platform))) {
     throw new TypeError('운영체제 설정이 올바르지 않습니다.');
   }

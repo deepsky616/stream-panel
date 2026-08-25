@@ -22,7 +22,7 @@ describe('store migration', () => {
     const future = JSON.stringify({ ...defaults, version: 99 });
     const result = recoverConfigText(future, defaults);
     expect(result).toMatchObject({ recovered: true, reason: 'future-version', backupText: future });
-    expect(result.config.version).toBe(3);
+    expect(result.config.version).toBe(4);
   });
 
   it('backs up and resets malformed json', () => {
@@ -56,7 +56,7 @@ describe('store migration', () => {
     const result = recoverConfigText(JSON.stringify(legacy), defaults);
 
     expect(result.config.root).toHaveLength(3);
-    expect(result.config.version).toBe(3);
+    expect(result.config.version).toBe(4);
     expect(result.config.platform).toBe('darwin');
     expect(result.config.behavior).toMatchObject({ hideAfterLaunch: true, edgePeek: true });
     expect(result.config.keyboard).toMatchObject({
@@ -101,7 +101,7 @@ describe('store migration', () => {
 
     const result = recoverConfigText(JSON.stringify(legacy), defaults);
 
-    expect(result.config.version).toBe(3);
+    expect(result.config.version).toBe(4);
     expect(result.config.root[0]).toMatchObject({
       target: 'https://sen.neis.go.kr/',
       webWorkflow: { id: 'neis-leave', officeCode: 'sen' },
@@ -114,6 +114,87 @@ describe('store migration', () => {
     const result = recoverConfigText(JSON.stringify(current), defaults);
     expect(result.config.approvalMonitor.sources.neis.enabled).toBe(false);
     expect(result.config.approvalMonitor.sources.edufine.enabled).toBe(true);
+  });
+
+  it('adds the purchase history generator directly after an existing Edufine purchase key', () => {
+    const current = structuredClone(defaults);
+    current.version = 3;
+    current.platform = 'win32';
+    current.root = [
+      {
+        id: 'draft',
+        kind: 'action',
+        type: 'url',
+        label: '에듀파인 기안',
+        target: 'https://klef.goe.go.kr/',
+        args: [],
+        icon: { kind: 'emoji', value: '✍️' },
+        color: '#5B8CFF',
+        position: 0,
+        webWorkflow: { id: 'edufine-draft', browserId: 'edge', officeCode: 'goe' },
+      },
+      {
+        id: 'purchase',
+        kind: 'action',
+        type: 'url',
+        label: '에듀파인 품의',
+        target: 'https://klef.goe.go.kr/',
+        args: [],
+        icon: { kind: 'emoji', value: '🧾' },
+        color: '#5B8CFF',
+        position: 1,
+        webWorkflow: { id: 'edufine-purchase', browserId: 'edge', officeCode: 'goe' },
+      },
+      {
+        id: 'next',
+        kind: 'action',
+        type: 'url',
+        label: '다음 키',
+        target: 'https://example.com/',
+        args: [],
+        icon: { kind: 'auto' },
+        color: '#5B8CFF',
+        position: 2,
+      },
+    ];
+
+    const result = recoverConfigText(JSON.stringify(current), defaults);
+
+    expect(result.config.root.map(({ label, position }) => ({ label, position }))).toEqual([
+      { label: '에듀파인 기안', position: 0 },
+      { label: '에듀파인 품의', position: 1 },
+      { label: '에듀파인 품의내역 생성기', position: 2 },
+      { label: '다음 키', position: 3 },
+    ]);
+    expect(result.config.root[2]).toMatchObject({
+      type: 'url',
+      target: 'https://deepsky616.github.io/school-quote-review/',
+      icon: { kind: 'emoji', value: '📊' },
+    });
+  });
+
+  it('does not duplicate an existing purchase history generator link', () => {
+    const current = structuredClone(defaults);
+    current.version = 3;
+    current.platform = 'win32';
+    current.root.push({
+      id: 'generator',
+      kind: 'action',
+      type: 'url',
+      label: '에듀파인 품의내역 생성기',
+      target: 'https://deepsky616.github.io/school-quote-review/',
+      args: [],
+      icon: { kind: 'emoji', value: '📊' },
+      color: '#5B8CFF',
+      position: 3,
+    });
+
+    const result = recoverConfigText(JSON.stringify(current), defaults);
+
+    expect(result.config.root.filter((item) => (
+      item.kind === 'action'
+      && item.target === 'https://deepsky616.github.io/school-quote-review/'
+    ))).toHaveLength(1);
   });
 
   it('preserves an allowed office and replaces an invalid office with Gyeonggi', () => {
@@ -181,6 +262,12 @@ describe('platform defaults', () => {
     });
     expect(config.autoUpdate).toBe(true);
     expect(config.educationOfficeCode).toBe('goe');
+    expect(config.root.at(-1)).toMatchObject({
+      label: '에듀파인 품의내역 생성기',
+      type: 'url',
+      target: 'https://deepsky616.github.io/school-quote-review/',
+      position: 3,
+    });
   });
 
   it('retargets every stored web workflow when the central education office changes', () => {

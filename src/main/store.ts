@@ -1,10 +1,12 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import ElectronStore from 'electron-store';
 import { normalizeAccelerator } from '../shared/accelerator';
 import { isEducationOfficeCode } from '../shared/educationOffices';
 import { normalizeHintKeys } from '../shared/hintMap';
 import { normalizeDeckPositions } from '../shared/layout';
+import { ensureEdufinePurchaseHistoryGenerator } from '../shared/defaults';
 import { retargetWebWorkflowItems } from '../shared/webWorkflows';
 import type {
   AppConfig,
@@ -17,7 +19,7 @@ import type {
   WindowConfig,
 } from '../shared/types';
 
-export const CURRENT_CONFIG_VERSION = 3;
+export const CURRENT_CONFIG_VERSION = 4;
 
 export type RecoveryReason = 'future-version' | 'corrupt-json';
 
@@ -94,7 +96,13 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
   const educationOfficeCode = isEducationOfficeCode(parsed.educationOfficeCode)
     ? parsed.educationOfficeCode
     : defaultConfig.educationOfficeCode;
+  const configPlatform = parsed.platform === 'win32' || parsed.platform === 'darwin'
+    ? parsed.platform
+    : defaultConfig.platform;
   const normalizedRoot = normalizeItemHotkeys(normalized.items);
+  const retargetedRoot = parsed.version < 3
+    ? retargetWebWorkflowItems(normalizedRoot, educationOfficeCode)
+    : normalizedRoot;
   const hintKeys = typeof keyboard.hintKeys === 'string' ? keyboard.hintKeys : defaultConfig.keyboard.hintKeys;
   const globalNumberModifier =
     typeof keyboard.globalNumberModifier === 'string'
@@ -122,14 +130,11 @@ function migrateKnownConfig(parsed: AppConfig, defaultConfig: AppConfig): AppCon
     ...defaultConfig,
     ...parsed,
     version: CURRENT_CONFIG_VERSION,
-    platform:
-      parsed.platform === 'win32' || parsed.platform === 'darwin'
-        ? parsed.platform
-        : defaultConfig.platform,
+    platform: configPlatform,
     educationOfficeCode,
-    root: parsed.version < 3
-      ? retargetWebWorkflowItems(normalizedRoot, educationOfficeCode)
-      : normalizedRoot,
+    root: parsed.version < 4 && configPlatform === 'win32'
+      ? ensureEdufinePurchaseHistoryGenerator(retargetedRoot, randomUUID)
+      : retargetedRoot,
     grid: { ...defaultConfig.grid, ...grid },
     window: { ...defaultConfig.window, ...window },
     behavior: { ...defaultConfig.behavior, ...behavior },
