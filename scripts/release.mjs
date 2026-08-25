@@ -116,6 +116,18 @@ const runGit = (args, options = {}) => run(
 const git = (...args) => runGit(args, { capture: true })
 const gitRaw = (...args) => runGit(args, { capture: true, raw: true })
 const repository = 'deepsky616/stream-panel'
+const repositoryUrlPattern = /github\.com[/:]deepsky616\/stream-panel(?:\.git)?$/i
+const publishRemote = (() => {
+  const remotes = git('remote').split(/\r?\n/).filter(Boolean)
+  const matchingRemote = remotes.find((remote) => {
+    try {
+      return repositoryUrlPattern.test(git('remote', 'get-url', remote))
+    } catch {
+      return false
+    }
+  })
+  return matchingRemote || (remotes.includes('origin') ? 'origin' : remotes[0] || 'origin')
+})()
 
 const ghApi = (endpoint, method = 'GET', body) => {
   if (!ghCredentialHelper) throw new Error('authenticated GitHub CLI is required')
@@ -166,7 +178,7 @@ const createRemoteBlobEntry = (head, path) => {
 const publishCommitViaGitHubApi = (head, expectedParent) => {
   const parent = git('rev-parse', `${head}^`)
   if (parent !== expectedParent) {
-    throw new Error('origin/main changed; update the checkout before releasing')
+    throw new Error(`${publishRemote}/main changed; update the checkout before releasing`)
   }
   const entries = []
   const changes = git(
@@ -209,7 +221,7 @@ const publishCommitViaGitHubApi = (head, expectedParent) => {
     throw new Error('GitHub commit verification failed; main was not changed')
   }
   ghApi(`repos/${repository}/git/refs/heads/main`, 'PATCH', { sha: head, force: false })
-  runGit(['update-ref', 'refs/remotes/origin/main', head, expectedParent])
+  runGit(['update-ref', `refs/remotes/${publishRemote}/main`, head, expectedParent])
 }
 
 const fail = (message) => {
@@ -239,9 +251,9 @@ try {
   const head = git('rev-parse', 'HEAD')
   const remoteMain = ghCredentialHelper
     ? readGhRef('heads/main')
-    : git('ls-remote', '--heads', 'origin', 'refs/heads/main').split(/\s+/)[0]
+    : git('ls-remote', '--heads', publishRemote, 'refs/heads/main').split(/\s+/)[0]
   if (!remoteMain) {
-    fail('could not read origin/main')
+    fail(`could not read ${publishRemote}/main`)
   }
 
   const remoteTag = pushOnly
@@ -252,7 +264,7 @@ try {
         const lines = git(
           'ls-remote',
           '--tags',
-          'origin',
+          publishRemote,
           `refs/tags/${tag}`,
           `refs/tags/${tag}^{}`
         ).split(/\r?\n/)
@@ -280,7 +292,7 @@ try {
 
   if (remoteMain !== head) {
     if (ghCredentialHelper) publishCommitViaGitHubApi(head, remoteMain)
-    else runGit(['push', 'origin', 'HEAD:main'])
+    else runGit(['push', publishRemote, 'HEAD:main'])
   }
 
   if (!pushOnly && !remoteTag) {
@@ -294,7 +306,7 @@ try {
       } else if (git('rev-list', '-n', '1', tag) !== head) {
         fail(`local ${tag} points to another commit`)
       }
-      runGit(['push', 'origin', `refs/tags/${tag}`])
+      runGit(['push', publishRemote, `refs/tags/${tag}`])
     }
   }
 
