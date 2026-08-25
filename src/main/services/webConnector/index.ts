@@ -62,6 +62,11 @@ export interface WebConnectorSessionController {
   closeAll(): Promise<void>;
   /** Cancels connection, workflow, and approval work before shutdown waits. */
   cancelAllOperations?(): void;
+  /** Clears delayed recovery from closed tabs and probes the existing session. */
+  prepareReconnect?(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): Promise<void>;
   checkApproval?(input: ApprovalScanInput): Promise<number>;
   cancelApprovalChecks?(
     officeCode: EducationOfficeCode,
@@ -604,6 +609,9 @@ export function createWebConnectorService({
       const officeCode = currentOffice();
       controller.beginInteractiveWork?.(officeCode, browserId);
       try {
+        if (target === 'pair' || target === 'connect') {
+          await controller.prepareReconnect?.(officeCode, browserId);
+        }
         const session = await prepareAndMark(browserId);
         connectionStates.delete(connectionKey(officeCode, browserId));
         publishStatuses();

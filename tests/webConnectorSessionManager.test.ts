@@ -192,6 +192,33 @@ describe('managed browser session manager', () => {
     expect(sessions[0].closeCount).toBe(1);
   });
 
+  it('explicitly restarts a transport that still reports itself alive', async () => {
+    const sessions: FakeSession[] = [];
+    const manager = new ManagedBrowserSessionManager<FakeSession, number>({
+      createSession: async (officeCode, browserId) => {
+        const session: FakeSession = {
+          id: sessions.length + 1,
+          officeCode,
+          browserId,
+          alive: true,
+          closeCount: 0,
+          isAlive() { return this.alive; },
+          async close() { this.closeCount += 1; this.alive = false; },
+        };
+        sessions.push(session);
+        return session;
+      },
+      executeWorkflow: async (session) => session.id,
+    });
+
+    await expect(manager.prepare('goe', 'edge')).resolves.toMatchObject({ id: 1 });
+    await expect(manager.restart('goe', 'edge')).resolves.toMatchObject({ id: 2 });
+
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0].closeCount).toBe(1);
+    expect(sessions[1].closeCount).toBe(0);
+  });
+
   it('keeps browser and office sessions separate and closes only sessions it created', async () => {
     const sessions: FakeSession[] = [];
     const manager = new ManagedBrowserSessionManager<FakeSession, number>({

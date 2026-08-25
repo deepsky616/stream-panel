@@ -64,6 +64,25 @@ export class ManagedBrowserSessionManager<
     ));
   }
 
+  /**
+   * Replaces a managed browser whose process still looks alive but whose
+   * control transport no longer answers. The replacement stays in the same
+   * per-office queue so an aborted older operation cannot regain ownership
+   * after the new session has been published.
+   */
+  restart(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): Promise<Session> {
+    return this.enqueue(officeCode, browserId, async (entry) => {
+      if (entry.session) {
+        await entry.session.close();
+        entry.session = undefined;
+      }
+      return this.ensureSession(entry, officeCode, browserId);
+    });
+  }
+
   run(request: ManagedWorkflowRequest): Promise<Result> {
     return this.enqueue(request.officeCode, request.browserId, async (entry) => {
       const session = await this.ensureSession(

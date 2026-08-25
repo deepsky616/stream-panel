@@ -256,6 +256,10 @@ describe('managed web connector service', () => {
       'win32',
     );
     const controller = createController();
+    const reconnects: string[] = [];
+    controller.prepareReconnect = async (officeCode, browserId) => {
+      reconnects.push(`${officeCode}:${browserId}`);
+    };
     controller.connectSystems = async (input, report) => {
       inputs.push(input);
       for (const system of input.systems) {
@@ -290,9 +294,11 @@ describe('managed web connector service', () => {
 
     await expect(service.openSetup('edge', 'pair')).resolves.toEqual({ ok: true });
     expect(opened).toEqual(['goe:edge']);
+    expect(reconnects).toEqual(['goe:edge']);
     expect(inputs).toEqual([]);
 
     await expect(service.openSetup('edge', 'connect')).resolves.toEqual({ ok: true });
+    expect(reconnects).toEqual(['goe:edge', 'goe:edge']);
 
     expect(inputs).toEqual([expect.objectContaining({
       officeCode: 'goe',

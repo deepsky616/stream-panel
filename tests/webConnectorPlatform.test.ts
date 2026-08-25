@@ -1662,6 +1662,63 @@ describe('Windows managed web automation', () => {
     expect(listenerRemoved).toBe(true);
   });
 
+  it('cancels stale target recovery before an explicit reconnect starts', async () => {
+    vi.useFakeTimers();
+    let eventListener: ((event: { method: string; params?: unknown }) => void) | undefined;
+    const closed: Array<{ role: string; system?: string }> = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string) {
+        if (method === 'Target.getTargets') return { targetInfos: [] };
+        return {};
+      },
+      onEvent(listener: (event: { method: string; params?: unknown }) => void) {
+        eventListener = listener;
+        return () => undefined;
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = await createWindowsManagedBrowserSession('goe', 'edge', {
+      userDataPath: 'C:\\StreamPanel',
+      env: { 'ProgramFiles(x86)': 'C:\\Program Files (x86)' },
+      exists: (path) => path.endsWith('Microsoft\\Edge\\Application\\msedge.exe'),
+      makeDirectory: async () => undefined,
+      connectBrowser: async () => ({
+        transportKind: 'pipe',
+        protocol: protocol as never,
+        process: {
+          pid: 42,
+          exited: false,
+          close: async (graceful?: () => Promise<void>) => { await graceful?.(); },
+        } as never,
+      }),
+      onManagedTargetClosed: (role, system) => { closed.push({ role, system }); },
+    });
+    try {
+      session.portalTargetId = 'portal-old';
+      session.connectionTargetIds = { neis: 'neis-old', edufine: 'edufine-old' };
+      eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'portal-old' } });
+      eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'neis-old' } });
+      eventListener?.({ method: 'Target.targetDestroyed', params: { targetId: 'edufine-old' } });
+      expect(session.connectionRecoveryPending).toEqual({
+        portal: true,
+        systems: { neis: true, edufine: true },
+      });
+
+      session.cancelPendingConnectionRecovery?.();
+      await vi.advanceTimersByTimeAsync(5_600);
+
+      expect(session.connectionRecoveryPending).toEqual({
+        portal: false,
+        systems: { neis: false, edufine: false },
+      });
+      expect(closed).toEqual([]);
+    } finally {
+      await session.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('rebinds a replaced authenticated system tab without reporting a disconnect', async () => {
     vi.useFakeTimers();
     let eventListener: ((event: { method: string; params?: unknown }) => void) | undefined;

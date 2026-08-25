@@ -119,6 +119,8 @@ export interface WindowsManagedBrowserSession extends ManagedBrowserSession {
   cdpOperationTail: Promise<void>;
   /** Reads the current user setting without restarting the managed browser. */
   isSessionKeepAliveEnabled?: (system: WebWorkflowSystem) => boolean;
+  /** Invalidates delayed target recovery before an explicit reconnect starts. */
+  cancelPendingConnectionRecovery?(): void;
   workflowState: WindowsWorkflowExecutionState;
 }
 
@@ -359,6 +361,14 @@ export async function createWindowsManagedBrowserSession(
     maintenancePauseDepth: 0,
     cdpOperationTail: Promise.resolve(),
     isSessionKeepAliveEnabled: (system) => isSessionKeepAliveEnabled?.(system) ?? true,
+    cancelPendingConnectionRecovery() {
+      recoveryGeneration.portal += 1;
+      recoveryGeneration.neis += 1;
+      recoveryGeneration.edufine += 1;
+      managedSession.connectionRecoveryPending!.portal = false;
+      managedSession.connectionRecoveryPending!.systems.neis = false;
+      managedSession.connectionRecoveryPending!.systems.edufine = false;
+    },
     workflowState: 'IDLE',
     isAlive() {
       return !closed && !connection.process.exited && !connection.protocol.isClosed;
@@ -366,9 +376,7 @@ export async function createWindowsManagedBrowserSession(
     async close() {
       if (closed) return;
       closed = true;
-      recoveryGeneration.portal += 1;
-      recoveryGeneration.neis += 1;
-      recoveryGeneration.edufine += 1;
+      managedSession.cancelPendingConnectionRecovery?.();
       removeTargetEventListener();
       clearInterval(keepAliveTimer);
       await managedSession.cdpOperationTail;
@@ -523,6 +531,35 @@ function workflowResultTargetMap(
 ): Partial<Record<WebWorkflowSystem, string>> {
   session.workflowResultTargetIds ??= {};
   return session.workflowResultTargetIds;
+}
+
+async function reconcileManagedTargetState(
+  session: WindowsManagedBrowserSession,
+): Promise<void> {
+  const liveTargetIds = new Set(readTargetInfos(
+    await session.connection.protocol.send('Target.getTargets', {}, undefined, 2_000),
+  ).map(({ targetId }) => targetId));
+  const clearMissing = (targets: Partial<Record<WebWorkflowSystem, string>>): void => {
+    for (const system of ['neis', 'edufine'] as const) {
+      const targetId = targets[system];
+      if (targetId && !liveTargetIds.has(targetId)) delete targets[system];
+    }
+  };
+
+  if (session.bootstrapTargetId && !liveTargetIds.has(session.bootstrapTargetId)) {
+    session.bootstrapTargetId = undefined;
+  }
+  if (session.portalTargetId && !liveTargetIds.has(session.portalTargetId)) {
+    session.portalTargetId = undefined;
+  }
+  if (session.approvalPortalTargetId && !liveTargetIds.has(session.approvalPortalTargetId)) {
+    session.approvalPortalTargetId = undefined;
+    session.approvalPortalSnapshot = undefined;
+  }
+  clearMissing(connectionTargetMap(session));
+  clearMissing(systemTargetMap(session));
+  clearMissing(approvalMonitorTargetMap(session));
+  clearMissing(workflowResultTargetMap(session));
 }
 
 const NEIS_REQUEST_RESULT_LABELS = [
@@ -5947,6 +5984,10 @@ export type WindowsManagedSessionController = ManagedBrowserSessionManager<
     browserId: WebConnectorBrowserId,
   ): void;
   cancelAllOperations(): void;
+  prepareReconnect(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): Promise<void>;
   connectSystems(
     input: WindowsSystemConnectionRequest,
     report?: WindowsSystemConnectionReporter,
@@ -6062,11 +6103,33 @@ export function createWindowsManagedSessionManager(
       workflowRuns.clear();
       approvalChecks.clear();
     },
+    async prepareReconnect(
+      officeCode: EducationOfficeCode,
+      browserId: WebConnectorBrowserId,
+    ) {
+      const key = approvalKey(officeCode, browserId);
+      connectionRuns.get(key)?.abort();
+      workflowRuns.get(key)?.abort();
+      approvalChecks.get(key)?.abort();
+      const session = manager.getSession(officeCode, browserId);
+      session?.cancelPendingConnectionRecovery?.();
+      if (!session?.isAlive()) return;
+      try {
+        await reconcileManagedTargetState(session);
+      } catch {
+        // Chromium can keep its process alive briefly after its last window is
+        // closed while the debugging pipe has already stopped responding.
+        // Replace that half-closed session once before opening the new portal.
+        await manager.restart(officeCode, browserId);
+      }
+    },
     connectSystems(
       input: WindowsSystemConnectionRequest,
       report?: WindowsSystemConnectionReporter,
     ) {
       const key = approvalKey(input.officeCode, input.browserId);
+      manager.getSession(input.officeCode, input.browserId)
+        ?.cancelPendingConnectionRecovery?.();
       connectionRuns.get(key)?.abort();
       const abortController = new AbortController();
       const abortFromInput = (): void => abortController.abort();
