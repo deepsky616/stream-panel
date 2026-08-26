@@ -1,4 +1,5 @@
 import type { WebWorkflowId, WebWorkflowSpec } from '../../../../shared/types';
+import { EDUCATION_OFFICES } from '../../../../shared/educationOffices';
 import { customWorkflowStepRequiresConfirmation } from '../../../../shared/webWorkflows';
 
 export interface CandidateSummary {
@@ -43,6 +44,7 @@ export interface WorkflowStep {
     | 'mouse'
     | 'dom-click'
     | 'frame-exact-text'
+    | 'neis-home'
     | 'neis-management-tab'
     | 'edufine-job'
     | 'edufine-job-toggle'
@@ -75,6 +77,27 @@ export interface ManagedWorkflowDefinition {
   label: string;
   finalState: string;
   steps: readonly WorkflowStep[];
+}
+
+export const NEIS_OFFICE_HOME_LABELS = EDUCATION_OFFICES.map(({ name }) => name);
+
+export function createNeisHomeStep(
+  nextLabels: readonly string[],
+  maxChecks = 40,
+  checkDelayMs = 250,
+): WorkflowStep {
+  return {
+    id: 'open-neis-home',
+    candidateLabels: NEIS_OFFICE_HOME_LABELS,
+    interaction: 'neis-home',
+    selection: 'first-available',
+    postcondition: { kind: 'visible-any', labels: nextLabels },
+    maxChecks,
+    checkDelayMs,
+    // Always click the top-left office mark so a previous duty, trip, or
+    // approval view cannot become the starting point of a new workflow.
+    skipWhenSatisfied: false,
+  };
 }
 
 export const FORBIDDEN_ACTION_TOKENS = [
@@ -223,11 +246,7 @@ export function createCustomManagedWorkflowDefinition(
   if (spec.id !== 'custom') {
     throw new Error('사용자 지정 웹 업무 자료가 아닙니다. 편집기에서 업무 키를 다시 만들어 주세요.');
   }
-  return {
-    id: 'custom',
-    label: spec.custom.name,
-    finalState: 'custom-target-ready',
-    steps: spec.custom.steps.map((step, index) => {
+  const configuredSteps = spec.custom.steps.map((step, index): WorkflowStep => {
       const kind = step.kind ?? 'exact-text';
       const requiresConfirmation = customWorkflowStepRequiresConfirmation(step.label);
       const interaction: WorkflowStep['interaction'] = {
@@ -279,6 +298,17 @@ export function createCustomManagedWorkflowDefinition(
         maxChecks: 67,
         checkDelayMs: 150,
       };
-    }),
+    });
+  const firstConfiguredLabel = spec.custom.steps[0]?.label;
+  return {
+    id: 'custom',
+    label: spec.custom.name,
+    finalState: 'custom-target-ready',
+    steps: spec.custom.system === 'neis' && firstConfiguredLabel
+      ? [
+          createNeisHomeStep([firstConfiguredLabel], 67, 150),
+          ...configuredSteps,
+        ]
+      : configuredSteps,
   };
 }

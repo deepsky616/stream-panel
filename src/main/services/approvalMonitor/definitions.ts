@@ -3,7 +3,10 @@ import type {
   WebConnectorBrowserId,
   WebWorkflowSystem,
 } from '../../../shared/types';
-import type { ManagedWorkflowDefinition } from '../webConnector/workflows/common';
+import {
+  createNeisHomeStep,
+  type ManagedWorkflowDefinition,
+} from '../webConnector/workflows/common';
 
 export interface ApprovalScanInput {
   system: WebWorkflowSystem;
@@ -43,6 +46,11 @@ const NEIS_APPROVAL_WORKFLOW: ManagedWorkflowDefinition = {
   label: '나이스 결재함',
   finalState: 'approval-inbox-ready',
   steps: [
+    createNeisHomeStep(
+      NEIS_PENDING_COOPERATION_LABELS,
+      COMMON_CHECKS.maxChecks,
+      COMMON_CHECKS.checkDelayMs,
+    ),
     {
       id: 'open-pending-cooperation-inbox',
       candidateLabels: NEIS_PENDING_COOPERATION_LABELS,

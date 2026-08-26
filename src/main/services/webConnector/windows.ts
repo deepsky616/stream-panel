@@ -1795,6 +1795,43 @@ const documentMenuMatch=(label)=>{
     .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
   return matches[0]||null;
 };
+const neisHomeMatch=(label)=>{
+  const marker=/logo|home|header|topframe|top_frame|mainlogo|main_logo|brand/;
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element,offsetX,offsetY}=entry;
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){ancestry.push(current);}
+      const clickable=element.closest?.('a,button,[role="button"],[onclick],[href]')||
+        ancestry.find(candidate=>globalThis.getComputedStyle?.(candidate)?.cursor==='pointer')||
+        element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      const rect=clickable.getBoundingClientRect();
+      const width=Math.max(1,Number(element.ownerDocument?.defaultView?.innerWidth)||1920);
+      const height=Math.max(1,Number(element.ownerDocument?.defaultView?.innerHeight)||1080);
+      const globalLeft=offsetX+rect.left;
+      const globalTop=offsetY+rect.top;
+      const topLeft=globalLeft>=-8&&globalTop>=-8&&
+        globalLeft<=Math.max(520,width*0.42)&&globalTop<=Math.max(220,height*0.28);
+      if(!topLeft)return null;
+      const signal=ancestry.map(current=>(String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase()).join(' ');
+      const explicit=marker.test(signal);
+      return {...entry,element:clickable,score:(explicit?300:0)+(clickable!==element?40:0)-globalTop/8-globalLeft/16-Math.min(30,element.children.length)};
+    }).filter(Boolean);
+  const unique=[];
+  for(const entry of matches.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)){
+    if(!unique.some(candidate=>candidate.element===entry.element))unique.push(entry);
+  }
+  return unique[0]||null;
+};
+if(interaction==='neis-home'){
+  return labels.flatMap((label,index)=>{
+    const match=neisHomeMatch(label);
+    return match?[summary(match.element,index,label,'NEIS-HOME',match.offsetX,match.offsetY)]:[];
+  });
+}
 if(interaction==='neis-management-tab'){
   return labels.flatMap((label,index)=>{
     const match=neisManagementTabMatch(label);
@@ -1876,6 +1913,7 @@ return [];
 function candidateScanExpression(step: WorkflowStep): string {
   return step.interaction?.startsWith('edufine-') ||
     step.interaction === 'frame-exact-text' ||
+    step.interaction === 'neis-home' ||
     step.interaction === 'neis-management-tab'
     ? edufineCandidateScanExpression(step)
     : CANDIDATE_SCAN_EXPRESSION;
@@ -2164,8 +2202,41 @@ const documentMenuMatch=()=>{
     .sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length);
   return matches[0]||null;
 };
-if(interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'||interaction==='edufine-submenu'||interaction==='edufine-form-launch'){
-  const match=interaction==='neis-management-tab'
+const neisHomeMatch=()=>{
+  const marker=/logo|home|header|topframe|top_frame|mainlogo|main_logo|brand/;
+  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
+    .map((entry)=>{
+      const {element,offsetX,offsetY}=entry;
+      const ancestry=[];
+      for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){ancestry.push(current);}
+      const clickable=element.closest?.('a,button,[role="button"],[onclick],[href]')||
+        ancestry.find(candidate=>globalThis.getComputedStyle?.(candidate)?.cursor==='pointer')||
+        element.parentElement||element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      const rect=clickable.getBoundingClientRect();
+      const width=Math.max(1,Number(element.ownerDocument?.defaultView?.innerWidth)||1920);
+      const height=Math.max(1,Number(element.ownerDocument?.defaultView?.innerHeight)||1080);
+      const globalLeft=offsetX+rect.left;
+      const globalTop=offsetY+rect.top;
+      const topLeft=globalLeft>=-8&&globalTop>=-8&&
+        globalLeft<=Math.max(520,width*0.42)&&globalTop<=Math.max(220,height*0.28);
+      if(!topLeft)return null;
+      const signal=ancestry.map(current=>(String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase()).join(' ');
+      const explicit=marker.test(signal);
+      return {...entry,element:clickable,score:(explicit?300:0)+(clickable!==element?40:0)-globalTop/8-globalLeft/16-Math.min(30,element.children.length)};
+    }).filter(Boolean);
+  const unique=[];
+  for(const entry of matches.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)){
+    if(!unique.some(candidate=>candidate.element===entry.element))unique.push(entry);
+  }
+  return unique[0]||null;
+};
+if(interaction==='neis-home'||interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'||interaction==='edufine-submenu'||interaction==='edufine-form-launch'){
+  const match=interaction==='neis-home'
+    ? neisHomeMatch()
+    : interaction==='neis-management-tab'
     ? neisManagementTabMatch()
     : interaction==='edufine-left-toggle'
     ? leftToggleMatch()
@@ -2978,6 +3049,7 @@ async function pressCandidateWithCdp(
   const normalizedText = candidate.text.replace(/\s+/g, ' ').trim();
   const isSpecializedInteraction = interaction.startsWith('edufine-') ||
     interaction === 'frame-exact-text' ||
+    interaction === 'neis-home' ||
     interaction === 'neis-management-tab';
   const action = await evaluateValue<{
     ok?: unknown;
@@ -3447,10 +3519,10 @@ function createWindowsWorkflowPage(
       const candidates = readCandidateSummaries(
         await evaluateValue(session, active.sessionId, candidateScanExpression(step)),
       );
-      if (
-        candidates.length > 0 ||
-        (workflowSystem !== 'edufine' && step.interaction !== 'neis-management-tab')
-      ) return candidates;
+      const supportsCrossFrameLookup = workflowSystem === 'edufine' ||
+        step.interaction === 'neis-home' ||
+        step.interaction === 'neis-management-tab';
+      if (candidates.length > 0 || !supportsCrossFrameLookup) return candidates;
       return inspectEdufineCandidatesAcrossFrames(session, active.sessionId, step);
     },
     async pressCandidate(candidate, step) {
@@ -3482,7 +3554,7 @@ function createWindowsWorkflowPage(
         active.sessionId,
         postconditionExpression(step),
       )) return true;
-      return workflowSystem === 'edufine'
+      return workflowSystem === 'edufine' || step.interaction === 'neis-home'
         ? checkEdufinePostconditionAcrossFrames(session, active.sessionId, step)
         : false;
     },

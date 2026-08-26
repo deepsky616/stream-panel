@@ -1,4 +1,4 @@
-import type { ManagedWorkflowDefinition } from './common';
+import { createNeisHomeStep, type ManagedWorkflowDefinition } from './common';
 
 const COMMON_CHECKS = {
   // Keep the same 10-second tolerance while detecting stable menus twice as fast.
@@ -13,6 +13,7 @@ export const NEIS_WORKFLOWS = {
     label: '나이스 복무',
     finalState: 'leave-request-form',
     steps: [
+      createNeisHomeStep(['복무']),
       {
         id: 'open-duty-section',
         candidateLabels: ['복무'],
@@ -59,6 +60,7 @@ export const NEIS_WORKFLOWS = {
     label: '나이스 출장',
     finalState: 'trip-request-form',
     steps: [
+      createNeisHomeStep(['복무']),
       {
         id: 'open-duty-section',
         candidateLabels: ['복무'],

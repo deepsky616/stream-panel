@@ -3039,6 +3039,94 @@ describe('Windows managed web automation', () => {
     await workflowPage.release?.();
   });
 
+  it('clicks only the top-left NEIS education-office home mark before navigating', async () => {
+    const expressions: string[] = [];
+    const inputCommands: string[] = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'neis-main',
+            type: 'page',
+            url: 'https://goe.neis.go.kr/main',
+          }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'neis-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 21 };
+        if (method === 'Input.dispatchMouseEvent') {
+          inputCommands.push(String(params.type));
+          return {};
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          expressions.push(expression);
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://goe.neis.go.kr/main',
+              origin: 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+            } } };
+          }
+          if (expression.includes("[id$='btnUseTimeExtn']")) {
+            return { result: { value: { handled: false } } };
+          }
+          if (expression.includes("'NEIS-HOME'")) {
+            return { result: { value: [safeCandidate(0, '경기도교육청')] } };
+          }
+          if (expression.includes('const interaction="neis-home"')) {
+            return { result: { value: { ok: true, x: 110, y: 52 } } };
+          }
+          if (expression === 'location.origin') {
+            return { result: { value: 'https://goe.neis.go.kr' } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+    const workflowPage = await openCdpWindowsWorkflowPage(session as never, 'neis-leave');
+    const step = {
+      id: 'open-neis-home',
+      candidateLabels: ['경기도교육청'],
+      interaction: 'neis-home' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['복무'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+
+    const candidates = await workflowPage.inspectCandidates(step);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject(safeCandidate(0, '경기도교육청'));
+    await workflowPage.pressCandidate(candidates[0], step);
+
+    const homeExpressions = expressions.filter((expression) => (
+      expression.includes('neis-home') || expression.includes('NEIS-HOME')
+    ));
+    expect(homeExpressions).toHaveLength(2);
+    expect(homeExpressions.every((expression) => expression.includes('globalTop'))).toBe(true);
+    expect(homeExpressions.every((expression) => expression.includes('globalLeft'))).toBe(true);
+    expect(homeExpressions.every((expression) => expression.includes('topLeft'))).toBe(true);
+    expect(homeExpressions.some((expression) => expression.includes('logo|home|header'))).toBe(true);
+    for (const expression of homeExpressions) {
+      expect(() => new Function(`return ${expression}`)).not.toThrow();
+    }
+    expect(inputCommands).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+    await workflowPage.release?.();
+  });
+
   it('reuses only the remembered Stream Panel connection tab after confirming the portal', async () => {
     const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
     let neisUrl = 'https://goe.neis.go.kr/main';

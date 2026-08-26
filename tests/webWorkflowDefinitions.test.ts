@@ -5,7 +5,10 @@ import {
   EDUFINE_WORKFLOWS,
 } from '../src/main/services/webConnector/workflows/edufine';
 import { NEIS_WORKFLOWS } from '../src/main/services/webConnector/workflows/neis';
-import { isForbiddenActionText } from '../src/main/services/webConnector/workflows/common';
+import {
+  isForbiddenActionText,
+  NEIS_OFFICE_HOME_LABELS,
+} from '../src/main/services/webConnector/workflows/common';
 import * as workflowCommon from '../src/main/services/webConnector/workflows/common';
 import type { WebWorkflowSpec } from '../src/shared/types';
 import {
@@ -155,14 +158,19 @@ describe('managed web workflow definitions', () => {
     });
 
     expect(definition.steps.map(({ interaction }) => interaction)).toEqual([
+      'neis-home',
       'neis-management-tab',
       'frame-exact-text',
     ]);
     expect(definition.steps[0].postcondition).toEqual({
+      kind: 'visible-any',
+      labels: ['개인출장관리'],
+    });
+    expect(definition.steps[1].postcondition).toEqual({
       kind: 'active-view-any',
       labels: ['신청'],
     });
-    expect(definition.steps[1]).toEqual(expect.objectContaining({
+    expect(definition.steps[2]).toEqual(expect.objectContaining({
       requiresConfirmation: true,
       skipWhenSatisfied: false,
       postcondition: { kind: 'new-page-any', labels: ['출장신청'] },
@@ -248,11 +256,13 @@ describe('managed web workflow definitions', () => {
 
   it('uses fixed navigation labels and explicit postconditions for every step', () => {
     expect(definitions['neis-leave'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
+      NEIS_OFFICE_HOME_LABELS,
       ['복무'],
       ['개인근무상황관리', '개인근무상황'],
       ['신청(새 창 열기)', '신청'],
     ]);
     expect(definitions['neis-trip'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
+      NEIS_OFFICE_HOME_LABELS,
       ['복무'],
       ['개인출장관리', '출장관리'],
       ['신청(새 창 열기)', '신청'],
@@ -316,20 +326,30 @@ describe('managed web workflow definitions', () => {
       kind: 'new-page-any',
       labels: ['출장신청'],
     });
-    expect(definitions['neis-leave'].steps[1].postcondition).toEqual({
+    expect(definitions['neis-leave'].steps[2].postcondition).toEqual({
       kind: 'active-view-any',
       labels: ['개인근무상황관리', '개인근무상황'],
     });
-    expect(definitions['neis-trip'].steps[1].postcondition).toEqual({
+    expect(definitions['neis-trip'].steps[2].postcondition).toEqual({
       kind: 'active-view-any',
       labels: ['개인출장관리', '출장관리'],
     });
-    expect(definitions['neis-leave'].steps[1].interaction).toBe('neis-management-tab');
-    expect(definitions['neis-trip'].steps[1].interaction).toBe('neis-management-tab');
+    expect(definitions['neis-leave'].steps[0]).toEqual(expect.objectContaining({
+      interaction: 'neis-home',
+      skipWhenSatisfied: false,
+      postcondition: { kind: 'visible-any', labels: ['복무'] },
+    }));
+    expect(definitions['neis-trip'].steps[0]).toEqual(expect.objectContaining({
+      interaction: 'neis-home',
+      skipWhenSatisfied: false,
+      postcondition: { kind: 'visible-any', labels: ['복무'] },
+    }));
+    expect(definitions['neis-leave'].steps[2].interaction).toBe('neis-management-tab');
+    expect(definitions['neis-trip'].steps[2].interaction).toBe('neis-management-tab');
     expect(definitions['neis-leave'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
     expect(definitions['neis-trip'].steps.at(-1)?.skipWhenSatisfied).toBe(false);
-    expect(definitions['neis-leave'].steps[1].skipWhenSatisfied).toBe(false);
-    expect(definitions['neis-trip'].steps[1].skipWhenSatisfied).toBe(false);
+    expect(definitions['neis-leave'].steps[2].skipWhenSatisfied).toBe(false);
+    expect(definitions['neis-trip'].steps[2].skipWhenSatisfied).toBe(false);
     expect(definitions['edufine-draft'].steps.slice(1).map(
       ({ skipWhenSatisfied }) => skipWhenSatisfied,
     )).toEqual([false, false, false]);
@@ -339,6 +359,7 @@ describe('managed web workflow definitions', () => {
     )).toEqual(['edufine-job', 'edufine-document-menu', 'frame-exact-text']);
     expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
       ({ id }) => ![
+        'open-neis-home',
         'open-leave-management',
         'open-trip-management',
         'open-leave-form',
@@ -393,8 +414,19 @@ describe('managed web workflow definitions', () => {
   it('treats NEIS approval and Edufine document management as section labels, not buttons', () => {
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis[0].steps.map((step) => (
       step.candidateLabels
-    ))).toEqual([['미결/협조함', '미결 / 협조함']]);
+    ))).toEqual([
+      NEIS_OFFICE_HOME_LABELS,
+      ['미결/협조함', '미결 / 협조함'],
+    ]);
     expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis[0].steps[0]).toEqual(expect.objectContaining({
+      interaction: 'neis-home',
+      skipWhenSatisfied: false,
+      postcondition: {
+        kind: 'visible-any',
+        labels: ['미결/협조함', '미결 / 협조함'],
+      },
+    }));
+    expect(APPROVAL_INBOX_WORKFLOW_ROUTES.neis[0].steps[1]).toEqual(expect.objectContaining({
       interaction: 'frame-exact-text',
       postcondition: { kind: 'visible-any', labels: [
         'Total',
