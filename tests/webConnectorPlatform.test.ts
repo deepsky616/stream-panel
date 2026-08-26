@@ -3100,7 +3100,7 @@ describe('Windows managed web automation', () => {
     const workflowPage = await openCdpWindowsWorkflowPage(session as never, 'neis-leave');
     const step = {
       id: 'open-neis-home',
-      candidateLabels: ['경기도교육청'],
+      candidateLabels: ['서울특별시교육청', '경기도교육청'],
       interaction: 'neis-home' as const,
       postcondition: { kind: 'visible-any' as const, labels: ['복무'] },
       maxChecks: 1,
@@ -3120,6 +3120,12 @@ describe('Windows managed web automation', () => {
     expect(homeExpressions.every((expression) => expression.includes('globalLeft'))).toBe(true);
     expect(homeExpressions.every((expression) => expression.includes('topLeft'))).toBe(true);
     expect(homeExpressions.some((expression) => expression.includes('logo|home|header'))).toBe(true);
+    expect(homeExpressions.every((expression) => expression.includes('img,svg,picture'))).toBe(true);
+    expect(homeExpressions.every((expression) => expression.includes('visualSize'))).toBe(true);
+    expect(homeExpressions.every((expression) => expression.includes('backgroundImage'))).toBe(true);
+    const scanExpression = homeExpressions.find((expression) => expression.includes("'NEIS-HOME'"));
+    expect(scanExpression).toContain('경기도교육청');
+    expect(scanExpression).not.toContain('서울특별시교육청');
     for (const expression of homeExpressions) {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }

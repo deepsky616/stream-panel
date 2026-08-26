@@ -1796,19 +1796,23 @@ const documentMenuMatch=(label)=>{
   return matches[0]||null;
 };
 const neisHomeMatch=(label)=>{
-  const marker=/logo|home|header|topframe|top_frame|mainlogo|main_logo|brand/;
-  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
-    .map(element=>({element,offsetX,offsetY})))
-    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label))&&visible(element)&&enabled(element))
-    .map((entry)=>{
+  const marker=/logo|home|header|topframe|top_frame|mainlogo|main_logo|brand|symbol|emblem|gyeonggi|gyunggi|goe|education|eduoffice|(?:^|[_-])ci(?:[_-]|$)/;
+  const entries=documents.flatMap(({document,offsetX,offsetY})=>{
+    const exact=Array.from(document.querySelectorAll('*'))
+      .filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),label)))
+      .map(element=>({element,offsetX,offsetY,textMatched:true}));
+    const visual=Array.from(document.querySelectorAll(
+      'img,svg,picture,canvas,object,input[type="image"],[role="img"],[id*="logo" i],[class*="logo" i],[id*="ci" i],[class*="ci" i],[style*="background" i]'
+    )).map(element=>({element,offsetX,offsetY,textMatched:false}));
+    return [...exact,...visual];
+  });
+  const matches=entries.filter(({element})=>visible(element)&&enabled(element)).map((entry)=>{
       const {element,offsetX,offsetY}=entry;
       const ancestry=[];
       for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){ancestry.push(current);}
       const clickable=element.closest?.('a,button,[role="button"],[onclick],[href]')||
-        ancestry.find(candidate=>globalThis.getComputedStyle?.(candidate)?.cursor==='pointer')||
-        element.parentElement||element;
-      if(!visible(clickable)||!enabled(clickable))return null;
-      const rect=clickable.getBoundingClientRect();
+        ancestry.find(candidate=>globalThis.getComputedStyle?.(candidate)?.cursor==='pointer');
+      const rect=element.getBoundingClientRect();
       const width=Math.max(1,Number(element.ownerDocument?.defaultView?.innerWidth)||1920);
       const height=Math.max(1,Number(element.ownerDocument?.defaultView?.innerHeight)||1080);
       const globalLeft=offsetX+rect.left;
@@ -1816,9 +1820,21 @@ const neisHomeMatch=(label)=>{
       const topLeft=globalLeft>=-8&&globalTop>=-8&&
         globalLeft<=Math.max(520,width*0.42)&&globalTop<=Math.max(220,height*0.28);
       if(!topLeft)return null;
-      const signal=ancestry.map(current=>(String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase()).join(' ');
+      const visualSize=rect.width>=60&&rect.width<=600&&rect.height>=20&&rect.height<=220;
+      const tag=String(element.tagName||'').toUpperCase();
+      const visualLike=['IMG','SVG','PICTURE','CANVAS','OBJECT'].includes(tag)||
+        (tag==='INPUT'&&String(element.getAttribute?.('type')||'').toLowerCase()==='image')||
+        normalize(element.getAttribute?.('role')).toLowerCase()==='img'||
+        String(globalThis.getComputedStyle?.(element)?.backgroundImage||'').toLowerCase().includes('url(');
+      const signal=[
+        element.id,element.className,element.getAttribute?.('src'),element.getAttribute?.('data'),element.currentSrc,
+        element.getAttribute?.('alt'),element.getAttribute?.('title'),element.getAttribute?.('aria-label'),
+        globalThis.getComputedStyle?.(element)?.backgroundImage,
+        ...ancestry.map(current=>String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||''))
+      ].map(value=>String(value||'').toLowerCase()).join(' ');
       const explicit=marker.test(signal);
-      return {...entry,element:clickable,score:(explicit?300:0)+(clickable!==element?40:0)-globalTop/8-globalLeft/16-Math.min(30,element.children.length)};
+      if(!entry.textMatched&&(!visualLike||!visualSize||(!explicit&&!clickable)))return null;
+      return {...entry,score:(entry.textMatched?1000:0)+(explicit?500:0)+(clickable?250:0)+(tag==='IMG'?160:0)-globalTop/8-globalLeft/16-Math.min(30,element.children.length)};
     }).filter(Boolean);
   const unique=[];
   for(const entry of matches.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)){
@@ -2203,19 +2219,23 @@ const documentMenuMatch=()=>{
   return matches[0]||null;
 };
 const neisHomeMatch=()=>{
-  const marker=/logo|home|header|topframe|top_frame|mainlogo|main_logo|brand/;
-  const matches=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll('*'))
-    .map(element=>({element,offsetX,offsetY})))
-    .filter(({element})=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted))&&visible(element)&&enabled(element))
-    .map((entry)=>{
+  const marker=/logo|home|header|topframe|top_frame|mainlogo|main_logo|brand|symbol|emblem|gyeonggi|gyunggi|goe|education|eduoffice|(?:^|[_-])ci(?:[_-]|$)/;
+  const entries=documents.flatMap(({document,offsetX,offsetY})=>{
+    const exact=Array.from(document.querySelectorAll('*'))
+      .filter(element=>surfaceTextsOf(element).some(text=>displayedLabelMatches(normalize(text),normalizedWanted)))
+      .map(element=>({element,offsetX,offsetY,textMatched:true}));
+    const visual=Array.from(document.querySelectorAll(
+      'img,svg,picture,canvas,object,input[type="image"],[role="img"],[id*="logo" i],[class*="logo" i],[id*="ci" i],[class*="ci" i],[style*="background" i]'
+    )).map(element=>({element,offsetX,offsetY,textMatched:false}));
+    return [...exact,...visual];
+  });
+  const matches=entries.filter(({element})=>visible(element)&&enabled(element)).map((entry)=>{
       const {element,offsetX,offsetY}=entry;
       const ancestry=[];
       for(let current=element,depth=0;current&&depth<8;current=current.parentElement,depth+=1){ancestry.push(current);}
       const clickable=element.closest?.('a,button,[role="button"],[onclick],[href]')||
-        ancestry.find(candidate=>globalThis.getComputedStyle?.(candidate)?.cursor==='pointer')||
-        element.parentElement||element;
-      if(!visible(clickable)||!enabled(clickable))return null;
-      const rect=clickable.getBoundingClientRect();
+        ancestry.find(candidate=>globalThis.getComputedStyle?.(candidate)?.cursor==='pointer');
+      const rect=element.getBoundingClientRect();
       const width=Math.max(1,Number(element.ownerDocument?.defaultView?.innerWidth)||1920);
       const height=Math.max(1,Number(element.ownerDocument?.defaultView?.innerHeight)||1080);
       const globalLeft=offsetX+rect.left;
@@ -2223,9 +2243,21 @@ const neisHomeMatch=()=>{
       const topLeft=globalLeft>=-8&&globalTop>=-8&&
         globalLeft<=Math.max(520,width*0.42)&&globalTop<=Math.max(220,height*0.28);
       if(!topLeft)return null;
-      const signal=ancestry.map(current=>(String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||'')).toLowerCase()).join(' ');
+      const visualSize=rect.width>=60&&rect.width<=600&&rect.height>=20&&rect.height<=220;
+      const tag=String(element.tagName||'').toUpperCase();
+      const visualLike=['IMG','SVG','PICTURE','CANVAS','OBJECT'].includes(tag)||
+        (tag==='INPUT'&&String(element.getAttribute?.('type')||'').toLowerCase()==='image')||
+        normalize(element.getAttribute?.('role')).toLowerCase()==='img'||
+        String(globalThis.getComputedStyle?.(element)?.backgroundImage||'').toLowerCase().includes('url(');
+      const signal=[
+        element.id,element.className,element.getAttribute?.('src'),element.getAttribute?.('data'),element.currentSrc,
+        element.getAttribute?.('alt'),element.getAttribute?.('title'),element.getAttribute?.('aria-label'),
+        globalThis.getComputedStyle?.(element)?.backgroundImage,
+        ...ancestry.map(current=>String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('role')||''))
+      ].map(value=>String(value||'').toLowerCase()).join(' ');
       const explicit=marker.test(signal);
-      return {...entry,element:clickable,score:(explicit?300:0)+(clickable!==element?40:0)-globalTop/8-globalLeft/16-Math.min(30,element.children.length)};
+      if(!entry.textMatched&&(!visualLike||!visualSize||(!explicit&&!clickable)))return null;
+      return {...entry,score:(entry.textMatched?1000:0)+(explicit?500:0)+(clickable?250:0)+(tag==='IMG'?160:0)-globalTop/8-globalLeft/16-Math.min(30,element.children.length)};
     }).filter(Boolean);
   const unique=[];
   for(const entry of matches.sort((left,right)=>right.score-left.score||left.element.children.length-right.element.children.length)){
@@ -3516,14 +3548,17 @@ function createWindowsWorkflowPage(
     },
     async inspectCandidates(step) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
+      const effectiveStep = step.interaction === 'neis-home'
+        ? { ...step, candidateLabels: [getEducationOffice(session.officeCode).name] }
+        : step;
       const candidates = readCandidateSummaries(
-        await evaluateValue(session, active.sessionId, candidateScanExpression(step)),
+        await evaluateValue(session, active.sessionId, candidateScanExpression(effectiveStep)),
       );
       const supportsCrossFrameLookup = workflowSystem === 'edufine' ||
         step.interaction === 'neis-home' ||
         step.interaction === 'neis-management-tab';
       if (candidates.length > 0 || !supportsCrossFrameLookup) return candidates;
-      return inspectEdufineCandidatesAcrossFrames(session, active.sessionId, step);
+      return inspectEdufineCandidatesAcrossFrames(session, active.sessionId, effectiveStep);
     },
     async pressCandidate(candidate, step) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
