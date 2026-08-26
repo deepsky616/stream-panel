@@ -90,7 +90,7 @@ const compact=(value)=>normalize(value).replace(/\\s+/g,'');
 const pageControl=/페이지\\s*(?:크기|번호|당)|페이지당|쪽\\s*번호|page\\s*(?:size|number)|rows?\\s*per\\s*page|pagination|pager|paging/i;
 const definitions=[
   {system:'neis',items:['미결/협조함','미결 / 협조함'],combined:/^미결\\s*\\/\\s*협조함\\s*[\\(\\[]?\\s*(\\d{1,4})\\s*(?:건)?\\s*[\\)\\]]?$/},
-  {system:'edufine',items:['결재(긴급)','결재 (긴급)'],combined:/^결재\\s*\\(\\s*긴급\\s*\\)\\s*[\\(\\[]?\\s*(\\d{1,4})\\s*(?:건)?\\s*[\\)\\]]?$/},
+  {system:'edufine',items:['결재(긴급)','결재 (긴급)'],combined:/^결재\\s*\\(\\s*긴급\\s*\\)\\s*(\\d{1,4})(?:\\s*\\(\\s*\\d{1,4}\\s*\\))?\\s*(?:건)?$/},
 ];
 const visible=(element)=>{
   if(!element||element.hidden||element.getAttribute?.('aria-hidden')==='true'||typeof element.getBoundingClientRect!=='function')return false;
@@ -149,6 +149,18 @@ const numericValue=(element)=>{
   }
   return null;
 };
+const approvalValue=(element,definition)=>{
+  const numeric=numericValue(element);
+  if(numeric!==null)return numeric;
+  if(definition.system!=='edufine')return null;
+  for(const text of surfaceTexts(element)){
+    // K-Edufine displays the total first and the urgent subset in parentheses,
+    // for example 2(0). The pending count is 2, never 20 or 0.
+    const match=text.match(/^(\\d{1,4})\\s*\\(\\s*\\d{1,4}\\s*\\)\\s*(?:건)?$/);
+    if(match)return Number(match[1]);
+  }
+  return null;
+};
 const contextOf=(element)=>{
   const values=[];
   for(let current=element,depth=0;current&&depth<4;current=current.parentElement,depth+=1){
@@ -184,10 +196,10 @@ for(const definition of definitions){
       const match=raw.match(/^(\\d{1,4})$/);
       if(match)add(definition,Number(match[1]),itemLabel,'same-control',98,element);
     }
-    const ownValue=numericValue(element);
+    const ownValue=approvalValue(element,definition);
     if(ownValue!==null)add(definition,ownValue,itemLabel,'same-control',99,element);
     for(const descendant of elementsIn(element).filter(visible).slice(0,100)){
-      const value=numericValue(descendant);
+      const value=approvalValue(descendant,definition);
       if(value!==null)add(definition,value,itemLabel,'same-control',94,descendant);
     }
     // NEIS renders the approval summary as a two-column row: the item label is
@@ -198,7 +210,7 @@ for(const definition of definitions){
     const labelCenter=labelRect.top+labelRect.height/2;
     const rowNumbers=elements.map((numberElement)=>{
       if(numberElement===element||element.contains?.(numberElement))return null;
-      const value=numericValue(numberElement);
+      const value=approvalValue(numberElement,definition);
       if(value===null)return null;
       const rect=numberElement.getBoundingClientRect();
       const center=rect.top+rect.height/2;
@@ -224,12 +236,12 @@ for(const definition of definitions){
     for(let current=element,depth=0;current&&depth<3;current=current.parentElement,depth+=1){
       for(const sibling of [current.nextElementSibling,current.previousElementSibling]){
         if(!visible(sibling))continue;
-        const value=numericValue(sibling);
+        const value=approvalValue(sibling,definition);
         if(value!==null)add(definition,value,itemLabel,'sibling',88-depth*4,sibling);
       }
       const children=Array.from(current.parentElement?.children||[]).filter((child)=>child!==current&&visible(child));
       for(const sibling of children.slice(0,24)){
-        const value=numericValue(sibling);
+        const value=approvalValue(sibling,definition);
         if(value!==null)add(definition,value,itemLabel,'sibling',80-depth*4,sibling);
       }
     }
@@ -263,6 +275,10 @@ for(const definition of definitions){
       for(const text of componentTexts(component)){
         const match=text.match(/^[\\(\\[]?\\s*(\\d{1,4})\\s*(?:건)?\\s*[\\)\\]]?$/);
         if(match)return Number(match[1]);
+        if(definition.system==='edufine'){
+          const badge=text.match(/^(\\d{1,4})\\s*\\(\\s*\\d{1,4}\\s*\\)\\s*(?:건)?$/);
+          if(badge)return Number(badge[1]);
+        }
       }
       return null;
     };
@@ -311,9 +327,14 @@ for(const definition of definitions){
         });
         const itemLabel=definition.items.find((label)=>cells.some(({text})=>compact(text)===compact(label)));
         if(!itemLabel)continue;
-        const numericCells=cells.filter(({text})=>/^\\d{1,4}$/.test(text)).map((cell)=>({
+        const numericCells=cells.map((cell)=>({
           ...cell,
-          value:Number(cell.text),
+          countMatch:cell.text.match(definition.system==='edufine'
+            ? /^(\\d{1,4})(?:\\s*\\(\\s*\\d{1,4}\\s*\\))?$/
+            : /^(\\d{1,4})$/),
+        })).filter(({countMatch})=>countMatch).map((cell)=>({
+          ...cell,
+          value:Number(cell.countMatch[1]),
           countColumn:/(?:^|_)(?:cnt|count|total|num|number)(?:$|_)|건수|결재.*수|approval.*(?:cnt|count)|urgent.*(?:cnt|count)/i.test(cell.id),
         })).filter(({id})=>!pageControl.test(id));
         const preferred=numericCells.filter(({countColumn})=>countColumn);

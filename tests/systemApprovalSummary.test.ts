@@ -58,6 +58,53 @@ describe('connected system approval summary', () => {
     ] }], 'edufine')).toThrow(/전역 건수를 찾지 못했습니다/);
   });
 
+  it('reads the total before the urgent subset from an Edufine 2(0) badge', () => {
+    const bounds = { left: 490, top: 45, width: 105, height: 20, right: 595, bottom: 65 };
+    const element = {
+      hidden: false,
+      id: 'approval-status',
+      className: 'top-status',
+      innerText: '결재(긴급) 2(0)',
+      textContent: '결재(긴급) 2(0)',
+      parentElement: null,
+      nextElementSibling: null,
+      previousElementSibling: null,
+      children: [],
+      getAttribute: () => '',
+      getBoundingClientRect: () => bounds,
+      querySelectorAll: () => [],
+      contains: () => false,
+    };
+    const defaultView = {
+      getComputedStyle: () => ({
+        display: 'block',
+        visibility: 'visible',
+        opacity: '1',
+        content: 'none',
+      }),
+    };
+    const fakeDocument = {
+      defaultView,
+      querySelectorAll: (selector: string) => selector === 'iframe,frame' ? [] : [element],
+    };
+    Object.assign(element, { ownerDocument: fakeDocument });
+    const fakeWindow = { document: fakeDocument };
+    const value = new Function(
+      'window',
+      'document',
+      `return ${SYSTEM_APPROVAL_SUMMARY_EXPRESSION}`,
+    )(fakeWindow, fakeDocument);
+
+    expect(value.candidates).toContainEqual(expect.objectContaining({
+      system: 'edufine',
+      value: 2,
+      itemLabel: '결재(긴급)',
+      relation: 'inline',
+      confidence: 100,
+    }));
+    expect(parseSystemApprovalCount([value], 'edufine')).toBe(2);
+  });
+
   it('reads a label-anchored Edufine count directly from a Nexacro Dataset', () => {
     const dataset = {
       id: 'dsApprovalSummary',
