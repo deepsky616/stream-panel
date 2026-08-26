@@ -440,6 +440,10 @@ describe('managed web connector service', () => {
       systems: { neis: true, edufine: false },
     };
     controller.getConnectionPresence = () => presence;
+    controller.inspectConnectionHealth = async () => ({
+      portal: 'missing',
+      systems: { neis: 'authenticated', edufine: 'missing' },
+    });
     const service = createWebConnectorService({
       userDataPath: 'C:\\StreamPanel',
       platform: 'win32',
@@ -463,6 +467,58 @@ describe('managed web connector service', () => {
       system: 'neis',
       state: 'disconnected',
     }));
+    await service.stop();
+  });
+
+  it('marks the portal and both systems for reconnect after passive auth expiry', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    controller.getConnectionPresence = () => ({
+      portal: true,
+      systems: { neis: true, edufine: true },
+    });
+    let expired = false;
+    controller.inspectConnectionHealth = async () => expired
+      ? {
+          portal: 'login-required',
+          systems: { neis: 'login-required', edufine: 'login-required' },
+        }
+      : {
+          portal: 'authenticated',
+          systems: { neis: 'authenticated', edufine: 'authenticated' },
+        };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+    });
+    await service.start();
+    await expect(service.test('edge')).resolves.toEqual({ ok: true });
+    expect(service.getStatuses()[0]).toMatchObject({
+      connected: true,
+      portal: { state: 'connected' },
+      systems: [
+        { system: 'neis', state: 'connected' },
+        { system: 'edufine', state: 'connected' },
+      ],
+    });
+
+    expired = true;
+    await expect(service.test('edge')).resolves.toEqual({ ok: true });
+    expect(service.getStatuses()[0]).toMatchObject({
+      connected: true,
+      portal: { state: 'login-required', message: expect.stringContaining('로그인이 만료') },
+      systems: [
+        { system: 'neis', state: 'login-required' },
+        { system: 'edufine', state: 'login-required' },
+      ],
+    });
     await service.stop();
   });
 

@@ -10,6 +10,7 @@ import type {
   EducationOfficeCode,
   WebConnectorBrowserId,
   WebConnectorStatus,
+  WebConnectionSurfaceStatus,
   WebSystemConnectionStatus,
   WebWorkflowSystem,
 } from '../../../shared/types';
@@ -26,6 +27,11 @@ export interface WebWorkSystemState extends WebSystemConnectionStatus {
   stateLabel: string;
 }
 
+export interface WebWorkPortalState extends WebConnectionSurfaceStatus {
+  label: '업무포털';
+  stateLabel: string;
+}
+
 export interface WebWorkBrowserCard {
   browserId: WebConnectorBrowserId;
   name: string;
@@ -33,6 +39,7 @@ export interface WebWorkBrowserCard {
   state: WebWorkBrowserState;
   stateLabel: string;
   lastSeenAt?: number;
+  portal?: WebWorkPortalState;
   systems: WebWorkSystemState[];
 }
 
@@ -46,7 +53,7 @@ const SYSTEM_STATE_LABELS: Record<WebSystemConnectionStatus['state'], string> = 
   connecting: '연결 중',
   connected: '연결됨',
   disconnected: '다시 연결 필요',
-  'login-required': '추가 로그인 필요',
+  'login-required': '다시 연결 필요',
   error: '실패',
 };
 
@@ -66,11 +73,25 @@ export function createWebWorkBrowserCards(
       label: SYSTEM_LABELS[system.system],
       stateLabel: SYSTEM_STATE_LABELS[system.state],
     }));
-    const hasConnecting = systems.some((system) => system.state === 'connecting');
+    const portal = status?.portal ? {
+      ...status.portal,
+      label: '업무포털' as const,
+      stateLabel: SYSTEM_STATE_LABELS[status.portal.state],
+    } : undefined;
+    const hasConnecting = portal?.state === 'connecting' ||
+      systems.some((system) => system.state === 'connecting');
+    const hasConnectedSystem = systems.some((system) => system.state === 'connected');
+    const needsReconnect = systems.some((system) => (
+      system.state === 'disconnected' || system.state === 'login-required'
+    )) || portal?.state === 'login-required' || (
+      portal?.state === 'disconnected' && !hasConnectedSystem
+    );
     const state: WebWorkBrowserState = errorBrowserId === browserId
       ? 'error'
       : busyBrowserId === browserId || hasConnecting
         ? 'running'
+        : needsReconnect
+          ? 'needs-connection'
         : status?.connected
           ? 'ready'
           : 'needs-connection';
@@ -88,6 +109,7 @@ export function createWebWorkBrowserCards(
       state,
       stateLabel,
       systems,
+      ...(portal ? { portal } : {}),
       ...(status?.lastSeenAt !== undefined ? { lastSeenAt: status.lastSeenAt } : {}),
     };
   });

@@ -45,6 +45,7 @@ export interface WorkflowStep {
     | 'dom-click'
     | 'frame-exact-text'
     | 'neis-home'
+    | 'neis-personal-menu'
     | 'neis-management-tab'
     | 'edufine-job'
     | 'edufine-job-toggle'
@@ -67,6 +68,8 @@ export interface WorkflowStep {
   allowActionText?: boolean;
   /** Resume a built-in workflow when this step's destination is already visible. */
   skipWhenSatisfied?: boolean;
+  /** Skip this navigation step when any of these existing work tabs is visible. */
+  skipWhenVisibleAny?: readonly string[];
   postcondition: WorkflowPostcondition;
   maxChecks: number;
   checkDelayMs: number;
@@ -96,6 +99,30 @@ export function createNeisHomeStep(
     checkDelayMs,
     // Always click the top-left office mark so a previous duty, trip, or
     // approval view cannot become the starting point of a new workflow.
+    skipWhenSatisfied: false,
+  };
+}
+
+export function createNeisPersonalMenuStep(
+  existingTabLabels: readonly string[],
+  nextLabels: readonly string[],
+  maxChecks = 40,
+  checkDelayMs = 250,
+): WorkflowStep {
+  return {
+    id: 'open-neis-personal-menu',
+    candidateLabels: ['개인 메뉴'],
+    interaction: 'neis-personal-menu',
+    selection: 'first-available',
+    postcondition: {
+      kind: 'visible-any',
+      labels: [...new Set([...nextLabels, ...existingTabLabels])],
+    },
+    maxChecks,
+    checkDelayMs,
+    // Existing lower work tabs are the safest continuation point. Open the
+    // left personal-menu icon only when neither requested manager is present.
+    skipWhenVisibleAny: existingTabLabels,
     skipWhenSatisfied: false,
   };
 }

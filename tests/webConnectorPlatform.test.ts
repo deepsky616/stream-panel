@@ -7,6 +7,7 @@ import {
   createWindowsManagedSessionManager,
   executeWindowsWorkflow,
   getWindowsConnectionPresence,
+  inspectWindowsConnectionHealth,
   openCdpWindowsApprovalPage,
   openCdpWindowsWorkflowPage,
   openWindowsOfficePortal,
@@ -51,6 +52,74 @@ function page(origin: string): WindowsWorkflowPage {
 }
 
 describe('Windows managed web automation', () => {
+  it('passively distinguishes expired and authenticated managed tabs', async () => {
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>, sessionId?: string) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [
+            { targetId: 'portal', type: 'page', url: 'https://goe.eduptl.kr/main' },
+            { targetId: 'neis', type: 'page', url: 'https://goe.neis.go.kr/main' },
+            { targetId: 'edufine', type: 'page', url: 'https://klef.goe.go.kr/main' },
+          ] };
+        }
+        if (method === 'Target.attachToTarget') {
+          return { sessionId: `${String(params.targetId)}-session` };
+        }
+        if (method === 'Runtime.evaluate' && String(params.expression ?? '').includes('loginVisible')) {
+          if (sessionId === 'portal-session') {
+            return { result: { value: {
+              href: 'https://goe.eduptl.kr/login',
+              origin: 'https://goe.eduptl.kr',
+              readyState: 'complete',
+              loginVisible: true,
+              portalReady: false,
+            } } };
+          }
+          if (sessionId === 'neis-session') {
+            return { result: { value: {
+              href: 'https://goe.neis.go.kr/login',
+              origin: 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: true,
+              neisReady: false,
+            } } };
+          }
+          return { result: { value: {
+            href: 'https://klef.goe.go.kr/main',
+            origin: 'https://klef.goe.go.kr',
+            readyState: 'complete',
+            loginVisible: false,
+            edufineReady: true,
+          } } };
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      portalTargetId: 'portal',
+      connectionTargetIds: { neis: 'neis', edufine: 'edufine' },
+      maintenancePauseDepth: 0,
+      cdpOperationTail: Promise.resolve(),
+      workflowState: 'IDLE' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+
+    await expect(inspectWindowsConnectionHealth(session as never)).resolves.toEqual({
+      portal: 'login-required',
+      systems: { neis: 'login-required', edufine: 'authenticated' },
+    });
+  });
+
   it('does not launch a managed browser for a scheduled check without a live connection', async () => {
     let browserLaunches = 0;
     const controller = createWindowsManagedSessionManager({
@@ -3127,6 +3196,95 @@ describe('Windows managed web automation', () => {
     expect(scanExpression).toContain('경기도교육청');
     expect(scanExpression).not.toContain('서울특별시교육청');
     for (const expression of homeExpressions) {
+      expect(() => new Function(`return ${expression}`)).not.toThrow();
+    }
+    expect(inputCommands).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+    await workflowPage.release?.();
+  });
+
+  it('clicks the top person icon in the NEIS left rail when lower work tabs are absent', async () => {
+    const expressions: string[] = [];
+    const inputCommands: string[] = [];
+    const protocol = {
+      isClosed: false,
+      async send(method: string, params: Record<string, unknown>) {
+        if (method === 'Target.getTargets') {
+          return { targetInfos: [{
+            targetId: 'neis-main',
+            type: 'page',
+            url: 'https://goe.neis.go.kr/main',
+          }] };
+        }
+        if (method === 'Target.attachToTarget') return { sessionId: 'neis-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 22 };
+        if (method === 'Input.dispatchMouseEvent') {
+          inputCommands.push(String(params.type));
+          return {};
+        }
+        if (method === 'Runtime.evaluate') {
+          const expression = String(params.expression ?? '');
+          expressions.push(expression);
+          if (expression.includes('loginVisible')) {
+            return { result: { value: {
+              href: 'https://goe.neis.go.kr/main',
+              origin: 'https://goe.neis.go.kr',
+              readyState: 'complete',
+              loginVisible: false,
+              neisReady: true,
+            } } };
+          }
+          if (expression.includes("[id$='btnUseTimeExtn']")) {
+            return { result: { value: { handled: false } } };
+          }
+          if (expression.includes("'NEIS-PERSONAL-MENU'")) {
+            return { result: { value: [safeCandidate(0, '개인 메뉴')] } };
+          }
+          if (expression.includes('const interaction="neis-personal-menu"')) {
+            return { result: { value: { ok: true, x: 25, y: 30 } } };
+          }
+          if (expression === 'location.origin') {
+            return { result: { value: 'https://goe.neis.go.kr' } };
+          }
+        }
+        return {};
+      },
+      close() { this.isClosed = true; },
+    };
+    const session = {
+      officeCode: 'goe' as const,
+      browserId: 'edge' as const,
+      connection: {
+        protocol,
+        transportKind: 'pipe' as const,
+        process: { exited: false },
+      },
+      isAlive: () => true,
+      close: async () => undefined,
+    };
+    const workflowPage = await openCdpWindowsWorkflowPage(session as never, 'neis-leave');
+    const step = {
+      id: 'open-neis-personal-menu',
+      candidateLabels: ['개인 메뉴'],
+      interaction: 'neis-personal-menu' as const,
+      postcondition: { kind: 'visible-any' as const, labels: ['복무'] },
+      maxChecks: 1,
+      checkDelayMs: 1,
+    };
+
+    const candidates = await workflowPage.inspectCandidates(step);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject(safeCandidate(0, '개인 메뉴'));
+    await workflowPage.pressCandidate(candidates[0], step);
+
+    const iconExpressions = expressions.filter((expression) => (
+      expression.includes('neis-personal-menu') || expression.includes('NEIS-PERSONAL-MENU')
+    ));
+    expect(iconExpressions).toHaveLength(2);
+    expect(iconExpressions.every((expression) => expression.includes('inLeftRail'))).toBe(true);
+    expect(iconExpressions.every((expression) => expression.includes('lowerPeers'))).toBe(true);
+    expect(iconExpressions.every((expression) => expression.includes('person|personal|profile'))).toBe(true);
+    expect(iconExpressions.every((expression) => expression.includes('globalTop'))).toBe(true);
+    for (const expression of iconExpressions) {
       expect(() => new Function(`return ${expression}`)).not.toThrow();
     }
     expect(inputCommands).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);

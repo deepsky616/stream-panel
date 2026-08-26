@@ -94,6 +94,10 @@ export async function runWorkflow(
 ): Promise<WorkflowRunResult> {
   for (const step of definition.steps) {
     ensureActive(signal);
+    if (step.skipWhenVisibleAny && await adapter.checkCurrentState?.({
+      ...step,
+      postcondition: { kind: 'visible-any', labels: step.skipWhenVisibleAny },
+    })) continue;
     // Work portals keep prior menus and forms open. If this step's destination is
     // already visible, resume from that state instead of forcing the user back
     // through every parent menu.

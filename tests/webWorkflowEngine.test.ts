@@ -186,6 +186,38 @@ describe('managed web workflow engine', () => {
     expect(pressed).toEqual(['open-management']);
   });
 
+  it('opens the NEIS personal icon only when no lower management tab is visible', async () => {
+    const personalStep: WorkflowStep = {
+      ...step,
+      id: 'open-neis-personal-menu',
+      candidateLabels: ['개인 메뉴'],
+      interaction: 'neis-personal-menu',
+      postcondition: { kind: 'visible-any', labels: ['복무'] },
+      skipWhenVisibleAny: ['개인근무상황관리', '개인출장관리'],
+      skipWhenSatisfied: false,
+    };
+    const pressed: string[] = [];
+    const checkedLabels: string[][] = [];
+    await expect(runWorkflow(
+      { id: 'neis-leave', label: '나이스 복무', finalState: 'leave-form', steps: [personalStep] },
+      {
+        inspectCandidates: async () => [candidate(0, '개인 메뉴')],
+        pressCandidate: async (_selected, current) => { pressed.push(current.id); },
+        checkCurrentState: async (current) => {
+          const labels = current.postcondition.kind === 'visible-any'
+            ? [...current.postcondition.labels]
+            : [];
+          checkedLabels.push(labels);
+          return labels.includes('개인근무상황관리');
+        },
+        checkPostcondition: async () => true,
+        wait: async () => undefined,
+      },
+    )).resolves.toEqual({ workflowId: 'neis-leave', finalState: 'leave-form' });
+    expect(checkedLabels).toEqual([['개인근무상황관리', '개인출장관리']]);
+    expect(pressed).toEqual([]);
+  });
+
   it('does not press the next step when the current postcondition never succeeds', async () => {
     const pressed: string[] = [];
     const second: WorkflowStep = {

@@ -126,6 +126,8 @@ export interface WebConnectorStatus {
   paired: boolean;
   connected: boolean;
   lastSeenAt?: number;
+  /** Authentication state of the office portal tab, independent of Chromium. */
+  portal?: WebConnectionSurfaceStatus;
   /** Present for Windows managed sessions; optional for legacy/preload status payloads. */
   systems?: WebSystemConnectionStatus[];
 }
@@ -138,11 +140,33 @@ export interface WebConnectionConfig {
   sessionKeepAlive: Record<WebWorkflowSystem, boolean>;
 }
 
-export interface WebSystemConnectionStatus {
-  system: WebWorkflowSystem;
-  state: 'idle' | 'connecting' | 'connected' | 'disconnected' | 'login-required' | 'error';
+export type WebConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'disconnected'
+  | 'login-required'
+  | 'error';
+
+export interface WebConnectionSurfaceStatus {
+  state: WebConnectionState;
   checkedAt?: number;
   message?: string;
+}
+
+export type WebConnectionHealthState =
+  | 'authenticated'
+  | 'login-required'
+  | 'missing'
+  | 'unknown';
+
+export interface WebConnectionHealthSnapshot {
+  portal: WebConnectionHealthState;
+  systems: Record<WebWorkflowSystem, WebConnectionHealthState>;
+}
+
+export interface WebSystemConnectionStatus extends WebConnectionSurfaceStatus {
+  system: WebWorkflowSystem;
 }
 
 export interface ApprovalMonitorSourceConfig {

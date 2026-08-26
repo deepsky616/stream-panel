@@ -145,12 +145,26 @@ describe('web work settings view model', () => {
         { system: 'edufine', state: 'login-required', message: '인증이 필요합니다.' },
       ],
     }])[0]).toMatchObject({
-      state: 'ready',
-      stateLabel: '준비됨',
+      state: 'needs-connection',
+      stateLabel: '연결 필요',
       systems: [
         { system: 'neis', label: '나이스', stateLabel: '연결됨' },
-        { system: 'edufine', label: 'K-에듀파인', stateLabel: '추가 로그인 필요' },
+        { system: 'edufine', label: 'K-에듀파인', stateLabel: '다시 연결 필요' },
       ],
+    });
+    expect(createWebWorkBrowserCards([{
+      browserId: 'edge',
+      paired: true,
+      connected: true,
+      portal: { state: 'login-required', message: '업무포털 로그인이 만료되었습니다.' },
+      systems: [
+        { system: 'neis', state: 'login-required' },
+        { system: 'edufine', state: 'login-required' },
+      ],
+    }])[0]).toMatchObject({
+      state: 'needs-connection',
+      stateLabel: '연결 필요',
+      portal: { label: '업무포털', stateLabel: '다시 연결 필요' },
     });
     expect(createWebWorkBrowserCards([{
       browserId: 'edge',

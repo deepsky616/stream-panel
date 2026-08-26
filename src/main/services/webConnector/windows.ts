@@ -6,6 +6,7 @@ import { getEducationOffice, isAllowedOfficeHost } from '../../../shared/educati
 import type {
   BuiltInWebWorkflowId,
   EducationOfficeCode,
+  WebConnectionHealthSnapshot,
   WebConnectorBrowserId,
   WebSystemConnectionStatus,
   WebWorkflowId,
@@ -1842,10 +1843,61 @@ const neisHomeMatch=(label)=>{
   }
   return unique[0]||null;
 };
+const neisPersonalMenuMatch=(label)=>{
+  const marker=/person|personal|profile|member|user|human|my(?:menu|_menu|-menu)|individual|mypage|my_page|개인|사용자|나의\\s*메뉴/;
+  const selector='a,button,[role="button"],[role="menuitem"],[onclick],[tabindex],img,svg,picture,canvas,object,input[type="image"],[style*="background" i],[id*="person" i],[class*="person" i],[id*="user" i],[class*="user" i],[id*="profile" i],[class*="profile" i]';
+  const entries=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll(selector))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>visible(element)&&enabled(element))
+    .map((entry)=>{
+      const ancestry=[];
+      for(let current=entry.element,depth=0;current&&depth<7;current=current.parentElement,depth+=1){ancestry.push(current);}
+      const clickable=entry.element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick],[tabindex]')||
+        ancestry.find(candidate=>globalThis.getComputedStyle?.(candidate)?.cursor==='pointer')||entry.element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      const rect=clickable.getBoundingClientRect();
+      const width=Math.max(1,Number(clickable.ownerDocument?.defaultView?.innerWidth)||1920);
+      const height=Math.max(1,Number(clickable.ownerDocument?.defaultView?.innerHeight)||1080);
+      const globalLeft=entry.offsetX+rect.left;
+      const globalTop=entry.offsetY+rect.top;
+      const inLeftRail=globalLeft>=-4&&globalTop>=-4&&
+        globalLeft<=Math.max(140,width*0.1)&&globalTop<=Math.max(360,height*0.38);
+      const iconSize=rect.width>=24&&rect.width<=96&&rect.height>=24&&rect.height<=96;
+      if(!inLeftRail||!iconSize)return null;
+      const texts=surfaceTextsOf(entry.element).map(normalize);
+      const textMatched=texts.some(text=>displayedLabelMatches(text,label));
+      const signal=[
+        entry.element.id,entry.element.className,entry.element.getAttribute?.('src'),entry.element.getAttribute?.('data'),entry.element.currentSrc,
+        entry.element.getAttribute?.('alt'),entry.element.getAttribute?.('title'),entry.element.getAttribute?.('aria-label'),
+        globalThis.getComputedStyle?.(entry.element)?.backgroundImage,
+        ...ancestry.map(current=>String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('aria-label')||'')+' '+String(current.getAttribute?.('title')||''))
+      ].map(value=>String(value||'').toLowerCase()).join(' ');
+      return {...entry,element:clickable,rect,globalLeft,globalTop,textMatched,explicit:marker.test(signal)};
+    }).filter(Boolean);
+  const unique=[];
+  for(const entry of entries){if(!unique.some(candidate=>candidate.element===entry.element))unique.push(entry);}
+  const matches=unique.map((entry)=>{
+    const centerX=entry.globalLeft+entry.rect.width/2;
+    const lowerPeers=unique.filter(candidate=>candidate!==entry&&
+      candidate.globalTop>entry.globalTop+entry.rect.height*0.55&&
+      candidate.globalTop-entry.globalTop<=420&&
+      Math.abs(candidate.globalLeft+candidate.rect.width/2-centerX)<=Math.max(16,entry.rect.width*0.55)
+    ).length;
+    if(!entry.textMatched&&!entry.explicit&&lowerPeers<2)return null;
+    return {...entry,score:(entry.textMatched?1200:0)+(entry.explicit?900:0)+lowerPeers*140-entry.globalTop/4-entry.globalLeft/8};
+  }).filter(Boolean).sort((left,right)=>right.score-left.score||left.globalTop-right.globalTop);
+  return matches[0]||null;
+};
 if(interaction==='neis-home'){
   return labels.flatMap((label,index)=>{
     const match=neisHomeMatch(label);
     return match?[summary(match.element,index,label,'NEIS-HOME',match.offsetX,match.offsetY)]:[];
+  });
+}
+if(interaction==='neis-personal-menu'){
+  return labels.flatMap((label,index)=>{
+    const match=neisPersonalMenuMatch(label);
+    return match?[summary(match.element,index,label,'NEIS-PERSONAL-MENU',match.offsetX,match.offsetY)]:[];
   });
 }
 if(interaction==='neis-management-tab'){
@@ -1930,6 +1982,7 @@ function candidateScanExpression(step: WorkflowStep): string {
   return step.interaction?.startsWith('edufine-') ||
     step.interaction === 'frame-exact-text' ||
     step.interaction === 'neis-home' ||
+    step.interaction === 'neis-personal-menu' ||
     step.interaction === 'neis-management-tab'
     ? edufineCandidateScanExpression(step)
     : CANDIDATE_SCAN_EXPRESSION;
@@ -2265,9 +2318,56 @@ const neisHomeMatch=()=>{
   }
   return unique[0]||null;
 };
-if(interaction==='neis-home'||interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'||interaction==='edufine-submenu'||interaction==='edufine-form-launch'){
+const neisPersonalMenuMatch=()=>{
+  const marker=/person|personal|profile|member|user|human|my(?:menu|_menu|-menu)|individual|mypage|my_page|개인|사용자|나의\\s*메뉴/;
+  const selector='a,button,[role="button"],[role="menuitem"],[onclick],[tabindex],img,svg,picture,canvas,object,input[type="image"],[style*="background" i],[id*="person" i],[class*="person" i],[id*="user" i],[class*="user" i],[id*="profile" i],[class*="profile" i]';
+  const entries=documents.flatMap(({document,offsetX,offsetY})=>Array.from(document.querySelectorAll(selector))
+    .map(element=>({element,offsetX,offsetY})))
+    .filter(({element})=>visible(element)&&enabled(element))
+    .map((entry)=>{
+      const ancestry=[];
+      for(let current=entry.element,depth=0;current&&depth<7;current=current.parentElement,depth+=1){ancestry.push(current);}
+      const clickable=entry.element.closest?.('a,button,[role="button"],[role="menuitem"],[onclick],[tabindex]')||
+        ancestry.find(candidate=>globalThis.getComputedStyle?.(candidate)?.cursor==='pointer')||entry.element;
+      if(!visible(clickable)||!enabled(clickable))return null;
+      const rect=clickable.getBoundingClientRect();
+      const width=Math.max(1,Number(clickable.ownerDocument?.defaultView?.innerWidth)||1920);
+      const height=Math.max(1,Number(clickable.ownerDocument?.defaultView?.innerHeight)||1080);
+      const globalLeft=entry.offsetX+rect.left;
+      const globalTop=entry.offsetY+rect.top;
+      const inLeftRail=globalLeft>=-4&&globalTop>=-4&&
+        globalLeft<=Math.max(140,width*0.1)&&globalTop<=Math.max(360,height*0.38);
+      const iconSize=rect.width>=24&&rect.width<=96&&rect.height>=24&&rect.height<=96;
+      if(!inLeftRail||!iconSize)return null;
+      const texts=surfaceTextsOf(entry.element).map(normalize);
+      const textMatched=texts.some(text=>displayedLabelMatches(text,normalizedWanted));
+      const signal=[
+        entry.element.id,entry.element.className,entry.element.getAttribute?.('src'),entry.element.getAttribute?.('data'),entry.element.currentSrc,
+        entry.element.getAttribute?.('alt'),entry.element.getAttribute?.('title'),entry.element.getAttribute?.('aria-label'),
+        globalThis.getComputedStyle?.(entry.element)?.backgroundImage,
+        ...ancestry.map(current=>String(current.id||'')+' '+String(current.className||'')+' '+String(current.getAttribute?.('aria-label')||'')+' '+String(current.getAttribute?.('title')||''))
+      ].map(value=>String(value||'').toLowerCase()).join(' ');
+      return {...entry,element:clickable,rect,globalLeft,globalTop,textMatched,explicit:marker.test(signal)};
+    }).filter(Boolean);
+  const unique=[];
+  for(const entry of entries){if(!unique.some(candidate=>candidate.element===entry.element))unique.push(entry);}
+  const matches=unique.map((entry)=>{
+    const centerX=entry.globalLeft+entry.rect.width/2;
+    const lowerPeers=unique.filter(candidate=>candidate!==entry&&
+      candidate.globalTop>entry.globalTop+entry.rect.height*0.55&&
+      candidate.globalTop-entry.globalTop<=420&&
+      Math.abs(candidate.globalLeft+candidate.rect.width/2-centerX)<=Math.max(16,entry.rect.width*0.55)
+    ).length;
+    if(!entry.textMatched&&!entry.explicit&&lowerPeers<2)return null;
+    return {...entry,score:(entry.textMatched?1200:0)+(entry.explicit?900:0)+lowerPeers*140-entry.globalTop/4-entry.globalLeft/8};
+  }).filter(Boolean).sort((left,right)=>right.score-left.score||left.globalTop-right.globalTop);
+  return matches[0]||null;
+};
+if(interaction==='neis-home'||interaction==='neis-personal-menu'||interaction==='neis-management-tab'||interaction==='edufine-left-toggle'||interaction==='edufine-left-menu'||interaction==='edufine-top-menu'||interaction==='edufine-document-menu'||interaction==='edufine-right-menu'||interaction==='edufine-mega-menu'||interaction==='edufine-popup-menu'||interaction==='edufine-submenu'||interaction==='edufine-form-launch'){
   const match=interaction==='neis-home'
     ? neisHomeMatch()
+    : interaction==='neis-personal-menu'
+    ? neisPersonalMenuMatch()
     : interaction==='neis-management-tab'
     ? neisManagementTabMatch()
     : interaction==='edufine-left-toggle'
@@ -2799,6 +2899,7 @@ interface PageReadinessState {
   origin: string;
   readyState: string;
   loginVisible: boolean;
+  portalReady?: boolean;
   neisReady?: boolean;
   edufineReady?: boolean;
   marker?: string;
@@ -2842,6 +2943,17 @@ const neisReady=documents.some(({document})=>{
     .some(element=>visible(element)&&['복무','나이스'].some(label=>textOf(element)===label||textOf(element).startsWith(label+' ')));
   return menu||/(^|\\s)나이스(\\s|$)/.test((document.body?.innerText||'').slice(0,12000));
 });
+const portalReady=documents.some(({document})=>{
+  const elements=Array.from(document.querySelectorAll('a,button,[role="button"],[role="menuitem"],[onclick]'))
+    .filter(visible);
+  const texts=elements.flatMap(element=>surfaceTextsOf(element).map(normalize));
+  const hasNeis=texts.some(text=>['나이스','NEIS','나이스(NEIS)','나이스 (NEIS)'].includes(text));
+  const hasEdufine=texts.some(text=>['K-에듀파인','K에듀파인','K 에듀파인','에듀파인'].includes(text));
+  const body=normalize((document.body?.innerText||document.body?.textContent||'').slice(0,20000));
+  const dashboard=body.includes('승인사항')&&
+    (body.includes('전자결재 현황')||body.includes('전자결재현황'));
+  return (hasNeis&&hasEdufine)||dashboard;
+});
 let edufineReady=false;
 let jobNames=[];
 let selectedJob='';
@@ -2871,8 +2983,8 @@ for(const {document} of documents){
 return {
   href:location.href,origin:location.origin,readyState:document.readyState,
   loginVisible:password||loginControl||loginPath||expiredSession,
-  neisReady,edufineReady,jobNames,selectedJob,
-  marker:edufineReady?'edufine-job-list':neisReady?'neis-application-menu':'unready'
+  portalReady,neisReady,edufineReady,jobNames,selectedJob,
+  marker:portalReady?'portal-main':edufineReady?'edufine-job-list':neisReady?'neis-application-menu':'unready'
 };
 })()`;
 
@@ -2996,6 +3108,7 @@ function readPageReadinessState(value: unknown): PageReadinessState | null {
     origin: state.origin,
     readyState: state.readyState,
     loginVisible: state.loginVisible,
+    ...(typeof state.portalReady === 'boolean' ? { portalReady: state.portalReady } : {}),
     ...(typeof state.neisReady === 'boolean' ? { neisReady: state.neisReady } : {}),
     ...(typeof state.edufineReady === 'boolean' ? { edufineReady: state.edufineReady } : {}),
     ...(typeof state.marker === 'string' ? { marker: state.marker.slice(0, 48) } : {}),
@@ -3082,6 +3195,7 @@ async function pressCandidateWithCdp(
   const isSpecializedInteraction = interaction.startsWith('edufine-') ||
     interaction === 'frame-exact-text' ||
     interaction === 'neis-home' ||
+    interaction === 'neis-personal-menu' ||
     interaction === 'neis-management-tab';
   const action = await evaluateValue<{
     ok?: unknown;
@@ -3556,6 +3670,7 @@ function createWindowsWorkflowPage(
       );
       const supportsCrossFrameLookup = workflowSystem === 'edufine' ||
         step.interaction === 'neis-home' ||
+        step.interaction === 'neis-personal-menu' ||
         step.interaction === 'neis-management-tab';
       if (candidates.length > 0 || !supportsCrossFrameLookup) return candidates;
       return inspectEdufineCandidatesAcrossFrames(session, active.sessionId, effectiveStep);
@@ -3589,7 +3704,9 @@ function createWindowsWorkflowPage(
         active.sessionId,
         postconditionExpression(step),
       )) return true;
-      return workflowSystem === 'edufine' || step.interaction === 'neis-home'
+      return workflowSystem === 'edufine' ||
+        step.interaction === 'neis-home' ||
+        step.interaction === 'neis-personal-menu'
         ? checkEdufinePostconditionAcrossFrames(session, active.sessionId, step)
         : false;
     },
@@ -5401,6 +5518,86 @@ async function inspectDedicatedConnectionState(
     : { state: 'authenticated', target: inspected.target };
 }
 
+async function readTargetHealthState(
+  session: WindowsManagedBrowserSession,
+  target: WindowsTargetInfo,
+): Promise<PageReadinessState | null> {
+  let attached: AttachedWindowsTarget | undefined;
+  try {
+    attached = await attachWindowsTarget(session, target);
+    return readPageReadinessState(
+      await evaluateValue(session, attached.sessionId, PAGE_READINESS_EXPRESSION),
+    );
+  } catch {
+    return null;
+  } finally {
+    if (attached) await detachWindowsTarget(session, attached);
+  }
+}
+
+/**
+ * Passively verifies the exact tabs already owned by Stream Panel. It never
+ * activates, reloads, navigates, creates, or closes a browser target.
+ */
+export async function inspectWindowsConnectionHealth(
+  session: WindowsManagedBrowserSession,
+): Promise<WebConnectionHealthSnapshot> {
+  let targets: WindowsTargetInfo[] = [];
+  try {
+    targets = readTargetInfos(
+      await session.connection.protocol.send('Target.getTargets', {}),
+    ).filter((target) => target.type === 'page');
+  } catch {
+    return {
+      portal: 'unknown',
+      systems: { neis: 'unknown', edufine: 'unknown' },
+    };
+  }
+
+  const office = getEducationOffice(session.officeCode);
+  const portalOrigin = new URL(office.portalUrl).origin;
+  const portalTarget = targets.find((target) => target.targetId === session.portalTargetId);
+  let portal: WebConnectionHealthSnapshot['portal'] = 'missing';
+  if (portalTarget) {
+    const state = await readTargetHealthState(session, portalTarget);
+    portal = !state
+      ? 'unknown'
+      : state.loginVisible
+        ? 'login-required'
+        : state.origin !== portalOrigin
+          ? 'missing'
+          : state.portalReady === true
+            ? 'authenticated'
+            : 'unknown';
+  }
+
+  const systems = {} as WebConnectionHealthSnapshot['systems'];
+  for (const system of ['neis', 'edufine'] as const) {
+    const target = await findDedicatedConnectionTarget(session, system);
+    if (!target) {
+      systems[system] = 'missing';
+      continue;
+    }
+    const state = await readTargetHealthState(session, target);
+    if (!state) {
+      systems[system] = 'unknown';
+      continue;
+    }
+    if (state.loginVisible) {
+      systems[system] = 'login-required';
+      continue;
+    }
+    if (!systemTargetAllowed({ ...target, url: state.href }, session.officeCode, system)) {
+      systems[system] = 'missing';
+      continue;
+    }
+    systems[system] = (
+      system === 'neis' ? state.neisReady === true : state.edufineReady === true
+    ) ? 'authenticated' : 'unknown';
+  }
+  return { portal, systems };
+}
+
 interface ExpiredConnectionResetResult {
   reset: boolean;
   currentUrl?: string;
@@ -6346,6 +6543,10 @@ export type WindowsManagedSessionController = ManagedBrowserSessionManager<
     officeCode: EducationOfficeCode,
     browserId: WebConnectorBrowserId,
   ): WindowsConnectionPresence | undefined;
+  inspectConnectionHealth(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): Promise<WebConnectionHealthSnapshot | undefined>;
 };
 
 export function shouldScanApprovalListFirst(
@@ -6514,6 +6715,19 @@ export function createWindowsManagedSessionManager(
     ) {
       const session = manager.getSession(officeCode, browserId);
       return session ? getWindowsConnectionPresence(session) : undefined;
+    },
+    inspectConnectionHealth(
+      officeCode: EducationOfficeCode,
+      browserId: WebConnectorBrowserId,
+    ) {
+      return manager.useExisting(
+        officeCode,
+        browserId,
+        (session) => runSerializedCdpOperation(
+          session,
+          () => inspectWindowsConnectionHealth(session),
+        ),
+      );
     },
     checkApproval(input: ApprovalScanInput) {
       const key = approvalKey(input.officeCode, input.browserId);

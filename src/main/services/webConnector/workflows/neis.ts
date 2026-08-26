@@ -1,4 +1,4 @@
-import { createNeisHomeStep, type ManagedWorkflowDefinition } from './common';
+import { createNeisPersonalMenuStep, type ManagedWorkflowDefinition } from './common';
 
 const COMMON_CHECKS = {
   // Keep the same 10-second tolerance while detecting stable menus twice as fast.
@@ -7,20 +7,27 @@ const COMMON_CHECKS = {
   skipWhenSatisfied: true,
 };
 
+const DUTY_MANAGEMENT_TABS = [
+  '개인근무상황관리',
+  '개인근무상황',
+  '개인출장관리',
+  '출장관리',
+] as const;
+
 export const NEIS_WORKFLOWS = {
   'neis-leave': {
     id: 'neis-leave',
     label: '나이스 복무',
     finalState: 'leave-request-form',
     steps: [
-      createNeisHomeStep(['복무']),
+      createNeisPersonalMenuStep(DUTY_MANAGEMENT_TABS, ['복무']),
       {
         id: 'open-duty-section',
         candidateLabels: ['복무'],
         interaction: 'mouse',
         postcondition: {
           kind: 'visible-any',
-          labels: ['개인근무상황관리', '개인근무상황', '개인출장관리', '출장관리'],
+          labels: DUTY_MANAGEMENT_TABS,
         },
         ...COMMON_CHECKS,
       },
@@ -60,14 +67,14 @@ export const NEIS_WORKFLOWS = {
     label: '나이스 출장',
     finalState: 'trip-request-form',
     steps: [
-      createNeisHomeStep(['복무']),
+      createNeisPersonalMenuStep(DUTY_MANAGEMENT_TABS, ['복무']),
       {
         id: 'open-duty-section',
         candidateLabels: ['복무'],
         interaction: 'mouse',
         postcondition: {
           kind: 'visible-any',
-          labels: ['개인근무상황관리', '개인근무상황', '개인출장관리', '출장관리'],
+          labels: DUTY_MANAGEMENT_TABS,
         },
         ...COMMON_CHECKS,
       },

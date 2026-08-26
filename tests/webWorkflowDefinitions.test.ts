@@ -256,13 +256,13 @@ describe('managed web workflow definitions', () => {
 
   it('uses fixed navigation labels and explicit postconditions for every step', () => {
     expect(definitions['neis-leave'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
-      NEIS_OFFICE_HOME_LABELS,
+      ['개인 메뉴'],
       ['복무'],
       ['개인근무상황관리', '개인근무상황'],
       ['신청(새 창 열기)', '신청'],
     ]);
     expect(definitions['neis-trip'].steps.map(({ candidateLabels }) => candidateLabels)).toEqual([
-      NEIS_OFFICE_HOME_LABELS,
+      ['개인 메뉴'],
       ['복무'],
       ['개인출장관리', '출장관리'],
       ['신청(새 창 열기)', '신청'],
@@ -335,14 +335,44 @@ describe('managed web workflow definitions', () => {
       labels: ['개인출장관리', '출장관리'],
     });
     expect(definitions['neis-leave'].steps[0]).toEqual(expect.objectContaining({
-      interaction: 'neis-home',
+      interaction: 'neis-personal-menu',
       skipWhenSatisfied: false,
-      postcondition: { kind: 'visible-any', labels: ['복무'] },
+      skipWhenVisibleAny: [
+        '개인근무상황관리',
+        '개인근무상황',
+        '개인출장관리',
+        '출장관리',
+      ],
+      postcondition: {
+        kind: 'visible-any',
+        labels: [
+          '복무',
+          '개인근무상황관리',
+          '개인근무상황',
+          '개인출장관리',
+          '출장관리',
+        ],
+      },
     }));
     expect(definitions['neis-trip'].steps[0]).toEqual(expect.objectContaining({
-      interaction: 'neis-home',
+      interaction: 'neis-personal-menu',
       skipWhenSatisfied: false,
-      postcondition: { kind: 'visible-any', labels: ['복무'] },
+      skipWhenVisibleAny: [
+        '개인근무상황관리',
+        '개인근무상황',
+        '개인출장관리',
+        '출장관리',
+      ],
+      postcondition: {
+        kind: 'visible-any',
+        labels: [
+          '복무',
+          '개인근무상황관리',
+          '개인근무상황',
+          '개인출장관리',
+          '출장관리',
+        ],
+      },
     }));
     expect(definitions['neis-leave'].steps[2].interaction).toBe('neis-management-tab');
     expect(definitions['neis-trip'].steps[2].interaction).toBe('neis-management-tab');
@@ -360,6 +390,7 @@ describe('managed web workflow definitions', () => {
     expect(Object.values(definitions).flatMap(({ steps }) => steps).filter(
       ({ id }) => ![
         'open-neis-home',
+        'open-neis-personal-menu',
         'open-leave-management',
         'open-trip-management',
         'open-leave-form',

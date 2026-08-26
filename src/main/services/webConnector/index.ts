@@ -4,6 +4,8 @@ import type {
   ActionItem,
   AppConfig,
   EducationOfficeCode,
+  WebConnectionHealthSnapshot,
+  WebConnectionSurfaceStatus,
   WebConnectorBrowserId,
   WebConnectorStatus,
   WebSystemConnectionStatus,
@@ -98,6 +100,11 @@ export interface WebConnectorSessionController {
     portal: boolean;
     systems: Record<WebWorkflowSystem, boolean>;
   } | undefined;
+  /** Passively verifies existing portal/system tabs without opening or moving them. */
+  inspectConnectionHealth?(
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): Promise<WebConnectionHealthSnapshot | undefined>;
 }
 
 export interface WebConnectorService {
@@ -264,7 +271,11 @@ export function createWebConnectorService({
   const pending = new Set<Promise<void>>();
   const inFlightWorkflows = new Map<string, Promise<void>>();
   const connectionStates = new Map<string, Map<WebWorkflowSystem, WebSystemConnectionStatus>>();
+  const portalConnectionStates = new Map<string, WebConnectionSurfaceStatus>();
+  const uncertainHealthChecks = new Map<string, number>();
   let connectionMonitor: NodeJS.Timeout | undefined;
+  let connectionHealthMonitor: NodeJS.Timeout | undefined;
+  let connectionHealthRefresh: Promise<void> | null = null;
   let publishedStatusSnapshot = '';
   let reportedDisconnectMessages = new Set<string>();
   let configuredOfficeCode = getConfig().educationOfficeCode;
@@ -292,42 +303,59 @@ export function createWebConnectorService({
     >();
     return (['neis', 'edufine'] as const).map((system) => {
       const status = stored?.get(system) ?? { system, state: 'idle' as const };
-      // The connected system tab is authoritative. A workflow can safely
-      // rediscover and reclaim an authenticated tab after Chromium replaces
-      // its target id, even when the older UI state said reconnect was needed.
-      if (
-        sessionAlive &&
-        presence?.systems[system] &&
-        status.state !== 'login-required' &&
-        status.state !== 'connecting' &&
-        status.state !== 'error'
-      ) {
-        const connected = status.state === 'connected'
-          ? { ...status }
-          : { system, state: 'connected' as const, checkedAt: now() };
-        if (status.state !== 'connected') {
-          stored.set(system, connected);
-          connectionStates.set(key, stored);
-        }
-        return connected;
-      }
+      // A remembered target id proves only that a tab exists. Authentication
+      // is promoted to connected exclusively by the passive health inspection.
       if (status.state !== 'connected') return { ...status };
       if (!sessionAlive) {
-        return {
+        const disconnected = {
           system,
           state: 'disconnected' as const,
           message: '업무용 브라우저가 닫혔습니다. 업무포털을 다시 열고 나이스·에듀파인 연결을 눌러 주세요.',
         };
+        stored.set(system, disconnected);
+        connectionStates.set(key, stored);
+        return disconnected;
       }
       if (presence && !presence.systems[system]) {
-        return {
+        const disconnected = {
           system,
           state: 'disconnected' as const,
           message: `${system === 'neis' ? '나이스' : 'K-에듀파인'} 연결 창이 닫혔습니다. 나이스·에듀파인 연결을 다시 눌러 주세요.`,
         };
+        stored.set(system, disconnected);
+        connectionStates.set(key, stored);
+        return disconnected;
       }
       return { ...status };
     });
+  };
+
+  const portalStatus = (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+    sessionAlive: boolean,
+    presence?: { portal: boolean },
+  ): WebConnectionSurfaceStatus => {
+    const key = connectionKey(officeCode, browserId);
+    const status = portalConnectionStates.get(key) ?? { state: 'idle' as const };
+    if (status.state !== 'connected') return { ...status };
+    if (!sessionAlive) {
+      const disconnected = {
+        state: 'disconnected',
+        message: '업무용 브라우저가 닫혔습니다. 업무포털을 다시 열어 주세요.',
+      } as const;
+      portalConnectionStates.set(key, disconnected);
+      return disconnected;
+    }
+    if (presence && !presence.portal) {
+      const disconnected = {
+        state: 'disconnected',
+        message: '업무포털 탭이 닫혔습니다. 필요한 경우 업무포털을 다시 열어 주세요.',
+      } as const;
+      portalConnectionStates.set(key, disconnected);
+      return disconnected;
+    }
+    return { ...status };
   };
 
   const readStatuses = (): WebConnectorStatus[] => {
@@ -337,6 +365,7 @@ export function createWebConnectorService({
       const session = controller.getSession(officeCode, browserId);
       const sessionAlive = Boolean(session?.isAlive());
       const presence = controller.getConnectionPresence?.(officeCode, browserId);
+      const portalKnown = portalConnectionStates.has(connectionKey(officeCode, browserId));
       return {
         browserId,
         paired: Boolean(handshake),
@@ -344,6 +373,9 @@ export function createWebConnectorService({
         // authenticated tab, closing or replacing the portal tab must not make
         // the managed browser transport appear disconnected.
         connected: sessionAlive,
+        ...(portalKnown || presence?.portal ? {
+          portal: portalStatus(officeCode, browserId, sessionAlive, presence),
+        } : {}),
         systems: systemStatuses(officeCode, browserId, sessionAlive, presence),
         ...(handshake ? { lastSeenAt: handshake.lastSeenAt } : {}),
       };
@@ -352,11 +384,16 @@ export function createWebConnectorService({
 
   const publishStatuses = (): void => {
     const statuses = readStatuses();
-    const disconnectMessages = new Set(statuses.flatMap(({ systems = [] }) => (
-      systems.flatMap((system) => (
-        system.state === 'disconnected' && system.message ? [system.message] : []
-      ))
-    )));
+    const disconnectMessages = new Set(statuses.flatMap(({ portal, systems = [] }) => [
+      ...(portal && ['disconnected', 'login-required'].includes(portal.state) && portal.message
+        ? [portal.message]
+        : []),
+      ...systems.flatMap((system) => (
+        ['disconnected', 'login-required'].includes(system.state) && system.message
+          ? [system.message]
+          : []
+      )),
+    ]));
     for (const message of disconnectMessages) {
       if (!reportedDisconnectMessages.has(message)) notify(message, 'info');
     }
@@ -381,6 +418,94 @@ export function createWebConnectorService({
     systems.set(status.system, { ...status });
     connectionStates.set(key, systems);
     publishStatuses();
+  };
+
+  const healthStatus = (
+    current: WebConnectionSurfaceStatus,
+    health: WebConnectionHealthSnapshot['portal'],
+    label: string,
+    uncertaintyKey: string,
+  ): WebConnectionSurfaceStatus => {
+    if (health !== 'unknown') uncertainHealthChecks.delete(uncertaintyKey);
+    if (health === 'authenticated') {
+      return { state: 'connected', checkedAt: now() };
+    }
+    if (health === 'login-required') {
+      return {
+        state: 'login-required',
+        checkedAt: now(),
+        message: `${label} 로그인이 만료되었습니다. 업무포털에서 다시 로그인한 뒤 나이스·에듀파인 연결을 눌러 주세요.`,
+      };
+    }
+    if (health === 'missing') {
+      if (current.state === 'idle') return { ...current };
+      return {
+        state: 'disconnected',
+        checkedAt: now(),
+        message: `${label} 연결 탭이 없습니다. 업무용 브라우저에서 다시 연결해 주세요.`,
+      };
+    }
+    const uncertainCount = (uncertainHealthChecks.get(uncertaintyKey) ?? 0) + 1;
+    uncertainHealthChecks.set(uncertaintyKey, uncertainCount);
+    if (uncertainCount < 3 || current.state === 'idle') return { ...current };
+    return {
+      state: 'disconnected',
+      checkedAt: now(),
+      message: `${label} 로그인 상태를 연속해서 확인하지 못했습니다. 업무용 브라우저에서 다시 연결해 주세요.`,
+    };
+  };
+
+  const refreshBrowserConnectionHealth = async (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+  ): Promise<void> => {
+    if (!controller.inspectConnectionHealth) return;
+    const session = controller.getSession(officeCode, browserId);
+    if (!session?.isAlive()) return;
+    let health: WebConnectionHealthSnapshot | undefined;
+    try {
+      health = await controller.inspectConnectionHealth(officeCode, browserId);
+    } catch {
+      // A navigation can briefly replace an execution context. Presence checks
+      // still handle closed windows; the next passive inspection retries auth.
+      return;
+    }
+    if (!health) return;
+    const key = connectionKey(officeCode, browserId);
+    portalConnectionStates.set(key, healthStatus(
+      portalConnectionStates.get(key) ?? { state: 'idle' },
+      health.portal,
+      '업무포털',
+      `${key}:portal`,
+    ));
+    const systems = connectionStates.get(key) ?? new Map();
+    for (const system of ['neis', 'edufine'] as const) {
+      const current = systems.get(system) ?? { system, state: 'idle' as const };
+      systems.set(system, {
+        ...healthStatus(
+          current,
+          health.systems[system],
+          system === 'neis' ? '나이스' : 'K-에듀파인',
+          `${key}:${system}`,
+        ),
+        system,
+      });
+    }
+    connectionStates.set(key, systems);
+    publishStatuses();
+  };
+
+  const refreshConnectionHealth = (): Promise<void> => {
+    if (connectionHealthRefresh) return connectionHealthRefresh;
+    const officeCode = currentOffice();
+    connectionHealthRefresh = Promise.all(
+      (['edge', 'chrome'] as const).map((browserId) => (
+        refreshBrowserConnectionHealth(officeCode, browserId)
+      )),
+    ).then(() => undefined).finally(() => {
+      connectionHealthRefresh = null;
+    });
+    return connectionHealthRefresh;
   };
 
   const persist = (): Promise<void> => {
@@ -409,6 +534,13 @@ export function createWebConnectorService({
         if (controller.getConnectionPresence && !connectionMonitor) {
           connectionMonitor = setInterval(publishStatuses, 1_000);
           connectionMonitor.unref();
+        }
+        if (controller.inspectConnectionHealth && !connectionHealthMonitor) {
+          connectionHealthMonitor = setInterval(() => {
+            void refreshConnectionHealth();
+          }, 60_000);
+          connectionHealthMonitor.unref();
+          void refreshConnectionHealth();
         }
         publishStatuses();
         return { ok: true } as const;
@@ -448,11 +580,15 @@ export function createWebConnectorService({
       started = false;
       if (connectionMonitor) clearInterval(connectionMonitor);
       connectionMonitor = undefined;
+      if (connectionHealthMonitor) clearInterval(connectionHealthMonitor);
+      connectionHealthMonitor = undefined;
       controller.cancelAllOperations?.();
       await Promise.allSettled([...pending]);
       await controller.closeAll();
       await persistTail;
       connectionStates.clear();
+      portalConnectionStates.clear();
+      uncertainHealthChecks.clear();
       publishedStatusSnapshot = '';
       reportedDisconnectMessages.clear();
       state = null;
@@ -583,9 +719,9 @@ export function createWebConnectorService({
       controller.beginInteractiveWork?.(officeCode, browserId);
       try {
         await prepareAndMark(browserId);
-        // A successful browser probe proves the managed browser transport is healthy.
-        // Do not leave a previous NEIS/Edufine workflow error painted on the browser card.
-        connectionStates.delete(connectionKey(currentOffice(), browserId));
+        // Browser transport health and authenticated web sessions are separate.
+        // Preserve the latter and refresh them without focusing or navigating tabs.
+        await refreshBrowserConnectionHealth(officeCode, browserId);
         publishStatuses();
         return { ok: true };
       } catch (error) {
@@ -614,9 +750,16 @@ export function createWebConnectorService({
         }
         const session = await prepareAndMark(browserId);
         connectionStates.delete(connectionKey(officeCode, browserId));
+        portalConnectionStates.delete(connectionKey(officeCode, browserId));
         publishStatuses();
         if (target === 'pair') {
+          portalConnectionStates.set(connectionKey(officeCode, browserId), {
+            state: 'connecting',
+            message: '업무포털 로그인 상태를 확인하고 있습니다.',
+          });
+          publishStatuses();
           await portalOpener?.(session);
+          await refreshBrowserConnectionHealth(officeCode, browserId);
           return { ok: true };
         }
         if (!controller.connectSystems) {
@@ -670,6 +813,7 @@ export function createWebConnectorService({
           return [`${label}: ${status.message ?? '연결을 완료하지 못했습니다.'}`];
         });
         if (failed.length > 0) throw new Error(failed.join(' / '));
+        await refreshBrowserConnectionHealth(officeCode, browserId);
         return { ok: true };
       } catch (error) {
         return { ok: false, message: errorDetail(error) };
@@ -776,7 +920,11 @@ export function createWebConnectorService({
     async onConfigChanged(config) {
       const officeChanged = configuredOfficeCode !== config.educationOfficeCode;
       configuredOfficeCode = config.educationOfficeCode;
-      if (officeChanged) connectionStates.clear();
+      if (officeChanged) {
+        connectionStates.clear();
+        portalConnectionStates.clear();
+        uncertainHealthChecks.clear();
+      }
       await controller.closeOtherOffices(config.educationOfficeCode);
       if (officeChanged) publishStatuses();
     },

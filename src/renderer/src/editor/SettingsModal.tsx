@@ -602,6 +602,15 @@ export function SettingsModal({
                           </span>
                           <small>소속 교육청 전용 프로필을 사용하며 개인 방문 기록과 설정을 섞지 않습니다.</small>
                           <div className="connector-system-list" aria-label={`${card.name} 업무 시스템 연결 상태`}>
+                            {card.portal && (
+                              <span
+                                className={`connector-system connector-system-${card.portal.state}`}
+                                title={card.portal.message}
+                              >
+                                <b>{card.portal.label}</b>
+                                {card.portal.stateLabel}
+                              </span>
+                            )}
                             {card.systems.map((system) => (
                               <span
                                 className={`connector-system connector-system-${system.state}`}
