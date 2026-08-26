@@ -39,7 +39,10 @@ import {
   type WindowsConnectionDiagnosticEvent,
   type WindowsManagedBrowserSession,
 } from './windows';
-import type { WorkflowRunResult } from './workflows/engine';
+import {
+  isWorkflowCancelled,
+  type WorkflowRunResult,
+} from './workflows/engine';
 import type { ApprovalScanInput } from '../approvalMonitor/definitions';
 import { isApprovalCheckCancelled } from '../approvalMonitor/cancellation';
 
@@ -681,17 +684,23 @@ export function createWebConnectorService({
           });
         } catch (error) {
           const detail = errorDetail(error);
+          const supersededWorkflow = isWorkflowCancelled(error);
           const cancelledByUser = /단계 실행을 취소했습니다/.test(detail);
-          notify(detail, cancelledByUser ? 'info' : 'error');
+          // A second NEIS/Edufine key intentionally supersedes the first run.
+          // The prior request page may already be visible, so reporting its
+          // cooperative cancellation as a failure creates a false error.
+          if (!supersededWorkflow) {
+            notify(detail, cancelledByUser ? 'info' : 'error');
+          }
           try {
             await diagnostics.record({
               at: now(),
               browserId: request.browserId,
               officeCode,
               workflowId: request.workflowId,
-              stepId: diagnosticStepId(error),
+              stepId: supersededWorkflow ? 'workflow-superseded' : diagnosticStepId(error),
               sequence: 0,
-              outcome: 'failed',
+              outcome: supersededWorkflow ? 'cancelled' : 'failed',
               durationMs: Math.max(0, now() - startedAt),
             });
           } catch {

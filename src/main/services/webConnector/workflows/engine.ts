@@ -33,9 +33,27 @@ export class WorkflowStepError extends Error {
   }
 }
 
+export const WORKFLOW_CANCELLED_MESSAGE =
+  '웹 업무 이동이 취소되었습니다. 필요하면 키를 다시 눌러 주세요.';
+
+export class WorkflowCancelledError extends Error {
+  constructor() {
+    super(WORKFLOW_CANCELLED_MESSAGE);
+    this.name = 'WorkflowCancelledError';
+  }
+}
+
+export function isWorkflowCancelled(error: unknown): boolean {
+  return error instanceof WorkflowCancelledError || (
+    error instanceof Error &&
+    error.name === 'WorkflowCancelledError' &&
+    error.message === WORKFLOW_CANCELLED_MESSAGE
+  );
+}
+
 function ensureActive(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
-    throw new Error('웹 업무 이동이 취소되었습니다. 필요하면 키를 다시 눌러 주세요.');
+    throw new WorkflowCancelledError();
   }
 }
 

@@ -9,7 +9,7 @@ function candidate(
   value: number,
   confidence = 100,
   controlContext = 'global approval badge',
-  relation: 'inline' | 'same-control' | 'sibling' | 'nexacro' | 'dataset' = 'inline',
+  relation: 'inline' | 'same-control' | 'row' | 'sibling' | 'nexacro' | 'dataset' = 'inline',
 ) {
   return {
     system,
@@ -40,6 +40,13 @@ describe('connected system approval summary', () => {
       candidate('neis', 1),
       candidate('neis', 2),
     ] }], 'neis')).toThrow(/서로 다른 전역 건수/);
+  });
+
+  it('accepts the exact number in the row to the right of the NEIS inbox label', () => {
+    expect(parseSystemApprovalCount([{ candidates: [
+      candidate('neis', 0, 99, 'approval-summary-row 미결/협조함', 'row'),
+      candidate('neis', 100, 80, 'unrelated page size', 'sibling'),
+    ] }], 'neis')).toBe(0);
   });
 
   it('accepts an exact Edufine Dataset count and rejects weak nearby numbers', () => {
@@ -82,6 +89,9 @@ describe('connected system approval summary', () => {
   });
 
   it('keeps the read-only DOM and Nexacro scanner syntactically valid', () => {
+    expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain("'row'");
+    expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('approval-summary-row');
+    expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('labelRect');
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain("relation:'nexacro'");
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain("relation:'dataset'");
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('dataset.getColumn');

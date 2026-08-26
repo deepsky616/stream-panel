@@ -7,6 +7,7 @@ import {
 } from '../src/main/services/webConnector';
 import type { ManagedBrowserSession } from '../src/main/services/webConnector/sessionManager';
 import { createApprovalCheckCancelledError } from '../src/main/services/approvalMonitor/cancellation';
+import { WorkflowCancelledError } from '../src/main/services/webConnector/workflows/engine';
 
 function workflowAction(overrides: Partial<ActionItem> = {}): ActionItem {
   return {
@@ -51,6 +52,47 @@ function createController(): WebConnectorSessionController {
 }
 
 describe('managed web connector service', () => {
+  it('does not show a false error when a newer key supersedes an already visible workflow', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const notifications: Array<{ message: string; level: string }> = [];
+    const diagnostics: Array<{ stepId: string; outcome: string }> = [];
+    const controller = createController();
+    controller.run = async () => { throw new WorkflowCancelledError(); };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async (event) => {
+          diagnostics.push({ stepId: event.stepId, outcome: event.outcome });
+        },
+      },
+      notify: (message, level) => { notifications.push({ message, level }); },
+    });
+    await service.start();
+
+    expect(service.queue(workflowAction())).toEqual({ queued: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(notifications).toEqual([expect.objectContaining({
+      message: expect.stringContaining('나이스 복무 화면을 여는 중'),
+      level: 'info',
+    })]);
+    expect(diagnostics).toContainEqual({
+      stepId: 'workflow-superseded',
+      outcome: 'cancelled',
+    });
+    await service.stop();
+  });
+
   it('cancels a background approval scan and keeps later scans out until the key finishes', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },

@@ -6552,11 +6552,10 @@ export type WindowsManagedSessionController = ManagedBrowserSessionManager<
 export function shouldScanApprovalListFirst(
   input: Pick<ApprovalScanInput, 'system' | 'interactive'>,
 ): boolean {
-  // NEIS manual checks intentionally show and verify its actual inbox. Edufine
-  // first reads the connected tab's exact global/Nexacro Dataset count without
-  // navigation; both manual and scheduled checks fall back to the dedicated
-  // approval tab only when that read-only signal is unavailable or ambiguous.
-  return input.system === 'neis' && input.interactive === true;
+  // Both manual and scheduled checks first read the exact, label-anchored
+  // dashboard number without navigation. The actual approval list is opened
+  // only when that primary signal is unavailable or ambiguous.
+  return input.system !== 'neis' && input.system !== 'edufine';
 }
 
 export function createWindowsManagedSessionManager(
@@ -6772,10 +6771,10 @@ export function createWindowsManagedSessionManager(
                   signal,
                 ),
               }, abortController.signal);
-              // Prefer a read-only global/Dataset count so the user's current
-              // request, draft, or purchase screen is never navigated. An
-              // ambiguous or unavailable signal falls back to the persistent
-              // approval tab and its actual 결재대기 list.
+              // Prefer the exact number beside 미결/협조함 or 결재(긴급), so the
+              // user's current request, draft, or purchase screen is never
+              // navigated. Only a missing or ambiguous primary signal falls
+              // back to the actual approval list and its row count.
               if (shouldScanApprovalListFirst(input)) return scanList();
               let systemCount: number;
               try {
@@ -6796,17 +6795,6 @@ export function createWindowsManagedSessionManager(
                     ? listError.message
                     : '실제 결재 목록을 읽지 못했습니다.';
                   throw new Error(`${summaryMessage} 실제 목록 확인도 실패했습니다: ${listMessage}`);
-                }
-              }
-              const previous = input.previousPendingCount;
-              if (previous !== undefined && systemCount > previous) {
-                try {
-                  return await scanList();
-                } catch (error) {
-                  if (isApprovalCheckCancelled(error)) throw error;
-                  // The exact system badge is still a safe positive signal. A
-                  // deep-list failure must not hide a newly increased count.
-                  return systemCount;
                 }
               }
               return systemCount;

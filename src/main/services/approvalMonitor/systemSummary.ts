@@ -4,7 +4,7 @@ interface SystemApprovalCandidate {
   system: WebWorkflowSystem;
   value: number;
   itemLabel: string;
-  relation: 'inline' | 'same-control' | 'sibling' | 'nexacro' | 'dataset';
+  relation: 'inline' | 'same-control' | 'row' | 'sibling' | 'nexacro' | 'dataset';
   confidence: number;
   controlContext: string;
 }
@@ -27,7 +27,7 @@ function readCandidate(value: unknown): SystemApprovalCandidate | null {
   if (!Number.isSafeInteger(candidate.value) || Number(candidate.value) < 0 || Number(candidate.value) > 9_999) {
     return null;
   }
-  if (!['inline', 'same-control', 'sibling', 'nexacro', 'dataset'].includes(String(candidate.relation))) {
+  if (!['inline', 'same-control', 'row', 'sibling', 'nexacro', 'dataset'].includes(String(candidate.relation))) {
     return null;
   }
   if (
@@ -157,10 +157,16 @@ const contextOf=(element)=>{
   }
   return normalize(values.filter(Boolean).join(' ')).slice(0,700);
 };
+const identityOf=(element)=>normalize([
+  element?.id,element?.className,element?.getAttribute?.('role'),
+  element?.getAttribute?.('aria-label'),element?.getAttribute?.('title'),
+  element?.parentElement?.id,element?.parentElement?.className,
+  element?.parentElement?.getAttribute?.('role'),
+].filter(Boolean).join(' ')).slice(0,350);
 const candidates=[];
-const add=(definition,value,itemLabel,relation,confidence,element)=>{
+const add=(definition,value,itemLabel,relation,confidence,element,context)=>{
   if(!Number.isSafeInteger(value)||value<0||value>9999)return;
-  const controlContext=contextOf(element);
+  const controlContext=normalize(context||contextOf(element));
   if(pageControl.test(controlContext))return;
   candidates.push({system:definition.system,value,itemLabel,relation,confidence,controlContext});
 };
@@ -178,9 +184,42 @@ for(const definition of definitions){
       const match=raw.match(/^(\\d{1,4})$/);
       if(match)add(definition,Number(match[1]),itemLabel,'same-control',98,element);
     }
+    const ownValue=numericValue(element);
+    if(ownValue!==null)add(definition,ownValue,itemLabel,'same-control',99,element);
     for(const descendant of elementsIn(element).filter(visible).slice(0,100)){
       const value=numericValue(descendant);
       if(value!==null)add(definition,value,itemLabel,'same-control',94,descendant);
+    }
+    // NEIS renders the approval summary as a two-column row: the item label is
+    // on the left and its plain, unlabelled number is on the right. Anchor the
+    // number to the exact horizontal row instead of accepting another number
+    // from the surrounding dashboard or a paging control.
+    const labelRect=element.getBoundingClientRect();
+    const labelCenter=labelRect.top+labelRect.height/2;
+    const rowNumbers=elements.map((numberElement)=>{
+      if(numberElement===element||element.contains?.(numberElement))return null;
+      const value=numericValue(numberElement);
+      if(value===null)return null;
+      const rect=numberElement.getBoundingClientRect();
+      const center=rect.top+rect.height/2;
+      const overlap=Math.min(labelRect.bottom,rect.bottom)-Math.max(labelRect.top,rect.top);
+      const sameLine=overlap>0||Math.abs(center-labelCenter)<=Math.max(6,Math.min(labelRect.height,rect.height)/2);
+      if(!sameLine||rect.left<labelRect.right-3)return null;
+      return {element:numberElement,value,distance:Math.max(0,rect.left-labelRect.right)+Math.abs(center-labelCenter)*4};
+    }).filter(Boolean).sort((left,right)=>left.distance-right.distance);
+    if(rowNumbers.length>0){
+      const nearestDistance=rowNumbers[0].distance;
+      for(const rowNumber of rowNumbers.filter(({distance})=>distance<=nearestDistance+4)){
+        add(
+          definition,
+          rowNumber.value,
+          itemLabel,
+          'row',
+          99,
+          rowNumber.element,
+          ['approval-summary-row',itemLabel,identityOf(element),identityOf(rowNumber.element)].join(' '),
+        );
+      }
     }
     for(let current=element,depth=0;current&&depth<3;current=current.parentElement,depth+=1){
       for(const sibling of [current.nextElementSibling,current.previousElementSibling]){
@@ -226,6 +265,20 @@ for(const definition of definitions){
         if(match)return Number(match[1]);
       }
       return null;
+    };
+    const componentBox=(component)=>{
+      const numberFrom=(...values)=>{
+        for(const value of values){
+          const number=Number(typeof value==='function'?value.call(component):value);
+          if(Number.isFinite(number))return number;
+        }
+        return 0;
+      };
+      const left=numberFrom(component?.getOffsetLeft,component?.get_left,component?.left,component?._adjust_left);
+      const top=numberFrom(component?.getOffsetTop,component?.get_top,component?.top,component?._adjust_top);
+      const width=Math.max(0,numberFrom(component?.getOffsetWidth,component?.get_width,component?.width,component?._adjust_width));
+      const height=Math.max(0,numberFrom(component?.getOffsetHeight,component?.get_height,component?.height,component?._adjust_height));
+      return {left,top,width,height,right:left+width,bottom:top+height};
     };
     const resolveDataset=(component,reference)=>{
       if(reference&&typeof reference==='object'&&typeof reference.getRowCount==='function'&&typeof reference.getColumn==='function')return reference;
@@ -307,7 +360,12 @@ for(const definition of definitions){
           const value=componentNumber(relatedComponent);
           if(value===null)continue;
           const controlContext=normalize(componentTexts(relatedComponent).join(' ')+' '+relatedComponent?.id+' '+relatedComponent?.name).slice(0,700);
-          if(!pageControl.test(controlContext))candidates.push({system:definition.system,value,itemLabel,relation:'nexacro',confidence:92,controlContext});
+          const labelBox=componentBox(component);
+          const numberBox=componentBox(relatedComponent);
+          const sameParent=(component.parent||component._parent)===(relatedComponent.parent||relatedComponent._parent);
+          const overlap=Math.min(labelBox.bottom,numberBox.bottom)-Math.max(labelBox.top,numberBox.top);
+          const exactRow=sameParent&&numberBox.left>=labelBox.right-3&&(overlap>0||Math.abs((labelBox.top+labelBox.height/2)-(numberBox.top+numberBox.height/2))<=6);
+          if(!pageControl.test(controlContext))candidates.push({system:definition.system,value,itemLabel,relation:'nexacro',confidence:exactRow?99:92,controlContext});
         }
       }
       for(const collection of [component.components,component.frames,component.all,component.objects,component.datasets]){

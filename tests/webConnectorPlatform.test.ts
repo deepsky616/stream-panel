@@ -709,11 +709,11 @@ describe('Windows managed web automation', () => {
     expect(managedSession.systemTargetIds.neis).toBe('user-work-target');
   });
 
-  it('uses the read-only Edufine summary first while manual NEIS opens its actual inbox', () => {
+  it('reads the exact system summary first and opens a list only as fallback', () => {
     expect(shouldScanApprovalListFirst({ system: 'edufine' })).toBe(false);
     expect(shouldScanApprovalListFirst({ system: 'edufine', interactive: true })).toBe(false);
     expect(shouldScanApprovalListFirst({ system: 'neis' })).toBe(false);
-    expect(shouldScanApprovalListFirst({ system: 'neis', interactive: true })).toBe(true);
+    expect(shouldScanApprovalListFirst({ system: 'neis', interactive: true })).toBe(false);
   });
 
   it('reuses one connected Edufine monitor tab for every scheduled check', async () => {
