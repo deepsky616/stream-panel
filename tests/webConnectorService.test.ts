@@ -252,6 +252,57 @@ describe('managed web connector service', () => {
     await service.stop();
   });
 
+  it('verifies the title-bar Edufine count through the same interactive scanner as Now Check', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const approvalInputs: unknown[] = [];
+    const observed: unknown[] = [];
+    const controller = createController();
+    controller.run = async () => ({
+      workflowId: 'edufine-approval-inbox',
+      finalState: 'approval-inbox-ready',
+      approvalCount: 100,
+    });
+    controller.checkApproval = async (input) => {
+      approvalInputs.push(input);
+      return 1;
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async () => undefined,
+      },
+      onApprovalCountObserved: async (observation) => { observed.push(observation); },
+    });
+    await service.start();
+
+    expect(service.openApprovalInbox('edufine')).toEqual({ queued: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(approvalInputs).toEqual([{
+      system: 'edufine',
+      browserId: 'edge',
+      officeCode: 'goe',
+      interactive: true,
+    }]);
+    expect(observed).toEqual([{
+      system: 'edufine',
+      browserId: 'edge',
+      officeCode: 'goe',
+      pendingCount: 1,
+    }]);
+    await service.stop();
+  });
+
   it('serializes an approval count read through the current managed office session', async () => {
     const inputs: unknown[] = [];
     const diagnosticEntries: unknown[] = [];

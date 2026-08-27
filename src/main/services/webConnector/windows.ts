@@ -1113,7 +1113,9 @@ export async function executeWindowsWorkflow(
         let previousCount: number | undefined;
         let stableReads = 0;
         let countError: unknown;
-        for (let attempt = 0; attempt < 8; attempt += 1) {
+        const maxCountReadAttempts = approvalSystem === 'edufine' ? 20 : 8;
+        const countReadDelayMs = approvalSystem === 'edufine' ? 250 : 200;
+        for (let attempt = 0; attempt < maxCountReadAttempts; attempt += 1) {
           try {
             const count = parseApprovalCounterValue(
               await page.readApprovalCount(approvalSystem),
@@ -1130,7 +1132,7 @@ export async function executeWindowsWorkflow(
             stableReads = 0;
             previousCount = undefined;
           }
-          if (attempt < 7) await page.wait(200);
+          if (attempt < maxCountReadAttempts - 1) await page.wait(countReadDelayMs);
         }
         if (result.approvalCount === undefined) {
           result = {

@@ -4583,6 +4583,35 @@ describe('Windows managed web automation', () => {
     expect(waits).toBeGreaterThanOrEqual(2);
   });
 
+  it('waits for a slow Edufine approval list before reporting its stable count', async () => {
+    const workflowPage = page('https://klef.goe.go.kr');
+    let reads = 0;
+    let waits = 0;
+    workflowPage.readApprovalCount = async () => {
+      reads += 1;
+      if (reads <= 10) throw new Error('에듀파인 결재대기 목록 건수가 아직 준비되지 않았습니다.');
+      return 1;
+    };
+    workflowPage.wait = async () => { waits += 1; };
+
+    await expect(executeWindowsWorkflow(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { officeCode: 'goe', browserId: 'edge', workflowId: 'edufine-approval-inbox' },
+      {
+        openWorkflowPage: async () => workflowPage,
+        isWxsClientRegistered: async () => true,
+        listWxsClientWindows: async () => [],
+        focusWindow: async () => true,
+      },
+    )).resolves.toEqual({
+      workflowId: 'edufine-approval-inbox',
+      finalState: 'approval-inbox-ready',
+      approvalCount: 1,
+    });
+    expect(reads).toBe(12);
+    expect(waits).toBeGreaterThanOrEqual(11);
+  });
+
   it('validates and focuses a WXSClient window launched by a custom Edufine route', async () => {
     const workflowPage = page('https://klef.goe.go.kr');
     const focused: number[] = [];

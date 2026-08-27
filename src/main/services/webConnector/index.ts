@@ -705,6 +705,34 @@ export function createWebConnectorService({
           }
           const result = await controller.run(request);
           const system = getWebWorkflowSystem(workflowSpec);
+          const approvalSystem = request.workflowId === 'neis-approval-inbox'
+            ? 'neis' as const
+            : request.workflowId === 'edufine-approval-inbox'
+              ? 'edufine' as const
+              : null;
+          let approvalCount = result.approvalCount;
+          let approvalCountError = result.approvalCountError;
+          // The title-bar Edufine button opens the inbox for the user, then
+          // confirms its badge through the same proven scanner as Settings →
+          // 업무 알림 → 지금 확인. This avoids publishing a transient list
+          // count while keeping the already verified list count as a fallback.
+          if (
+            approvalSystem === 'edufine' &&
+            item.id === 'titlebar-edufine-approval-inbox' &&
+            controller.checkApproval
+          ) {
+            try {
+              approvalCount = await controller.checkApproval({
+                system: approvalSystem,
+                browserId: request.browserId,
+                officeCode,
+                interactive: true,
+              });
+              approvalCountError = undefined;
+            } catch (error) {
+              if (approvalCount === undefined) approvalCountError = errorDetail(error);
+            }
+          }
           const presence = controller.getConnectionPresence?.(officeCode, request.browserId);
           if (presence?.systems[system]) {
             setSystemStatus(officeCode, request.browserId, {
@@ -714,16 +742,15 @@ export function createWebConnectorService({
             });
           }
           if (
-            (request.workflowId === 'neis-approval-inbox' ||
-              request.workflowId === 'edufine-approval-inbox') &&
-            result.approvalCount !== undefined
+            approvalSystem &&
+            approvalCount !== undefined
           ) {
             try {
               await onApprovalCountObserved?.({
                 system,
                 browserId: request.browserId,
                 officeCode,
-                pendingCount: result.approvalCount,
+                pendingCount: approvalCount,
               });
             } catch (error) {
               notify(
@@ -746,12 +773,11 @@ export function createWebConnectorService({
               // A diagnostic write failure must not hide the updated count.
             }
           } else if (
-            (request.workflowId === 'neis-approval-inbox' ||
-              request.workflowId === 'edufine-approval-inbox') &&
-            result.approvalCountError
+            approvalSystem &&
+            approvalCountError
           ) {
             notify(
-              `결재함은 열었지만 대기 건수를 갱신하지 못했습니다: ${result.approvalCountError}`,
+              `결재함은 열었지만 대기 건수를 갱신하지 못했습니다: ${approvalCountError}`,
               'error',
             );
             try {
