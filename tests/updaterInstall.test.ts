@@ -112,4 +112,20 @@ describe('Windows updater restart installation', () => {
     });
     expect(mocks.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
   });
+
+  it('shows the startup update guidance only once after a download is ready', () => {
+    createWindowsUpdater(configStore() as never);
+
+    mocks.emit('update-downloaded', { version: 'v1.5.51' });
+    mocks.emit('update-downloaded', { version: '1.5.51' });
+
+    const notices = mocks.send.mock.calls.filter(([channel]) => channel === 'toast');
+    expect(notices).toEqual([[
+      'toast',
+      {
+        level: 'info',
+        message: "Stream Panel v1.5.51 업데이트 준비가 완료되었습니다. 설정 → 정보에서 '재시작하여 업데이트 적용'을 눌러 주세요.",
+      },
+    ]]);
+  });
 });

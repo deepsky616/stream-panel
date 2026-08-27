@@ -9,3 +9,9 @@ export function broadcastUpdateStatus(payload: UpdateStatusPayload): void {
     window.webContents.send(IPC_CHANNELS.UPDATE_STATUS, payload);
   }
 }
+
+export function broadcastUpdateNotice(message: string): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send(IPC_CHANNELS.TOAST, { level: 'info', message });
+  }
+}

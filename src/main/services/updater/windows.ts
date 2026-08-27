@@ -2,7 +2,7 @@ import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { ConfigStore } from '../../store';
 import { setTrayUpdateVersion } from '../../tray';
-import { broadcastUpdateStatus, SIX_HOURS_MS } from './common';
+import { broadcastUpdateNotice, broadcastUpdateStatus, SIX_HOURS_MS } from './common';
 import { recordUpdaterFailure } from './diagnostics';
 import { lookupLatestVersion, UPDATE_MIRROR_URL } from './releaseLookup';
 import type { UpdaterService } from './types';
@@ -25,7 +25,15 @@ export function createWindowsUpdater(configStore: ConfigStore): UpdaterService {
   }> | null = null;
   let checking = false;
   let downloadedVersion: string | null = null;
+  let announcedVersion: string | null = null;
   let installing = false;
+
+  const announceUpdateOnce = (version: string, message: string): void => {
+    const normalized = normalizeVersion(version) ?? version;
+    if (announcedVersion === normalized) return;
+    announcedVersion = normalized;
+    broadcastUpdateNotice(message);
+  };
 
   const runCheck = async () => {
     if (!app.isPackaged) {
@@ -71,6 +79,10 @@ export function createWindowsUpdater(configStore: ConfigStore): UpdaterService {
             version: latest.version,
             message,
           });
+          announceUpdateOnce(
+            latest.version,
+            `Stream Panel v${latest.version} 업데이트가 있습니다. 설정 → 정보에서 업데이트를 다시 확인하거나 다운로드 미러에서 설치해 주세요.`,
+          );
           return { status: message, version: latest.version };
         }
         const message = `현재 최신 버전 v${latest.version}을 사용 중입니다. 대체 확인 경로로 확인했습니다.`;
@@ -179,6 +191,10 @@ export function createWindowsUpdater(configStore: ConfigStore): UpdaterService {
       version: downloadedVersion,
       message: `v${downloadedVersion} 업데이트 준비가 완료되었습니다. 재시작하여 적용해 주세요.`,
     });
+    announceUpdateOnce(
+      downloadedVersion,
+      `Stream Panel v${downloadedVersion} 업데이트 준비가 완료되었습니다. 설정 → 정보에서 '재시작하여 업데이트 적용'을 눌러 주세요.`,
+    );
   });
   autoUpdater.on('error', (error) => {
     // checkForUpdates rejects with the same error; runCheck records it and
