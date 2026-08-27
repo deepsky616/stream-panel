@@ -4559,6 +4559,30 @@ describe('Windows managed web automation', () => {
     expect(activated).toBe(2);
   });
 
+  it('returns a stable count from the approval list opened by a title-bar workflow', async () => {
+    const workflowPage = page('https://goe.neis.go.kr');
+    const reads = [1, 3, 3];
+    let waits = 0;
+    workflowPage.readApprovalCount = async () => reads.shift() ?? 3;
+    workflowPage.wait = async () => { waits += 1; };
+
+    await expect(executeWindowsWorkflow(
+      { officeCode: 'goe', browserId: 'edge', isAlive: () => true, close: async () => undefined },
+      { officeCode: 'goe', browserId: 'edge', workflowId: 'neis-approval-inbox' },
+      {
+        openWorkflowPage: async () => workflowPage,
+        isWxsClientRegistered: async () => true,
+        listWxsClientWindows: async () => [],
+        focusWindow: async () => true,
+      },
+    )).resolves.toEqual({
+      workflowId: 'neis-approval-inbox',
+      finalState: 'approval-inbox-ready',
+      approvalCount: 3,
+    });
+    expect(waits).toBeGreaterThanOrEqual(2);
+  });
+
   it('validates and focuses a WXSClient window launched by a custom Edufine route', async () => {
     const workflowPage = page('https://klef.goe.go.kr');
     const focused: number[] = [];

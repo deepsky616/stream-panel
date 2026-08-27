@@ -142,6 +142,12 @@ export interface CreateWebConnectorServiceOptions {
     stepLabel: string;
     system: WebWorkflowSystem;
   }) => Promise<boolean>;
+  onApprovalCountObserved?: (observation: {
+    system: WebWorkflowSystem;
+    browserId: WebConnectorBrowserId;
+    officeCode: EducationOfficeCode;
+    pendingCount: number;
+  }) => void | Promise<void>;
 }
 
 function diskStateIo(userDataPath: string): LoadManagedWebConnectorStateOptions {
@@ -234,6 +240,7 @@ export function createWebConnectorService({
   diagnostics: injectedDiagnostics,
   now = Date.now,
   confirmWorkflowStep,
+  onApprovalCountObserved,
 }: CreateWebConnectorServiceOptions): WebConnectorService {
   const controller = sessionController ?? (
     platform === 'win32'
@@ -661,7 +668,7 @@ export function createWebConnectorService({
             state = markManagedHandshake(state, officeCode, request.browserId, now());
             await persist();
           }
-          await controller.run(request);
+          const result = await controller.run(request);
           const system = getWebWorkflowSystem(workflowSpec);
           const presence = controller.getConnectionPresence?.(officeCode, request.browserId);
           if (presence?.systems[system]) {
@@ -670,6 +677,62 @@ export function createWebConnectorService({
               state: 'connected',
               checkedAt: now(),
             });
+          }
+          if (
+            (request.workflowId === 'neis-approval-inbox' ||
+              request.workflowId === 'edufine-approval-inbox') &&
+            result.approvalCount !== undefined
+          ) {
+            try {
+              await onApprovalCountObserved?.({
+                system,
+                browserId: request.browserId,
+                officeCode,
+                pendingCount: result.approvalCount,
+              });
+            } catch (error) {
+              notify(
+                `결재함은 열었지만 대기 건수를 저장하지 못했습니다: ${errorDetail(error)}`,
+                'error',
+              );
+            }
+            try {
+              await diagnostics.record({
+                at: now(),
+                browserId: request.browserId,
+                officeCode,
+                workflowId: request.workflowId,
+                stepId: 'approval-count-read',
+                sequence: 0,
+                outcome: 'success',
+                durationMs: Math.max(0, now() - startedAt),
+              });
+            } catch {
+              // A diagnostic write failure must not hide the updated count.
+            }
+          } else if (
+            (request.workflowId === 'neis-approval-inbox' ||
+              request.workflowId === 'edufine-approval-inbox') &&
+            result.approvalCountError
+          ) {
+            notify(
+              `결재함은 열었지만 대기 건수를 갱신하지 못했습니다: ${result.approvalCountError}`,
+              'error',
+            );
+            try {
+              await diagnostics.record({
+                at: now(),
+                browserId: request.browserId,
+                officeCode,
+                workflowId: request.workflowId,
+                stepId: 'read-approval-count',
+                sequence: 0,
+                outcome: 'failed',
+                durationMs: Math.max(0, now() - startedAt),
+              });
+            } catch {
+              // A diagnostic write failure must not hide the opened inbox.
+            }
           }
           notify(workflowSuccessMessage(workflowSpec), 'info');
           await diagnostics.record({

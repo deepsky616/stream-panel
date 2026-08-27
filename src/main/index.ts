@@ -75,6 +75,9 @@ app.whenReady().then(async () => {
           window.webContents.send(IPC_CHANNELS.WEB_CONNECTOR_CHANGED, statuses);
         }
       },
+      onApprovalCountObserved: async (observation) => {
+        await approvalMonitorService?.recordObservedCount(observation);
+      },
       confirmWorkflowStep: async ({ workflowName, stepLabel, system }) => {
         const options = {
           type: 'warning' as const,

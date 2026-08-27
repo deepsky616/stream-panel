@@ -166,6 +166,71 @@ describe('approval monitor rules', () => {
 });
 
 describe('approval monitor service', () => {
+  it('updates the shared count and next interval from an inbox the user opened', async () => {
+    const config = windowsConfig();
+    let currentTime = FIXED_WORK_TIME;
+    let scans = 0;
+    const writes: string[] = [];
+    const notifications: number[] = [];
+    const timers: Array<{ handler: () => void; delayMs: number }> = [];
+    const service = createApprovalMonitorService({
+      platform: 'win32',
+      getConfig: () => config,
+      scanner: { scan: async () => { scans += 1; return 99; } },
+      stateIo: {
+        read: async () => undefined,
+        write: async (text) => { writes.push(text); },
+      },
+      notify: (_system, count) => { notifications.push(count); },
+      now: () => currentTime,
+      setTimer: (handler, delayMs) => {
+        const timer = { handler, delayMs };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimer: () => undefined,
+    });
+    await service.start();
+
+    await service.recordObservedCount({
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+      pendingCount: 1,
+    });
+    currentTime += 1_000;
+    await service.recordObservedCount({
+      system: 'edufine',
+      officeCode: 'goe',
+      browserId: 'edge',
+      pendingCount: 3,
+    });
+
+    expect(scans).toBe(0);
+    expect(notifications).toEqual([]);
+    expect(service.getStatuses()).toContainEqual(expect.objectContaining({
+      system: 'edufine',
+      state: 'ready',
+      pendingCount: 3,
+      previousPendingCount: 1,
+      increase: 2,
+      changedAt: currentTime,
+      lastCheckedAt: currentTime,
+    }));
+    expect(JSON.parse(writes.at(-1)!)).toMatchObject({
+      systems: {
+        edufine: {
+          officeCode: 'goe',
+          browserId: 'edge',
+          pendingCount: 3,
+          lastCheckedAt: currentTime,
+        },
+      },
+    });
+    expect(timers.at(-1)?.delayMs).toBe(10 * 60_000);
+    await service.stop();
+  });
+
   it('returns to the previous state instead of showing an error when a key preempts a scan', async () => {
     const config = windowsConfig();
     const timers: Array<{ handler: () => void; delayMs: number }> = [];

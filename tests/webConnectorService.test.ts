@@ -155,6 +155,46 @@ describe('managed web connector service', () => {
     });
   });
 
+  it('forwards the count read from an opened approval inbox to the monitor state', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const observed: unknown[] = [];
+    const controller = createController();
+    controller.run = async () => ({
+      workflowId: 'neis-approval-inbox',
+      finalState: 'approval-inbox-ready',
+      approvalCount: 4,
+    });
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async () => undefined,
+      },
+      onApprovalCountObserved: async (observation) => { observed.push(observation); },
+    });
+    await service.start();
+
+    expect(service.openApprovalInbox('neis')).toEqual({ queued: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(observed).toEqual([{
+      system: 'neis',
+      browserId: 'edge',
+      officeCode: 'goe',
+      pendingCount: 4,
+    }]);
+    await service.stop();
+  });
+
   it('serializes an approval count read through the current managed office session', async () => {
     const inputs: unknown[] = [];
     const diagnosticEntries: unknown[] = [];

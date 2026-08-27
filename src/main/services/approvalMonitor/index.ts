@@ -47,6 +47,12 @@ export interface ApprovalMonitorService {
     input: { system?: WebWorkflowSystem },
     options?: { interactive?: boolean },
   ): Promise<ApprovalMonitorStatus[]>;
+  recordObservedCount(input: {
+    system: WebWorkflowSystem;
+    browserId: WebConnectorBrowserId;
+    officeCode: EducationOfficeCode;
+    pendingCount: number;
+  }): Promise<ApprovalMonitorStatus[]>;
   onConfigChanged(config: AppConfig): void;
 }
 
@@ -498,6 +504,73 @@ export function createApprovalMonitorService({
       } finally {
         schedule();
       }
+    },
+    async recordObservedCount(input) {
+      if (!started || platform !== 'win32') return service.getStatuses();
+      if (!Number.isSafeInteger(input.pendingCount) || input.pendingCount < 0 || input.pendingCount > 9_999) {
+        throw new Error('열린 결재 목록에서 확인한 대기 건수가 올바르지 않습니다.');
+      }
+      const config = getConfig();
+      const source = config.approvalMonitor.sources[input.system];
+      if (!source.enabled) return service.getStatuses();
+      if (
+        input.officeCode !== config.educationOfficeCode ||
+        input.browserId !== source.browserId
+      ) {
+        throw new Error('열린 결재함과 업무 알림에 설정된 교육청 또는 브라우저가 다릅니다.');
+      }
+      checkRevisions.set(input.system, (checkRevisions.get(input.system) ?? 0) + 1);
+      const sourceRevision = sourceRevisions.get(input.system) ?? 0;
+      const previous = state.systems[input.system];
+      const checkedAt = now();
+      const increase = previous === undefined
+        ? 0
+        : Math.max(0, input.pendingCount - previous.pendingCount);
+      const nextState: ApprovalMonitorState = {
+        version: 2,
+        systems: {
+          ...state.systems,
+          [input.system]: {
+            officeCode: input.officeCode,
+            browserId: input.browserId,
+            pendingCount: input.pendingCount,
+            lastCheckedAt: checkedAt,
+            ...(previous?.lastNotifiedCount === undefined
+              ? {}
+              : { lastNotifiedCount: previous.lastNotifiedCount }),
+          },
+        },
+      };
+      await persist(nextState);
+      if (!started) return service.getStatuses();
+      if ((sourceRevisions.get(input.system) ?? 0) !== sourceRevision) {
+        await persist();
+        statuses = createStatuses();
+        publish();
+        return service.getStatuses();
+      }
+      state = nextState;
+      stateLoadError = null;
+      consecutiveFailures.delete(input.system);
+      busyRetrySystems.delete(input.system);
+      const index = statuses.findIndex((status) => status.system === input.system);
+      statuses[index] = {
+        system: input.system,
+        state: 'ready',
+        pendingCount: input.pendingCount,
+        lastCheckedAt: checkedAt,
+        ...(increase > 0 && previous ? {
+          previousPendingCount: previous.pendingCount,
+          increase,
+          changedAt: checkedAt,
+        } : {}),
+      };
+      // The user is already looking at the opened inbox, so update and
+      // emphasize the panel count without showing a redundant OS notification.
+      establishedBaselines.add(input.system);
+      publish();
+      schedule();
+      return service.getStatuses();
     },
     onConfigChanged(config) {
       for (const system of SYSTEMS) {

@@ -21,6 +21,10 @@ export interface WorkflowRunOptions {
 export interface WorkflowRunResult {
   workflowId: ManagedWorkflowDefinition['id'];
   finalState: string;
+  /** Verified count read from an approval list opened by this workflow. */
+  approvalCount?: number;
+  /** Non-fatal count read failure; the requested inbox still remains open. */
+  approvalCountError?: string;
 }
 
 export class WorkflowStepError extends Error {

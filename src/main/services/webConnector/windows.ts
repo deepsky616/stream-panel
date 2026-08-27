@@ -47,6 +47,7 @@ import {
   type ManagedWorkflowRequest,
 } from './sessionManager';
 import {
+  parseApprovalCounterValue,
   parseApprovalCounterCandidates,
   scanWindowsApprovalCount,
   type WindowsApprovalPage,
@@ -1097,6 +1098,50 @@ export async function executeWindowsWorkflow(
       result = await runWorkflow(definition, guardedPage, { signal });
     }
     if (!result) throw new Error('에듀파인 업무 이동 경로를 완료하지 못했습니다. 업무용 브라우저에서 메뉴 권한을 확인해 주세요.');
+    const approvalSystem = request.workflowId === 'neis-approval-inbox'
+      ? 'neis' as const
+      : request.workflowId === 'edufine-approval-inbox'
+        ? 'edufine' as const
+        : null;
+    if (approvalSystem) {
+      if (!page.readApprovalCount) {
+        result = {
+          ...result,
+          approvalCountError: '열린 결재 목록의 대기 건수를 읽는 기능이 준비되지 않았습니다.',
+        };
+      } else {
+        let previousCount: number | undefined;
+        let stableReads = 0;
+        let countError: unknown;
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          try {
+            const count = parseApprovalCounterValue(
+              await page.readApprovalCount(approvalSystem),
+            );
+            stableReads = count === previousCount ? stableReads + 1 : 1;
+            previousCount = count;
+            if (stableReads >= 2) {
+              result = { ...result, approvalCount: count };
+              countError = undefined;
+              break;
+            }
+          } catch (error) {
+            countError = error;
+            stableReads = 0;
+            previousCount = undefined;
+          }
+          if (attempt < 7) await page.wait(200);
+        }
+        if (result.approvalCount === undefined) {
+          result = {
+            ...result,
+            approvalCountError: countError instanceof Error
+              ? countError.message
+              : '열린 결재 목록의 건수가 아직 안정되지 않았습니다.',
+          };
+        }
+      }
+    }
     if (expectsWxsClient) {
       if (!newEditorWindow || !await dependencies.focusWindow(newEditorWindow.id)) {
         throw new Error('새 기안 편집기 창을 앞으로 가져오지 못했습니다. 작업 표시줄에서 WXSClient 창을 직접 선택해 주세요.');
