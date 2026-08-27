@@ -174,6 +174,38 @@ describe('Windows approval count reader', () => {
         children: [],
       },
     ])).toBe(6);
+    for (const pagingCandidate of [
+      {
+        text: 'Total 100',
+        ariaLabel: '',
+        title: '',
+        className: 'pagination-current pageSize',
+        role: 'option',
+        children: [],
+      },
+      {
+        text: '총 50건',
+        ariaLabel: '',
+        title: '',
+        className: 'count',
+        role: 'status',
+        paging: true,
+        children: [],
+      },
+      {
+        text: 'Total :',
+        ariaLabel: '',
+        title: '',
+        className: 'total-label',
+        role: '',
+        children: [],
+        next: { text: '3', ariaLabel: '페이지 번호 3', title: '', className: '', role: 'button' },
+      },
+    ]) {
+      expect(() => parseApprovalCounterCandidates!('neis', [pagingCandidate])).toThrow(
+        /안전하게 읽지 못했습니다/,
+      );
+    }
   });
 
   it('tries the exact left, top-frame, and document-scoped 결재 menus without 결재(긴급)', () => {

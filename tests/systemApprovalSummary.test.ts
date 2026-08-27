@@ -36,6 +36,19 @@ describe('connected system approval summary', () => {
     expect(() => parseSystemApprovalCount([{ candidates: [
       candidate('edufine', 100, 100, '페이지당 100건'),
     ] }], 'edufine')).toThrow(/전역 건수를 찾지 못했습니다/);
+    for (const context of [
+      'cboPageRow 100',
+      'pageSize option 50',
+      'pageNo 3',
+      'totalPageCount 12',
+      'recordPerPage 100',
+      '페이지 수 4',
+      '1 / 4 페이지',
+    ]) {
+      expect(() => parseSystemApprovalCount([{ candidates: [
+        candidate('neis', 100, 100, context),
+      ] }], 'neis')).toThrow(/전역 건수를 찾지 못했습니다/);
+    }
     expect(() => parseSystemApprovalCount([{ candidates: [
       candidate('neis', 1),
       candidate('neis', 2),
@@ -143,6 +156,8 @@ describe('connected system approval summary', () => {
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain("relation:'dataset'");
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('dataset.getColumn');
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('data-count');
+    expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('pageControlElement');
+    expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).toContain('componentIsPageControl');
     expect(SYSTEM_APPROVAL_SUMMARY_EXPRESSION).not.toContain('.click(');
     expect(() => new Function(`return ${SYSTEM_APPROVAL_SUMMARY_EXPRESSION}`)).not.toThrow();
   });

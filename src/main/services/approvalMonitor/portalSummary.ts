@@ -24,7 +24,7 @@ const ITEM_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
   edufine: ['결재(긴급)', '결재 (긴급)'],
 };
 
-const PAGE_CONTROL_PATTERN = /페이지\s*(?:크기|번호|당)|페이지당|쪽\s*번호|page\s*(?:size|number)|rows?\s*per\s*page|pagination|pager|paging/i;
+const PAGE_CONTROL_PATTERN = /(?:페이지|쪽)\s*(?:크기|번호|당|수|개수|이동|선택|표시\s*건수)|(?:한\s*)?페이지\s*당|총\s*\d+\s*(?:페이지|쪽)|\d+\s*\/\s*\d+\s*(?:페이지|쪽)?|page(?:\s*|[-_:])?(?:size|number|no|num|index|idx|count|total|limit|unit|rows?|nav(?:igation)?|button)|(?:rows?|records?|items?)(?:\s*|[-_:])?per(?:\s*|[-_:])?page|per(?:\s*|[-_:])?page|pagination|pager|paging|pagenation|pageable/i;
 
 function normalize(value: unknown): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -94,7 +94,23 @@ const surfaceTexts=(element)=>[
   element?.getAttribute?.('title'),
 ].map(normalize).filter(Boolean);
 const exact=(element,labels)=>surfaceTexts(element).some((text)=>labels.includes(text));
-const pageControl=/페이지\\s*(?:크기|번호|당)|페이지당|쪽\\s*번호|page\\s*(?:size|number)|rows?\\s*per\\s*page|pagination|pager|paging/i;
+const pageControl=/(?:페이지|쪽)\\s*(?:크기|번호|당|수|개수|이동|선택|표시\\s*건수)|(?:한\\s*)?페이지\\s*당|총\\s*\\d+\\s*(?:페이지|쪽)|\\d+\\s*\\/\\s*\\d+\\s*(?:페이지|쪽)?|page(?:\\s*|[-_:])?(?:size|number|no|num|index|idx|count|total|limit|unit|rows?|nav(?:igation)?|button)|(?:rows?|records?|items?)(?:\\s*|[-_:])?per(?:\\s*|[-_:])?page|per(?:\\s*|[-_:])?page|pagination|pager|paging|pagenation|pageable/i;
+const pageControlElement=(element)=>{
+  for(let current=element,depth=0;current&&depth<6;current=current.parentElement,depth+=1){
+    const tag=normalize(current.tagName).toLowerCase();
+    const role=normalize(current.getAttribute?.('role')).toLowerCase();
+    const ariaCurrent=normalize(current.getAttribute?.('aria-current')).toLowerCase();
+    const rel=normalize(current.getAttribute?.('rel')).toLowerCase();
+    if(['select','option'].includes(tag)||['option','combobox','spinbutton','navigation'].includes(role)||ariaCurrent==='page'||['next','prev','previous'].includes(rel))return true;
+    const identity=normalize([
+      current.id,current.className,role,current.getAttribute?.('name'),current.getAttribute?.('aria-label'),
+      current.getAttribute?.('title'),current.getAttribute?.('data-page'),current.getAttribute?.('data-page-size'),
+      ...(depth<2?surfaceTexts(current).slice(0,3):[]),
+    ].filter(Boolean).join(' ')).slice(0,900);
+    if(pageControl.test(identity))return true;
+  }
+  return false;
+};
 const definitions=[
   {system:'neis',panels:['승인사항'],items:['미결/협조함','미결 / 협조함'],combined:/^미결\\s*\\/\\s*협조함\\s*[\\(\\[]?\\s*(\\d{1,4})\\s*(?:건)?\\s*[\\)\\]]?$/},
   {system:'edufine',panels:['전자결재 현황','전자결재현황'],items:['결재(긴급)','결재 (긴급)'],combined:/^결재\\s*\\(\\s*긴급\\s*\\)\\s*[\\(\\[]?\\s*(\\d{1,4})\\s*(?:건)?\\s*[\\)\\]]?$/},
@@ -124,7 +140,7 @@ for(const definition of definitions){
     .sort((left,right)=>left.element.children.length-right.element.children.length);
   for(const {element,match} of combinedElements){
     const scope=panelScope(element,definition.panels);
-    if(!scope||!match||pageControl.test(contextOf(element)))continue;
+    if(!scope||!match||pageControlElement(element)||pageControl.test(contextOf(element)))continue;
     const panel=definition.panels.find((label)=>[
       scope,...Array.from(scope.querySelectorAll('*')),
     ].some((candidate)=>visible(candidate)&&exact(candidate,[label])));
@@ -147,6 +163,7 @@ for(const definition of definitions){
     const numeric=[];
     for(const element of [scope,...Array.from(scope.querySelectorAll('*'))]){
       if(element===item||!visible(element))continue;
+      if(pageControlElement(element))continue;
       const tag=String(element.tagName||'').toLowerCase();
       const role=normalize(element.getAttribute?.('role')).toLowerCase();
       if(['select','option','input'].includes(tag)||['combobox','spinbutton'].includes(role))continue;

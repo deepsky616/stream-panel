@@ -14,7 +14,7 @@ const ITEM_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
   edufine: ['결재(긴급)', '결재 (긴급)'],
 };
 
-const PAGE_CONTROL_PATTERN = /페이지\s*(?:크기|번호|당)|페이지당|쪽\s*번호|page\s*(?:size|number)|rows?\s*per\s*page|pagination|pager|paging/i;
+const PAGE_CONTROL_PATTERN = /(?:페이지|쪽)\s*(?:크기|번호|당|수|개수|이동|선택|표시\s*건수)|(?:한\s*)?페이지\s*당|총\s*\d+\s*(?:페이지|쪽)|\d+\s*\/\s*\d+\s*(?:페이지|쪽)?|page(?:\s*|[-_:])?(?:size|number|no|num|index|idx|count|total|limit|unit|rows?|nav(?:igation)?|button)|(?:rows?|records?|items?)(?:\s*|[-_:])?per(?:\s*|[-_:])?page|per(?:\s*|[-_:])?page|pagination|pager|paging|pagenation|pageable/i;
 
 function normalize(value: unknown): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -87,7 +87,7 @@ export function parseSystemApprovalCount(
 export const SYSTEM_APPROVAL_SUMMARY_EXPRESSION = `(()=>{
 const normalize=(value)=>String(value??'').replace(/\\s+/g,' ').trim();
 const compact=(value)=>normalize(value).replace(/\\s+/g,'');
-const pageControl=/페이지\\s*(?:크기|번호|당)|페이지당|쪽\\s*번호|page\\s*(?:size|number)|rows?\\s*per\\s*page|pagination|pager|paging/i;
+const pageControl=/(?:페이지|쪽)\\s*(?:크기|번호|당|수|개수|이동|선택|표시\\s*건수)|(?:한\\s*)?페이지\\s*당|총\\s*\\d+\\s*(?:페이지|쪽)|\\d+\\s*\\/\\s*\\d+\\s*(?:페이지|쪽)?|page(?:\\s*|[-_:])?(?:size|number|no|num|index|idx|count|total|limit|unit|rows?|nav(?:igation)?|button)|(?:rows?|records?|items?)(?:\\s*|[-_:])?per(?:\\s*|[-_:])?page|per(?:\\s*|[-_:])?page|pagination|pager|paging|pagenation|pageable/i;
 const definitions=[
   {system:'neis',items:['미결/협조함','미결 / 협조함'],combined:/^미결\\s*\\/\\s*협조함\\s*[\\(\\[]?\\s*(\\d{1,4})\\s*(?:건)?\\s*[\\)\\]]?$/},
   {system:'edufine',items:['결재(긴급)','결재 (긴급)'],combined:/^결재\\s*\\(\\s*긴급\\s*\\)\\s*(\\d{1,4})(?:\\s*\\(\\s*\\d{1,4}\\s*\\))?\\s*(?:건)?$/},
@@ -116,6 +116,22 @@ const surfaceTexts=(element)=>Array.from(new Set([
   pseudoText(element,'::before'),
   pseudoText(element,'::after'),
 ].map(normalize).filter(Boolean)));
+const pageControlElement=(element)=>{
+  for(let current=element,depth=0;current&&depth<6;current=current.parentElement,depth+=1){
+    const tag=normalize(current.tagName).toLowerCase();
+    const role=normalize(current.getAttribute?.('role')).toLowerCase();
+    const ariaCurrent=normalize(current.getAttribute?.('aria-current')).toLowerCase();
+    const rel=normalize(current.getAttribute?.('rel')).toLowerCase();
+    if(['select','option'].includes(tag)||['option','combobox','spinbutton','navigation'].includes(role)||ariaCurrent==='page'||['next','prev','previous'].includes(rel))return true;
+    const identity=normalize([
+      current.id,current.className,role,current.getAttribute?.('name'),current.getAttribute?.('aria-label'),
+      current.getAttribute?.('title'),current.getAttribute?.('data-page'),current.getAttribute?.('data-page-size'),
+      ...(depth<2?surfaceTexts(current).slice(0,3):[]),
+    ].filter(Boolean).join(' ')).slice(0,900);
+    if(pageControl.test(identity))return true;
+  }
+  return false;
+};
 const elementsIn=(root)=>{
   const result=[];
   const visit=(scope)=>{
@@ -178,6 +194,7 @@ const identityOf=(element)=>normalize([
 const candidates=[];
 const add=(definition,value,itemLabel,relation,confidence,element,context)=>{
   if(!Number.isSafeInteger(value)||value<0||value>9999)return;
+  if(pageControlElement(element))return;
   const controlContext=normalize(context||contextOf(element));
   if(pageControl.test(controlContext))return;
   candidates.push({system:definition.system,value,itemLabel,relation,confidence,controlContext});
@@ -210,6 +227,7 @@ for(const definition of definitions){
     const labelCenter=labelRect.top+labelRect.height/2;
     const rowNumbers=elements.map((numberElement)=>{
       if(numberElement===element||element.contains?.(numberElement))return null;
+      if(pageControlElement(numberElement))return null;
       const value=approvalValue(numberElement,definition);
       if(value===null)return null;
       const rect=numberElement.getBoundingClientRect();
@@ -271,7 +289,13 @@ for(const definition of definitions){
       component?.text,component?.value,component?.displaytext,component?.tooltiptext,
       component?.accessibilitylabel,component?.name,component?.id,
     ].map(normalize).filter(Boolean)));
+    const componentIsPageControl=(component)=>pageControl.test(normalize([
+      component?._type_name,component?._classname,component?.constructor?.name,
+      component?.id,component?.name,component?.accessibilitylabel,component?.tooltiptext,
+      ...componentTexts(component),
+    ].filter(Boolean).join(' ')).slice(0,900));
     const componentNumber=(component)=>{
+      if(componentIsPageControl(component))return null;
       for(const text of componentTexts(component)){
         const match=text.match(/^[\\(\\[]?\\s*(\\d{1,4})\\s*(?:건)?\\s*[\\)\\]]?$/);
         if(match)return Number(match[1]);
@@ -370,7 +394,7 @@ for(const definition of definitions){
       const texts=componentTexts(component);
       for(const text of texts){
         const match=text.match(definition.combined);
-        if(match)candidates.push({system:definition.system,value:Number(match[1]),itemLabel:definition.items[0],relation:'nexacro',confidence:100,controlContext:normalize(text+' '+component?.id+' '+component?.name).slice(0,700)});
+        if(match&&!componentIsPageControl(component))candidates.push({system:definition.system,value:Number(match[1]),itemLabel:definition.items[0],relation:'nexacro',confidence:100,controlContext:normalize(text+' '+component?.id+' '+component?.name).slice(0,700)});
       }
       const itemLabel=definition.items.find((label)=>texts.some((text)=>compact(text)===compact(label)));
       if(itemLabel){

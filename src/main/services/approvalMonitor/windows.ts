@@ -37,6 +37,7 @@ interface ApprovalCounterSignal {
   title: string;
   className: string;
   role: string;
+  paging?: boolean;
 }
 
 interface ApprovalCounterCandidate extends ApprovalCounterSignal {
@@ -64,6 +65,9 @@ const COUNTER_LABELS: Record<WebWorkflowSystem, readonly string[]> = {
   neis: ['Total', 'TOTAL', 'total'],
   edufine: ['총', 'Total', 'TOTAL', 'total'],
 };
+
+const PAGE_CONTROL_PATTERN = /(?:페이지|쪽)\s*(?:크기|번호|당|수|개수|이동|선택|표시\s*건수)|(?:한\s*)?페이지\s*당|총\s*\d+\s*(?:페이지|쪽)|\d+\s*\/\s*\d+\s*(?:페이지|쪽)?|page(?:\s*|[-_:])?(?:size|number|no|num|index|idx|count|total|limit|unit|rows?|nav(?:igation)?|button)|(?:rows?|records?|items?)(?:\s*|[-_:])?per(?:\s*|[-_:])?page|per(?:\s*|[-_:])?page|pagination|pager|paging|pagenation|pageable/i;
+const PAGE_CONTROL_ROLES = new Set(['option', 'combobox', 'spinbutton', 'navigation']);
 
 function compactText(value: string): string {
   return value.replace(/\s+/g, '').trim();
@@ -103,12 +107,33 @@ function bareSignalCount(
   return markedAsCount || allowUnmarked ? Number(match[1]) : null;
 }
 
+function isPagingSignal(signal: ApprovalCounterSignal): boolean {
+  return signal.paging === true ||
+    PAGE_CONTROL_ROLES.has(signal.role) ||
+    PAGE_CONTROL_PATTERN.test([
+      signal.text,
+      signal.ariaLabel,
+      signal.title,
+      signal.className,
+    ].join(' '));
+}
+
+function isPagingCandidate(candidate: ApprovalCounterCandidate): boolean {
+  return [
+    candidate,
+    ...candidate.children,
+    ...(candidate.previous ? [candidate.previous] : []),
+    ...(candidate.next ? [candidate.next] : []),
+    ...(candidate.parent ? [candidate.parent] : []),
+  ].some(isPagingSignal);
+}
+
 function isCounterSignal(value: unknown): value is ApprovalCounterSignal {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return ['text', 'ariaLabel', 'title', 'className', 'role'].every((key) => (
     typeof record[key] === 'string' && String(record[key]).length <= 256
-  ));
+  )) && (record.paging === undefined || typeof record.paging === 'boolean');
 }
 
 function isCounterCandidate(value: unknown): value is ApprovalCounterCandidate {
@@ -197,6 +222,7 @@ export function parseApprovalCounterCandidates(
   for (const label of COUNTER_LABELS[system]) {
     const counts = new Set<number>();
     for (const candidate of snapshot.candidates) {
+      if (isPagingCandidate(candidate)) continue;
       const candidateTexts = [candidate.text, candidate.ariaLabel, candidate.title];
       for (const text of candidateTexts) {
         const count = inlineCount(text, label);

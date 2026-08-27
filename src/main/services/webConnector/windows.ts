@@ -2532,6 +2532,23 @@ function approvalCounterExpression(system: WebWorkflowSystem): string {
   return `(()=>{
 ${PAGE_ELEMENT_HELPERS}
 const approvalSystem=${JSON.stringify(system)};
+const pageControl=/(?:페이지|쪽)\\s*(?:크기|번호|당|수|개수|이동|선택|표시\\s*건수)|(?:한\\s*)?페이지\\s*당|총\\s*\\d+\\s*(?:페이지|쪽)|\\d+\\s*\\/\\s*\\d+\\s*(?:페이지|쪽)?|page(?:\\s*|[-_:])?(?:size|number|no|num|index|idx|count|total|limit|unit|rows?|nav(?:igation)?|button)|(?:rows?|records?|items?)(?:\\s*|[-_:])?per(?:\\s*|[-_:])?page|per(?:\\s*|[-_:])?page|pagination|pager|paging|pagenation|pageable/i;
+const pageControlElement=(element)=>{
+  for(let current=element,depth=0;current&&depth<6;current=current.parentElement,depth+=1){
+    const tag=normalize(current.tagName).toLowerCase();
+    const role=normalize(current.getAttribute?.('role')).toLowerCase();
+    const ariaCurrent=normalize(current.getAttribute?.('aria-current')).toLowerCase();
+    const rel=normalize(current.getAttribute?.('rel')).toLowerCase();
+    if(['select','option'].includes(tag)||['option','combobox','spinbutton','navigation'].includes(role)||ariaCurrent==='page'||['next','prev','previous'].includes(rel))return true;
+    const identity=normalize([
+      current.id,current.className,role,current.getAttribute?.('name'),current.getAttribute?.('aria-label'),
+      current.getAttribute?.('title'),current.getAttribute?.('data-page'),current.getAttribute?.('data-page-size'),
+      ...(depth<2?[current.innerText,current.textContent]:[]),
+    ].filter(Boolean).join(' ')).slice(0,900);
+    if(pageControl.test(identity))return true;
+  }
+  return false;
+};
 const approvalHeaderGroups=approvalSystem==='edufine'
   ? [['문서번호'],['문서제목','제목','문서명'],['기안자'],['기안부서'],['기안일자'],['결재상태']]
   : [['문서번호'],['제목'],['기안자'],['신청자']];
@@ -2561,7 +2578,8 @@ const signal=(element)=>({
   ariaLabel:normalize(element?.getAttribute?.('aria-label')).slice(0,256),
   title:normalize(element?.getAttribute?.('title')).slice(0,256),
   className:normalize(element?.className?.baseVal??element?.className).slice(0,256),
-  role:normalize(element?.getAttribute?.('role')).toLowerCase().slice(0,64)
+  role:normalize(element?.getAttribute?.('role')).toLowerCase().slice(0,64),
+  paging:pageControlElement(element)
 });
 const candidates=[];
 const rowCounts=[];
@@ -2575,6 +2593,7 @@ for(const {document} of documents){
   const elements=Array.from(document.querySelectorAll('[aria-label],[title],span,em,strong,b,a,button,div,td,th')).slice(0,5000);
   for(const element of elements){
     if(!visible(element))continue;
+    if(pageControlElement(element))continue;
     const candidate=signal(element);
     const children=Array.from(element.children||[]).slice(0,16).filter(visible).map(signal);
     const previous=element.previousElementSibling&&visible(element.previousElementSibling)
@@ -2596,6 +2615,7 @@ for(const {document} of documents){
   for(const container of containers){
     const semanticRows=Array.from(container.querySelectorAll('tbody>tr,[role="row"]')).filter(row=>{
       if(!visible(row))return false;
+      if(pageControlElement(row))return false;
       if(row.querySelector?.('th,[role="columnheader"]'))return false;
       const text=normalize(row.innerText||row.textContent||'');
       if(!text||/^(조회|검색)?된?\\s*(자료|데이터|문서|목록).*(없습니다|없음)|^내역이\\s*없습니다/.test(text))return false;
@@ -2669,7 +2689,11 @@ for(const {document} of documents){
         const handleVisible=!handle||visible(handle);
         // A visible "결재대기" label only proves which screen is open. It must
         // never turn page-size combos such as "전체 100" into approval lists.
-        const relevant=headerMatches>=requiredHeaderMatches;
+        const gridContext=normalize([
+          type,component.id,component.name,component.accessibilitylabel,component.tooltiptext,
+          dataset?.id,dataset?.name,headerText,
+        ].filter(Boolean).join(' ')).slice(0,900);
+        const relevant=headerMatches>=requiredHeaderMatches&&!pageControl.test(gridContext);
         if(Number.isSafeInteger(count)&&count>=0&&count<=9999&&area>0&&headCount>=2&&handleVisible){
           rowCounts.push({count,area,relevant,source:'nexacro'});
         }
