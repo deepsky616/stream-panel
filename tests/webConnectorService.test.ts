@@ -61,6 +61,7 @@ describe('managed web connector service', () => {
     const controller = createController();
     let prepareCount = 0;
     let approvalCheckCount = 0;
+    const notifications: Array<{ message: string; level: string }> = [];
     const prepare = controller.prepare.bind(controller);
     controller.prepare = async (...args) => {
       prepareCount += 1;
@@ -81,6 +82,7 @@ describe('managed web connector service', () => {
         directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
         record: async () => undefined,
       },
+      notify: (message, level) => { notifications.push({ message, level }); },
     });
     await service.start();
 
@@ -100,6 +102,10 @@ describe('managed web connector service', () => {
     })).rejects.toThrow(/업무용 브라우저를 열고 나이스·에듀파인 연결/);
     expect(prepareCount).toBe(0);
     expect(approvalCheckCount).toBe(0);
+    expect(notifications).toEqual([{
+      message: 'K-에듀파인 업무를 실행하려면 먼저 설정 → 웹 업무 연결에서 업무용 브라우저를 열고 나이스·에듀파인 연결을 완료해 주세요.',
+      level: 'info',
+    }]);
     await service.stop();
   });
 

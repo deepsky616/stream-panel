@@ -934,7 +934,7 @@ export function createWebConnectorService({
         ? 'neis-approval-inbox' as const
         : 'edufine-approval-inbox' as const;
       const browserId = config.approvalMonitor.sources[system].browserId;
-      return this.queue({
+      const result = this.queue({
         id: `titlebar-${system}-approval-inbox`,
         kind: 'action',
         label: system === 'neis' ? '나이스 결재함' : '에듀파인 결재함',
@@ -950,6 +950,8 @@ export function createWebConnectorService({
           officeCode: config.educationOfficeCode,
         },
       });
+      if (!result.queued) notify(result.message, 'info');
+      return result;
     },
     async ensureDiagnosticsDirectory() {
       await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 });
