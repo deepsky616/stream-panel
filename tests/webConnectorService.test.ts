@@ -52,6 +52,57 @@ function createController(): WebConnectorSessionController {
 }
 
 describe('managed web connector service', () => {
+  it('does not open a browser when a NEIS or Edufine key is pressed before connection', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const controller = createController();
+    let prepareCount = 0;
+    let approvalCheckCount = 0;
+    const prepare = controller.prepare.bind(controller);
+    controller.prepare = async (...args) => {
+      prepareCount += 1;
+      return prepare(...args);
+    };
+    controller.getConnectionPresence = () => undefined;
+    controller.checkApproval = async () => {
+      approvalCheckCount += 1;
+      return 0;
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      diagnostics: {
+        directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
+        record: async () => undefined,
+      },
+    });
+    await service.start();
+
+    expect(service.queue(workflowAction())).toEqual({
+      queued: false,
+      message: '나이스 업무를 실행하려면 먼저 설정 → 웹 업무 연결에서 업무용 브라우저를 열고 나이스·에듀파인 연결을 완료해 주세요.',
+    });
+    expect(service.openApprovalInbox('edufine')).toEqual({
+      queued: false,
+      message: 'K-에듀파인 업무를 실행하려면 먼저 설정 → 웹 업무 연결에서 업무용 브라우저를 열고 나이스·에듀파인 연결을 완료해 주세요.',
+    });
+    await expect(service.scanApproval({
+      system: 'neis',
+      officeCode: 'goe',
+      browserId: 'edge',
+      interactive: true,
+    })).rejects.toThrow(/업무용 브라우저를 열고 나이스·에듀파인 연결/);
+    expect(prepareCount).toBe(0);
+    expect(approvalCheckCount).toBe(0);
+    await service.stop();
+  });
+
   it('does not show a false error when a newer key supersedes an already visible workflow', async () => {
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },

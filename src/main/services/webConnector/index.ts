@@ -297,6 +297,33 @@ export function createWebConnectorService({
     browserId: WebConnectorBrowserId,
   ) => `${officeCode}:${browserId}`;
 
+  const disconnectedWorkflowMessage = (system: WebWorkflowSystem): string => {
+    const label = system === 'neis' ? '나이스' : 'K-에듀파인';
+    return `${label} 업무를 실행하려면 먼저 설정 → 웹 업무 연결에서 업무용 브라우저를 열고 나이스·에듀파인 연결을 완료해 주세요.`;
+  };
+
+  const workflowConnectionError = (
+    officeCode: EducationOfficeCode,
+    browserId: WebConnectorBrowserId,
+    system: WebWorkflowSystem,
+  ): string | null => {
+    // Every Windows controller exposes connection presence. Keeping the
+    // optional-controller fallback lets platform-neutral test doubles remain
+    // usable without weakening the production gate.
+    if (!controller.getConnectionPresence) return null;
+    const session = controller.getSession(officeCode, browserId);
+    const presence = controller.getConnectionPresence(officeCode, browserId);
+    const status = connectionStates.get(connectionKey(officeCode, browserId))?.get(system);
+    if (
+      !session?.isAlive() ||
+      !presence?.systems[system] ||
+      status?.state !== 'connected'
+    ) {
+      return disconnectedWorkflowMessage(system);
+    }
+    return null;
+  };
+
   const systemStatuses = (
     officeCode: EducationOfficeCode,
     browserId: WebConnectorBrowserId,
@@ -638,6 +665,14 @@ export function createWebConnectorService({
           message: '선택한 교육청과 업무 주소가 일치하지 않습니다. 설정에서 소속 교육청을 다시 선택해 주세요.',
         };
       }
+      const connectionError = workflowConnectionError(
+        officeCode,
+        workflowSpec.browserId,
+        getWebWorkflowSystem(workflowSpec),
+      );
+      if (connectionError) {
+        return { queued: false, message: connectionError };
+      }
       const request: ManagedWorkflowRequest = {
         officeCode,
         browserId: workflowSpec.browserId,
@@ -933,6 +968,12 @@ export function createWebConnectorService({
       if (!controller.checkApproval) {
         throw new Error('결재 대기 확인 기능이 준비되지 않았습니다. 스트림 패널을 업데이트해 주세요.');
       }
+      const connectionError = workflowConnectionError(
+        input.officeCode,
+        input.browserId,
+        input.system,
+      );
+      if (connectionError) throw new Error(connectionError);
       const startedAt = now();
       const workflowId = input.system === 'neis'
         ? 'neis-approval-inbox' as const
