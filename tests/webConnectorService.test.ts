@@ -440,12 +440,16 @@ describe('managed web connector service', () => {
     const inputs: unknown[] = [];
     const broadcasts: unknown[] = [];
     const diagnosticInputs: unknown[] = [];
+    const connectionEvents: string[] = [];
+    const connectedRefreshes: unknown[] = [];
     const config = createDefaultConfig(
       { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
       () => 'id',
       'win32',
     );
     const controller = createController();
+    controller.beginInteractiveWork = () => { connectionEvents.push('interactive-begin'); };
+    controller.endInteractiveWork = () => { connectionEvents.push('interactive-end'); };
     const reconnects: string[] = [];
     controller.prepareReconnect = async (officeCode, browserId) => {
       reconnects.push(`${officeCode}:${browserId}`);
@@ -479,6 +483,10 @@ describe('managed web connector service', () => {
         directory: 'C:\\StreamPanel\\web-connector\\diagnostics',
         record: async (input) => { diagnosticInputs.push(input); },
       },
+      onSystemsConnected: (input) => {
+        connectionEvents.push('approval-refresh');
+        connectedRefreshes.push(input);
+      },
     });
     await service.start();
 
@@ -499,6 +507,16 @@ describe('managed web connector service', () => {
     expect(service.getStatuses()[0].systems).toEqual([
       { system: 'neis', state: 'connected', checkedAt: 1_800_000_000_001 },
       { system: 'edufine', state: 'connected', checkedAt: 1_800_000_000_001 },
+    ]);
+    expect(connectedRefreshes).toEqual([{
+      systems: ['neis', 'edufine'],
+      browserId: 'edge',
+      officeCode: 'goe',
+    }]);
+    expect(connectionEvents.slice(-3)).toEqual([
+      'interactive-begin',
+      'interactive-end',
+      'approval-refresh',
     ]);
     expect(broadcasts.length).toBeGreaterThan(0);
     expect(diagnosticInputs).toEqual([
@@ -809,6 +827,7 @@ describe('managed web connector service', () => {
       'win32',
     );
     const controller = createController();
+    const connectedRefreshes: unknown[] = [];
     controller.connectSystems = async (_input, report) => {
       report?.({ system: 'neis', state: 'connected', checkedAt: 1_800_000_000_001 });
     };
@@ -819,6 +838,7 @@ describe('managed web connector service', () => {
       sessionController: controller,
       stateIo: { read: async () => undefined, write: async () => undefined },
       openPortal: async () => undefined,
+      onSystemsConnected: (input) => { connectedRefreshes.push(input); },
     });
     await service.start();
 
@@ -830,6 +850,11 @@ describe('managed web connector service', () => {
       system: 'edufine',
       state: 'error',
     }));
+    expect(connectedRefreshes).toEqual([{
+      systems: ['neis'],
+      browserId: 'edge',
+      officeCode: 'goe',
+    }]);
   });
 
   it('does not let approval failures overwrite the independent connection state', async () => {

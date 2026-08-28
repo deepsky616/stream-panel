@@ -148,6 +148,11 @@ export interface CreateWebConnectorServiceOptions {
     officeCode: EducationOfficeCode;
     pendingCount: number;
   }) => void | Promise<void>;
+  onSystemsConnected?: (connection: {
+    systems: readonly WebWorkflowSystem[];
+    browserId: WebConnectorBrowserId;
+    officeCode: EducationOfficeCode;
+  }) => void | Promise<void>;
 }
 
 function diskStateIo(userDataPath: string): LoadManagedWebConnectorStateOptions {
@@ -241,6 +246,7 @@ export function createWebConnectorService({
   now = Date.now,
   confirmWorkflowStep,
   onApprovalCountObserved,
+  onSystemsConnected,
 }: CreateWebConnectorServiceOptions): WebConnectorService {
   const controller = sessionController ?? (
     platform === 'win32'
@@ -876,6 +882,7 @@ export function createWebConnectorService({
         return { ok: true };
       }
       const officeCode = currentOffice();
+      let systemConnectionAttemptStarted = false;
       controller.beginInteractiveWork?.(officeCode, browserId);
       try {
         if (target === 'pair' || target === 'connect') {
@@ -900,6 +907,7 @@ export function createWebConnectorService({
         }
         const systems: readonly WebWorkflowSystem[] = ['neis', 'edufine'];
         const connectionResults = new Map<WebWorkflowSystem, WebSystemConnectionStatus>();
+        systemConnectionAttemptStarted = true;
         await controller.connectSystems({
           officeCode,
           browserId,
@@ -952,6 +960,26 @@ export function createWebConnectorService({
         return { ok: false, message: errorDetail(error) };
       } finally {
         controller.endInteractiveWork?.(officeCode, browserId);
+        if (systemConnectionAttemptStarted && onSystemsConnected) {
+          const connectedSystems = (['neis', 'edufine'] as const).filter((system) => (
+            connectionStates.get(connectionKey(officeCode, browserId))?.get(system)?.state === 'connected'
+          ));
+          if (connectedSystems.length > 0) {
+            // Count scans must start only after the foreground SSO operation has
+            // released its browser lock. Do not delay the connection response;
+            // each monitor publishes its own checking/result state.
+            try {
+              void Promise.resolve(onSystemsConnected({
+                systems: connectedSystems,
+                browserId,
+                officeCode,
+              })).catch(() => undefined);
+            } catch {
+              // A count refresh failure must not turn authenticated tabs back
+              // into a failed connection. The monitor reports its own status.
+            }
+          }
+        }
       }
     },
     openApprovalInbox(system) {

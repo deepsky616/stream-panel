@@ -78,6 +78,17 @@ app.whenReady().then(async () => {
       onApprovalCountObserved: async (observation) => {
         await approvalMonitorService?.recordObservedCount(observation);
       },
+      onSystemsConnected: async ({ systems, browserId, officeCode }) => {
+        const config = configStore.get();
+        if (config.educationOfficeCode !== officeCode) return;
+        const eligibleSystems = systems.filter((system) => {
+          const source = config.approvalMonitor.sources[system];
+          return source.enabled && source.browserId === browserId;
+        });
+        await Promise.allSettled(eligibleSystems.map(async (system) => {
+          await approvalMonitorService?.check({ system });
+        }));
+      },
       confirmWorkflowStep: async ({ workflowName, stepLabel, system }) => {
         const options = {
           type: 'warning' as const,
