@@ -241,15 +241,18 @@ describe('managed web workflow definitions', () => {
     }));
   });
 
-  it('defines only the four approved workflows and their final user-input states', () => {
+  it('defines only the five approved workflows and their final user-input states', () => {
     expect(Object.keys(definitions).sort()).toEqual([
       'edufine-draft',
       'edufine-purchase',
+      'neis-assessment',
       'neis-leave',
       'neis-trip',
     ]);
     expect(definitions['neis-leave'].finalState).toBe('leave-request-form');
     expect(definitions['neis-trip'].finalState).toBe('trip-request-form');
+    expect(definitions['neis-assessment'].finalState).toBe('assessment-levels-filled');
+    expect(definitions['neis-assessment'].steps).toEqual([]);
     expect(definitions['edufine-draft'].finalState).toBe('standard-form-editor');
     expect(definitions['edufine-purchase'].finalState).toBe('purchase-registration-form');
   });

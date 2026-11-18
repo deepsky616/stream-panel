@@ -21,6 +21,10 @@ describe('action library drag identifiers', () => {
         dragId: 'library:web-work:neis-trip:edge:goe:',
       }),
       expect.objectContaining({
+        workflowId: 'neis-assessment',
+        dragId: 'library:web-work:neis-assessment:edge:goe:',
+      }),
+      expect.objectContaining({
         workflowId: 'edufine-draft',
         dragId: 'library:web-work:edufine-draft:edge:goe:',
       }),

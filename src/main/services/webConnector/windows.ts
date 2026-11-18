@@ -47,6 +47,12 @@ import {
   type ManagedWorkflowRequest,
 } from './sessionManager';
 import {
+  neisAssessmentApplyExpression,
+  readNeisAssessmentApplyResult,
+  type NeisAssessmentApplyResult,
+  type NeisAssessmentImport,
+} from './neisAssessment';
+import {
   parseApprovalCounterValue,
   parseApprovalCounterCandidates,
   scanWindowsApprovalCount,
@@ -160,6 +166,7 @@ export interface WindowsWorkflowPage extends WorkflowPageAdapter {
   activate(): Promise<void>;
   release?(options?: { keepCreatedTargets?: boolean }): Promise<void>;
   readApprovalCount?(system: WebWorkflowSystem): Promise<number>;
+  applyAssessmentLevels?(input: NeisAssessmentImport): Promise<NeisAssessmentApplyResult>;
 }
 
 export interface ExecuteWindowsWorkflowDependencies {
@@ -502,6 +509,7 @@ function runSerializedCdpOperation<Value>(
 const RESTART_IN_SYSTEM_TARGET_WORKFLOW_IDS = new Set<WebWorkflowId>([
   'neis-leave',
   'neis-trip',
+  'neis-assessment',
   'edufine-draft',
   'edufine-purchase',
   'custom',
@@ -1097,7 +1105,57 @@ export async function executeWindowsWorkflow(
     } else {
       result = await runWorkflow(definition, guardedPage, { signal });
     }
-    if (!result) throw new Error('에듀파인 업무 이동 경로를 완료하지 못했습니다. 업무용 브라우저에서 메뉴 권한을 확인해 주세요.');
+    if (!result) throw new Error('업무 이동 경로를 완료하지 못했습니다. 업무용 브라우저에서 메뉴 권한을 확인해 주세요.');
+    if (request.workflowId === 'neis-assessment') {
+      const assessmentImport = request.assessmentImport;
+      if (!assessmentImport) {
+        throw new Error('NEIS 교과평가 입력 자료가 없습니다. AI 채점 화면에서 다시 복사해 주세요.');
+      }
+      if (!page.applyAssessmentLevels) {
+        throw new Error('이 버전에서는 NEIS 교과평가 입력을 사용할 수 없습니다. Stream Panel을 업데이트해 주세요.');
+      }
+      const candidate: CandidateSummary = {
+        index: -1,
+        text: `${assessmentImport.classLabel} 학생 ${assessmentImport.records.length}명의 단계 입력`,
+        visible: true,
+        enabled: true,
+        width: 1,
+        height: 1,
+      };
+      const confirmationStep: WorkflowStep = {
+        id: 'apply-neis-assessment-levels',
+        candidateLabels: [candidate.text],
+        interaction: 'dom-click',
+        requiresConfirmation: true,
+        allowActionText: true,
+        postcondition: { kind: 'visible-any', labels: ['성취기준별 평가'] },
+        maxChecks: 1,
+        checkDelayMs: 0,
+      };
+      const confirmed = await dependencies.confirmStep?.(
+        request,
+        confirmationStep,
+        candidate,
+      ) ?? false;
+      if (!confirmed) throw new Error('NEIS 교과평가 단계 입력을 취소했습니다.');
+      await assertOrigin();
+      const applied = await page.applyAssessmentLevels(assessmentImport);
+      await assertOrigin();
+      if (applied.status !== 'ok') {
+        const missing = applied.missing.length
+          ? ` 확인하지 못한 번호: ${applied.missing.join(', ')}번.`
+          : '';
+        const guidance = applied.status === 'not-on-page'
+          ? 'NEIS에서 성취기준별 평가의 학급·교과·영역·성취기준을 조회한 뒤 다시 실행해 주세요.'
+          : '학생 번호·이름과 단계 선택칸을 확인한 뒤 다시 실행해 주세요.';
+        throw new Error(`${applied.detail || 'NEIS 교과평가 단계 입력을 완료하지 못했습니다.'}${missing} ${guidance}`);
+      }
+      result = {
+        ...result,
+        assessmentUpdatedCount: applied.updated,
+        assessmentUnchangedCount: applied.already,
+      };
+    }
     const approvalSystem = request.workflowId === 'neis-approval-inbox'
       ? 'neis' as const
       : request.workflowId === 'edufine-approval-inbox'
@@ -3857,6 +3915,45 @@ function createWindowsWorkflowPage(
     async readApprovalCount(system) {
       await extendSystemSessionIfPrompted(session, active.sessionId);
       return readApprovalCountFromCurrentPage(system, false);
+    },
+    async applyAssessmentLevels(input) {
+      await extendSystemSessionIfPrompted(session, active.sessionId);
+      const expression = neisAssessmentApplyExpression(input);
+      const values: unknown[] = [];
+      try {
+        values.push(await evaluateValue<unknown>(session, active.sessionId, expression));
+      } catch {
+        // The assessment grid can be hosted in a same-origin child frame.
+      }
+      values.push(...await evaluateValuesInChildFrames<unknown>(
+        session,
+        active.sessionId,
+        expression,
+        'neis-assessment-import',
+      ));
+      values.push(...await evaluateValuesInFrameTargets<unknown>(
+        session,
+        active.sessionId,
+        active.target.targetId,
+        expression,
+      ));
+      const results = values.flatMap((value) => {
+        try {
+          return [readNeisAssessmentApplyResult(value)];
+        } catch {
+          return [];
+        }
+      });
+      const completed = results.find((result) => result.status === 'ok');
+      if (completed) return completed;
+      return [...results].sort((left, right) => right.matched - left.matched)[0] ?? {
+        status: 'unsupported',
+        matched: 0,
+        updated: 0,
+        already: 0,
+        missing: input.records.map((record) => record.number),
+        detail: 'NEIS 성취기준별 평가 화면을 읽지 못했습니다.',
+      };
     },
   };
 }

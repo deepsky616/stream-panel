@@ -15,10 +15,12 @@ import type {
 import {
   getWebWorkflowTarget,
   getWebWorkflowTargetForSpec,
+  getWebWorkflowDefinition,
   getWebWorkflowSystem,
   isAllowedWebWorkflowSpecTarget,
   isWebWorkflowSpec,
 } from '../../../shared/webWorkflows';
+import { parseNeisAssessmentClipboard } from './neisAssessment';
 import {
   createWebConnectorDiagnostics,
   type WebConnectorDiagnostics,
@@ -137,6 +139,7 @@ export interface CreateWebConnectorServiceOptions {
   openPortal?: (session: ManagedBrowserSession) => Promise<void>;
   diagnostics?: WebConnectorDiagnostics;
   now?: () => number;
+  readClipboardText?: () => string;
   confirmWorkflowStep?: (details: {
     workflowName: string;
     stepLabel: string;
@@ -191,6 +194,8 @@ function workflowSuccessMessage(workflowSpec: WebWorkflowSpec): string {
       return '나이스 복무 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.';
     case 'neis-trip':
       return '나이스 출장 화면을 열었습니다. 내용을 확인한 뒤 직접 저장하거나 제출해 주세요.';
+    case 'neis-assessment':
+      return '학생별 교과평가 단계를 입력했습니다. 반·성취기준·학생별 단계를 확인한 뒤 NEIS에서 직접 저장해 주세요.';
     case 'neis-approval-inbox':
       return '나이스 결재함을 열었습니다. 승인, 반려와 서명은 화면에서 직접 진행해 주세요.';
     case 'edufine-draft':
@@ -210,6 +215,7 @@ function workflowProgressMessage(workflowSpec: WebWorkflowSpec): string {
     : {
         'neis-leave': '나이스 복무',
         'neis-trip': '나이스 출장',
+        'neis-assessment': '나이스 교과평가 입력',
         'neis-approval-inbox': '나이스 결재함',
         'edufine-draft': '에듀파인 기안',
         'edufine-purchase': '에듀파인 품의',
@@ -244,6 +250,7 @@ export function createWebConnectorService({
   openPortal,
   diagnostics: injectedDiagnostics,
   now = Date.now,
+  readClipboardText = () => '',
   confirmWorkflowStep,
   onApprovalCountObserved,
   onSystemsConnected,
@@ -260,7 +267,9 @@ export function createWebConnectorService({
             const spec = request.workflowSpec;
             if (!spec || !confirmWorkflowStep) return false;
             return confirmWorkflowStep({
-              workflowName: spec.id === 'custom' ? spec.custom.name : candidate.text,
+              workflowName: spec.id === 'custom'
+                ? spec.custom.name
+                : getWebWorkflowDefinition(spec.id).label,
               stepLabel: candidate.text,
               system: getWebWorkflowSystem(spec),
             });
@@ -684,6 +693,9 @@ export function createWebConnectorService({
         browserId: workflowSpec.browserId,
         workflowId: workflowSpec.id,
         workflowSpec,
+        ...(workflowSpec.id === 'neis-assessment'
+          ? { assessmentImport: parseNeisAssessmentClipboard(readClipboardText()) }
+          : {}),
       };
       // Interactive button presses must not wait behind a background approval
       // scan that can spend tens of seconds waiting for portal frames.

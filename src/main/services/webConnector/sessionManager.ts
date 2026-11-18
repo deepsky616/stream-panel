@@ -4,6 +4,7 @@ import type {
   WebWorkflowId,
   WebWorkflowSpec,
 } from '../../../shared/types';
+import type { NeisAssessmentImport } from './neisAssessment';
 
 export interface ManagedBrowserSession {
   readonly officeCode: EducationOfficeCode;
@@ -17,6 +18,8 @@ export interface ManagedWorkflowRequest {
   browserId: WebConnectorBrowserId;
   workflowId: WebWorkflowId;
   workflowSpec?: WebWorkflowSpec;
+  /** Ephemeral clipboard data; never stored in the deck or managed state. */
+  assessmentImport?: NeisAssessmentImport;
 }
 
 export interface ManagedBrowserSessionManagerDependencies<

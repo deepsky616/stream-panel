@@ -3,7 +3,7 @@ import type { DeckItem } from '../src/shared/types';
 import * as webWorkflows from '../src/shared/webWorkflows';
 
 type TemplateFactory = (
-  id: 'neis-leave' | 'neis-trip' | 'edufine-draft' | 'edufine-purchase',
+  id: 'neis-leave' | 'neis-trip' | 'neis-assessment' | 'edufine-draft' | 'edufine-purchase',
   browserId: 'chrome' | 'edge',
   officeCode?: 'goe' | 'sen' | 'gbe',
 ) => unknown;
@@ -206,8 +206,9 @@ describe('web workflow templates', () => {
     expect(isWebConnectorSupportedPlatform('darwin')).toBe(false);
     expect(isWebConnectorSupportedPlatform('linux')).toBe(false);
     expect(createWebWorkflowTemplatesForPlatform('darwin')).toEqual([]);
-    expect(createWebWorkflowTemplatesForPlatform('win32')).toHaveLength(4);
+    expect(createWebWorkflowTemplatesForPlatform('win32')).toHaveLength(5);
     expect(createWebWorkflowTemplatesForPlatform('win32', 'sen').map(({ target }) => target)).toEqual([
+      'https://sen.neis.go.kr/',
       'https://sen.neis.go.kr/',
       'https://sen.neis.go.kr/',
       'https://klef.sen.go.kr/',
@@ -231,6 +232,14 @@ describe('web workflow templates', () => {
       emoji: '🧾',
       target: 'https://klef.gbe.kr/',
       webWorkflow: { id: 'edufine-purchase', browserId: 'chrome', officeCode: 'gbe' },
+    });
+    expect(createWebWorkflowTemplate('neis-assessment', 'edge', 'goe')).toEqual({
+      kind: 'action-template',
+      type: 'url',
+      label: '나이스 교과평가 입력',
+      emoji: '📊',
+      target: 'https://goe.neis.go.kr/jsp/main.jsp',
+      webWorkflow: { id: 'neis-assessment', browserId: 'edge', officeCode: 'goe' },
     });
   });
 

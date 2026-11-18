@@ -1084,4 +1084,58 @@ describe('managed web connector service', () => {
 
     expect(requests).toEqual([expect.objectContaining({ officeCode: 'goe' })]);
   });
+
+  it('passes a validated ephemeral assessment import to the managed workflow', async () => {
+    const config = createDefaultConfig(
+      { downloads: 'C:\\Downloads', documents: 'C:\\Documents' },
+      () => 'id',
+      'win32',
+    );
+    const requests: unknown[] = [];
+    const controller = createController();
+    controller.run = async (request) => {
+      requests.push(request);
+      return { workflowId: 'neis-assessment', finalState: 'assessment-levels-filled' };
+    };
+    const service = createWebConnectorService({
+      userDataPath: 'C:\\StreamPanel',
+      platform: 'win32',
+      getConfig: () => config,
+      sessionController: controller,
+      stateIo: { read: async () => undefined, write: async () => undefined },
+      readClipboardText: () => `[NEIS 성취기준별 평가 입력 확인표]
+수업: 5학년 3반 수학
+평가: 분수의 곱셈
+학급: 5학년 3반
+
+번호\t이름\t단계\t교사확정총점\t총배점\t비율
+1\t강로\t매우잘함\t8\t10\t80%`,
+    });
+    await service.start();
+
+    expect(service.queue(workflowAction({
+      id: 'assessment',
+      label: '나이스 교과평가 입력',
+      webWorkflow: { id: 'neis-assessment', browserId: 'edge' },
+    }))).toEqual({ queued: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(requests).toEqual([expect.objectContaining({
+      workflowId: 'neis-assessment',
+      assessmentImport: {
+        course: '5학년 3반 수학',
+        assessment: '분수의 곱셈',
+        classLabel: '5학년 3반',
+        records: [{
+          number: '1',
+          name: '강로',
+          level: '매우잘함',
+          score: 8,
+          maxScore: 10,
+          percentage: 80,
+        }],
+      },
+    })]);
+  });
 });

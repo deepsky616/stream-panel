@@ -47,6 +47,7 @@ export interface MultiActionProgress {
 export type BuiltInWebWorkflowId =
   | 'neis-leave'
   | 'neis-trip'
+  | 'neis-assessment'
   | 'neis-approval-inbox'
   | 'edufine-draft'
   | 'edufine-purchase'

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification } from 'electron';
 import { createDefaultConfig } from '../shared/defaults';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { isWebConnectorSupportedPlatform } from '../shared/webWorkflows';
@@ -65,6 +65,7 @@ app.whenReady().then(async () => {
       userDataPath: app.getPath('userData'),
       platform: PLATFORM.platform,
       getConfig: () => configStore.get(),
+      readClipboardText: () => clipboard.readText(),
       notify: (message, level) => {
         for (const window of createSafeWindowList()) {
           window.webContents.send(IPC_CHANNELS.TOAST, { level, message });

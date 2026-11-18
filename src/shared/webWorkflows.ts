@@ -36,6 +36,12 @@ export const WEB_WORKFLOW_DEFINITIONS: readonly WebWorkflowDefinition[] = [
     system: 'neis',
   },
   {
+    id: 'neis-assessment',
+    label: '나이스 교과평가 입력',
+    defaultTarget: 'https://goe.neis.go.kr/',
+    system: 'neis',
+  },
+  {
     id: 'edufine-draft',
     label: '에듀파인 기안',
     defaultTarget: 'https://klef.goe.go.kr/',
@@ -341,6 +347,7 @@ export function browserIdFromPath(path: string): WebConnectorBrowserId | null {
 const WORKFLOW_EMOJI: Record<BuiltInWebWorkflowId, string> = {
   'neis-leave': '🗓️',
   'neis-trip': '🧳',
+  'neis-assessment': '📊',
   'neis-approval-inbox': '🔔',
   'edufine-draft': '✍️',
   'edufine-purchase': '🧾',
