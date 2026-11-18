@@ -25,10 +25,6 @@ export interface WorkflowRunResult {
   approvalCount?: number;
   /** Non-fatal count read failure; the requested inbox still remains open. */
   approvalCountError?: string;
-  /** Number of student level fields updated from a validated local clipboard import. */
-  assessmentUpdatedCount?: number;
-  /** Number of fields that already had the requested achievement level. */
-  assessmentUnchangedCount?: number;
 }
 
 export class WorkflowStepError extends Error {

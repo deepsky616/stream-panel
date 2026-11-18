@@ -104,16 +104,4 @@ export const NEIS_WORKFLOWS = {
       },
     ],
   },
-  'neis-assessment': {
-    id: 'neis-assessment',
-    label: '나이스 교과평가 입력',
-    finalState: 'assessment-levels-filled',
-    // The teacher first opens and queries the exact class, subject, domain and
-    // achievement standard. The guarded page adapter then matches every copied
-    // student by number and name before changing any level. It never clicks 저장.
-    steps: [],
-  },
-} as const satisfies Record<
-  'neis-leave' | 'neis-trip' | 'neis-assessment',
-  ManagedWorkflowDefinition
->;
+} as const satisfies Record<'neis-leave' | 'neis-trip', ManagedWorkflowDefinition>;
